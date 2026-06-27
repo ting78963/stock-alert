@@ -179,3 +179,18 @@ monitor_thread.start()
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
+
+@app.route("/test", methods=["GET"])
+def test():
+    msg = """🚀 測試通知｜散熱冷卻｜氣冷與核心組件
+━━━━━━━━━━━━━━━━
+奇鋐 3017　+10.0% 🔴
+時間：10:23:45
+
+同族群 +4.5%以上：
+雙鴻 3324　+6.2%
+健策 3653　+5.1%
+
+⚠️ 此為系統測試訊息"""
+    send_line_message(msg)
+    return "測試訊息已發送！", 200
