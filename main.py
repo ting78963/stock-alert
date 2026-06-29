@@ -113,6 +113,10 @@ def send_line_message(msg):
 
 def check_stocks():
     reset_daily()
+    from datetime import timezone, timedelta
+    tz_taipei = timezone(timedelta(hours=8))
+    now = datetime.now(tz_taipei)
+    print(f"監控中 台灣時間：{now.strftime('%H:%M:%S')} 交易時間：{is_trading_time()}", flush=True)
     if not is_trading_time():
         return
     stock_data = fetch_stock_data()
