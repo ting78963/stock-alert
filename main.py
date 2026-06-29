@@ -66,7 +66,9 @@ def reset_daily():
         last_reset_date = today
 
 def is_trading_time():
-    now = datetime.now()
+    from datetime import timezone, timedelta
+    tz_taipei = timezone(timedelta(hours=8))
+    now = datetime.now(tz_taipei)
     if now.weekday() >= 5:
         return False
     t = now.hour * 60 + now.minute
