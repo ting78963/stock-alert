@@ -203,3 +203,21 @@ monitor_thread.start()
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
+
+@app.route("/testotc", methods=["GET"])
+def testotc():
+    ex_ch = "tse_1815.tw|otc_1815.tw|tse_3017.tw|otc_3017.tw"
+    url = f"https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch={ex_ch}&json=1&delay=0"
+    try:
+        res = requests.get(url, timeout=10)
+        data = res.json()
+        result = ""
+        for item in data.get("msgArray", []):
+            code = item.get("c","")
+            name = item.get("n","")
+            z = item.get("z","-")
+            ex = item.get("ex","")
+            result += f"{name} {code} 市場:{ex} 現價:{z}\n"
+        return result or "沒有資料", 200
+    except Exception as e:
+        return f"錯誤: {e}", 500
