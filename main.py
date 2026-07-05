@@ -151,19 +151,6 @@ def check_stocks():
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
-    body = request.get_json()
-    if not body:
-        return "OK", 200
-    for event in body.get("events", []):
-        source = event.get("source", {})
-        group_id = source.get("groupId", "")
-        reply_token = event.get("replyToken", "")
-        if group_id and reply_token:
-            requests.post(
-                "https://api.line.me/v2/bot/message/reply",
-                headers={"Authorization": f"Bearer {LINE_TOKEN}", "Content-Type": "application/json"},
-                json={"replyToken": reply_token, "messages": [{"type": "text", "text": f"群組ID：\n{group_id}"}]}
-            )
     return "OK", 200
 
 @app.route("/ping", methods=["GET"])
