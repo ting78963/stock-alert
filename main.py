@@ -189,21 +189,6 @@ def test():
     send_line_message(msg)
     return "測試訊息已發送！", 200
 
-def monitor_loop():
-    while True:
-        try:
-            check_stocks()
-        except Exception as e:
-            print(f"監控錯誤: {e}", flush=True)
-        time.sleep(5)
-
-monitor_thread = threading.Thread(target=monitor_loop, daemon=True)
-monitor_thread.start()
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
-
 @app.route("/testotc", methods=["GET"])
 def testotc():
     ex_ch = "tse_1815.tw|otc_1815.tw|tse_3017.tw|otc_3017.tw"
@@ -221,3 +206,18 @@ def testotc():
         return result or "沒有資料", 200
     except Exception as e:
         return f"錯誤: {e}", 500
+
+def monitor_loop():
+    while True:
+        try:
+            check_stocks()
+        except Exception as e:
+            print(f"監控錯誤: {e}", flush=True)
+        time.sleep(5)
+
+monitor_thread = threading.Thread(target=monitor_loop, daemon=True)
+monitor_thread.start()
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
