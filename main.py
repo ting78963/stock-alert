@@ -109,7 +109,7 @@ def fetch_stock_data():
                 u = item.get("u", "-")
                 if code and z not in ["-",""] and y not in ["-",""] and float(y) > 0:
                     change_pct = (float(z) - float(y)) / float(y) * 100
-                    is_limit_up = (u not in ["-",""] and abs(float(z) - float(u)) < 0.01)
+                    is_limit_up = change_pct >= 9.5
                     results[code] = {"name": name, "change_pct": change_pct, "is_limit_up": is_limit_up}
         except Exception as e:
             print(f"API錯誤: {e}", flush=True)
