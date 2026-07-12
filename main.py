@@ -3,7 +3,7 @@ import time
 import requests
 import threading
 from datetime import datetime
-from flask import Flask, request
+from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
@@ -61,7 +61,7 @@ GROUPS_DISPLAY = {
     "石英元件": [("晶技","3042"),("希華","2484"),("台嘉碩","3221"),("加高","8182"),("安碁","6174"),("泰藝","8289")],
     "功率元件": [("強茂","2481"),("德微","3675"),("台半","5425"),("朋程","8255"),("茂達","6138"),("富鼎","8261")],
     "機器人": [("上銀","2049"),("直得","1597"),("盟立","2464"),("羅昇","8374"),("達明","4562"),("東元","4526"),("台灣精銳","1536"),("所羅門","2359"),("廣宇","2328")],
-    "廠務工程": [("漢唐","2404"),("亞翔","6139"),("聖暉","5536"),("帆宣","6196"),("漢科","3402"),("晶呈","4768"),("立盈","7820"),("兆聯實業","6944")],
+    "廠務工程": [("漢唐","2404"),("亞翔","6139"),("聖暉","5536"),("帆宣","6196"),("漢科","3402"),("晟呈","4768"),("立盈","7820"),("兆聯實業","6944")],
     "重電": [("華城","1519"),("中興電","1513"),("士電","1503"),("亞力","1514")],
     "PCB高階": [("尖點","8021"),("凱崴","5498"),("鉅橡","8074"),("金居","8358"),("碩天","3645")],
     "PCB玻纖布": [("德宏","5475"),("富喬","1815"),("台玻","1802"),("南亞","1303"),("建榮","5340")],
@@ -106,7 +106,6 @@ def fetch_stock_data():
                 name = item.get("n", "")
                 z = item.get("z", "-")
                 y = item.get("y", "-")
-                u = item.get("u", "-")
                 if code and z not in ["-",""] and y not in ["-",""] and float(y) > 0:
                     change_pct = (float(z) - float(y)) / float(y) * 100
                     is_limit_up = change_pct >= 9.5
@@ -158,17 +157,49 @@ def check_stocks():
             name = info["name"] or code
             pct = info["change_pct"]
             msg = f"\U0001f680 漲停通知｜{group_name}\n"
-            msg += "\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n"
+            msg += "\u2501" * 16 + "\n"
             msg += f"{name} {code}\u3000+{pct:.1f}% \U0001f534\n"
             msg += f"時間：{now_str}\n"
             if high:
-                msg += f"\n同族群 4%以上：\n"
-                msg += "\n".join(high)
+                msg += f"\n同族群 4%以上：\n" + "\n".join(high)
             if mid:
-                msg += f"\n\n同族群 3~4%：\n"
-                msg += "\n".join(mid)
+                msg += f"\n\n同族群 3~4%：\n" + "\n".join(mid)
             send_line_message(msg)
             print(msg, flush=True)
+
+# ══════════════════════════════════════════════
+# 新增：國際指數 endpoint
+# ══════════════════════════════════════════════
+@app.route("/market", methods=["GET"])
+def market():
+    SYMBOLS = {
+        "nasdaq": "^IXIC",
+        "sox":    "^SOX",
+        "sp500":  "^GSPC",
+        "tsm":    "TSM",
+        "nvda":   "NVDA",
+        "vix":    "^VIX",
+        "nikkei": "^N225",
+        "kospi":  "^KS11",
+    }
+    result = {}
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    for key, symbol in SYMBOLS.items():
+        try:
+            url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1d&range=2d"
+            res = requests.get(url, headers=headers, timeout=8)
+            data = res.json()
+            meta = data["chart"]["result"][0]["meta"]
+            close = meta.get("regularMarketPrice", 0)
+            prev  = meta.get("chartPreviousClose", 0) or meta.get("previousClose", 0)
+            chg_pct = ((close - prev) / prev * 100) if prev else 0
+            result[key] = {"close": round(close, 2), "prev": round(prev, 2), "chg_pct": round(chg_pct, 2)}
+        except Exception as e:
+            result[key] = None
+            print(f"market {key} 錯誤: {e}", flush=True)
+    response = jsonify(result)
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    return response
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
@@ -194,7 +225,7 @@ def ping():
 
 @app.route("/test", methods=["GET"])
 def test():
-    msg = "\U0001f680 漲停通知｜散熱\n\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n奇鋐 3017\u3000+10.0% \U0001f534\n時間：10:23:45\n\n同族群 4%以上：\n雙鴻 3324\u3000+6.2%\n健策 3653\u3000+5.1%\n\n同族群 3~4%：\n高力 8996\u3000+3.8%\n\n⚠️ 此為系統測試訊息"
+    msg = "\U0001f680 漲停通知｜散熱\n" + "\u2501"*16 + "\n奇鋐 3017\u3000+10.0% \U0001f534\n時間：10:23:45\n\n同族群 4%以上：\n雙鴻 3324\u3000+6.2%\n健策 3653\u3000+5.1%\n\n同族群 3~4%：\n高力 8996\u3000+3.8%\n\n⚠️ 此為系統測試訊息"
     send_line_message(msg)
     return "測試訊息已發送！", 200
 
@@ -207,10 +238,7 @@ def testotc():
         data = res.json()
         result = ""
         for item in data.get("msgArray", []):
-            code = item.get("c","")
-            name = item.get("n","")
-            z = item.get("z","-")
-            ex = item.get("ex","")
+            code = item.get("c",""); name = item.get("n",""); z = item.get("z","-"); ex = item.get("ex","")
             result += f"{name} {code} 市場:{ex} 現價:{z}\n"
         return result or "沒有資料", 200
     except Exception as e:
@@ -226,34 +254,9 @@ def groups():
         "基板 / 材料": ["PCB高階","PCB玻纖布","玻璃基板"],
         "其他": ["機器人","廠務工程","重電","光學鏡頭","LED"],
     }
-    html = """<!DOCTYPE html>
-<html lang="zh-TW">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>族群清單｜台股漲停通知</title>
-<style>
-*{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f5f5f0;color:#1a1a1a;padding:16px}
-.header{margin-bottom:20px}
-.header h1{font-size:22px;font-weight:600;color:#1a1a1a}
-.header p{font-size:13px;color:#888;margin-top:4px}
-.section{margin-bottom:24px}
-.section-title{font-size:11px;font-weight:600;color:#888;letter-spacing:1px;text-transform:uppercase;margin-bottom:10px;padding-left:2px}
-.group{background:#fff;border-radius:12px;padding:14px 16px;margin-bottom:8px;border:1px solid #ebebeb}
-.gname{font-size:14px;font-weight:600;color:#111;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center}
-.gcnt{font-size:11px;color:#aaa;font-weight:400;background:#f5f5f0;padding:2px 8px;border-radius:20px}
-.tags{display:flex;flex-wrap:wrap;gap:7px}
-.tag{background:#f8f8f6;border:1px solid #e8e8e4;border-radius:8px;padding:7px 13px;font-size:14px;color:#333;white-space:nowrap}
-.code{color:#e8192c;font-size:12px;margin-left:4px;font-weight:500}
-</style>
-</head>
-<body>
-<div class="header">
-<h1>🚀 族群清單</h1>
-<p>台股漲停通知 @541etrau｜29個族群</p>
-</div>
-"""
+    html = """<!DOCTYPE html><html lang="zh-TW"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>族群清單｜台股漲停通知</title>
+<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f5f5f0;color:#1a1a1a;padding:16px}.header{margin-bottom:20px}.header h1{font-size:22px;font-weight:600}.header p{font-size:13px;color:#888;margin-top:4px}.section{margin-bottom:24px}.section-title{font-size:11px;font-weight:600;color:#888;letter-spacing:1px;text-transform:uppercase;margin-bottom:10px}.group{background:#fff;border-radius:12px;padding:14px 16px;margin-bottom:8px;border:1px solid #ebebeb}.gname{font-size:14px;font-weight:600;color:#111;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center}.gcnt{font-size:11px;color:#aaa;font-weight:400;background:#f5f5f0;padding:2px 8px;border-radius:20px}.tags{display:flex;flex-wrap:wrap;gap:7px}.tag{background:#f8f8f6;border:1px solid #e8e8e4;border-radius:8px;padding:7px 13px;font-size:14px;color:#333;white-space:nowrap}.code{color:#e8192c;font-size:12px;margin-left:4px;font-weight:500}</style></head><body>
+<div class="header"><h1>🚀 族群清單</h1><p>台股漲停通知 @541etrau｜29個族群</p></div>"""
     for section_name, group_names in SECTIONS.items():
         html += f'<div class="section"><div class="section-title">{section_name}</div>'
         for gname in group_names:
