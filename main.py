@@ -173,14 +173,16 @@ def check_stocks():
 @app.route("/market", methods=["GET"])
 def market():
     SYMBOLS = {
-        "nasdaq": "^IXIC",
-        "sox":    "^SOX",
-        "sp500":  "^GSPC",
-        "tsm":    "TSM",
-        "nvda":   "NVDA",
-        "vix":    "^VIX",
-        "nikkei": "^N225",
-        "kospi":  "^KS11",
+        "nasdaq":  "^IXIC",
+        "sox":     "^SOX",
+        "sp500":   "^GSPC",
+        "tsm":     "TSM",
+        "nvda":    "NVDA",
+        "vix":     "^VIX",
+        "nikkei":  "^N225",
+        "kospi":   "^KS11",
+        "futures": "TW=F",
+        "night":   "TWN=F",
     }
     result = {}
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
