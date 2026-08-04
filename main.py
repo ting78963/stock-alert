@@ -166,6 +166,7 @@ def check_stocks():
                 msg += f"\n\n同族群 3~4%：\n" + "\n".join(mid)
             send_line_message(msg)
             print(msg, flush=True)
+            time.sleep(2)
 
 # ══════════════════════════════════════════════
 # 新增：國際指數 endpoint
