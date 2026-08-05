@@ -80,7 +80,8 @@ for group_name, stocks in GROUPS.items():
         if stock not in STOCK_TO_GROUP:
             STOCK_TO_GROUP[stock] = group_name
 
-notified = set()
+# 已通知的族群（每天重置）
+notified_groups = set()
 
 def is_trading_time():
     from datetime import timezone, timedelta
@@ -134,58 +135,59 @@ def check_stocks():
     now = datetime.now(tz_taipei)
     print(f"監控中 台灣時間：{now.strftime('%H:%M:%S')} 交易時間：{is_trading_time()}", flush=True)
     if not is_trading_time():
-        notified.clear()
+        notified_groups.clear()
         return
 
     stock_data = fetch_stock_data()
 
-    # 收集這次掃描到的所有漲停，按族群分組
-    group_alerts = {}  # {族群名稱: [漲停股票list]}
-
+    # 找出有漲停的族群（且尚未通知過）
+    triggered_groups = set()
     for code, info in stock_data.items():
-        if code in notified:
-            continue
         if info["is_limit_up"]:
-            notified.add(code)
-            group_name = STOCK_TO_GROUP.get(code, "未分類")
-            if group_name not in group_alerts:
-                group_alerts[group_name] = []
-            group_alerts[group_name].append((code, info))
+            group_name = STOCK_TO_GROUP.get(code, "")
+            if group_name and group_name not in notified_groups:
+                triggered_groups.add(group_name)
 
-    if not group_alerts:
+    if not triggered_groups:
         return
 
-    # 合併成一則訊息
+    # 對每個觸發的族群發一則通知
     now_str = now.strftime("%H:%M:%S")
-    msg = f"🚀 漲停通知｜{now_str}\n"
+    for group_name in triggered_groups:
+        notified_groups.add(group_name)
 
-    for group_name, stocks in group_alerts.items():
-        msg += "━━━━━━━━━━━━━━━━\n"
-        msg += f"📌 {group_name}\n"
-        for code, info in stocks:
+        # 族群所有股票目前狀況
+        limit_up_stocks = []
+        other_stocks = []
+
+        for code in GROUPS.get(group_name, []):
+            if code not in stock_data:
+                continue
+            info = stock_data[code]
             name = info["name"] or code
             pct = info["change_pct"]
-            msg += f"{name} {code}　+{pct:.1f}% 🔴\n"
+            if info["is_limit_up"]:
+                limit_up_stocks.append(f"{name} {code}　+{pct:.1f}% 🔴")
+            elif pct >= 1.0:
+                other_stocks.append((pct, f"{name} {code}　+{pct:.1f}%"))
 
-        # 同族群漲幅顯示
-        high = []
-        mid = []
-        notified_codes = [c for c, _ in stocks]
-        for other_code in GROUPS.get(group_name, []):
-            if other_code not in notified_codes and other_code in stock_data:
-                other_pct = stock_data[other_code]["change_pct"]
-                other_name = stock_data[other_code]["name"] or other_code
-                if other_pct >= 4.0:
-                    high.append(f"{other_name} {other_code}　+{other_pct:.1f}%")
-                elif other_pct >= 3.0:
-                    mid.append(f"{other_name} {other_code}　+{other_pct:.1f}%")
-        if high:
-            msg += f"\n同族群 4%以上：\n" + "\n".join(high) + "\n"
-        if mid:
-            msg += f"\n同族群 3~4%：\n" + "\n".join(mid) + "\n"
+        # 其他股票按漲幅排序
+        other_stocks.sort(reverse=True)
 
-    send_line_message(msg)
-    print(msg, flush=True)
+        msg = f"🚀 漲停通知｜{group_name}\n"
+        msg += f"時間：{now_str}\n"
+        msg += "━━━━━━━━━━━━━━━━\n"
+
+        if limit_up_stocks:
+            msg += "漲停：\n"
+            msg += "\n".join(limit_up_stocks) + "\n"
+
+        if other_stocks:
+            msg += "\n同族群：\n"
+            msg += "\n".join([s for _, s in other_stocks])
+
+        send_line_message(msg)
+        print(msg, flush=True)
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
@@ -211,7 +213,7 @@ def ping():
 
 @app.route("/test", methods=["GET"])
 def test():
-    msg = "🚀 漲停通知｜09:01:23\n━━━━━━━━━━━━━━━━\n📌 記憶體\n力積電 6770　+10.0% 🔴\n南亞科 2408　+10.0% 🔴\n\n同族群 4%以上：\n華邦電 2344　+6.2%\n━━━━━━━━━━━━━━━━\n📌 石英元件\n晶技 3042　+10.0% 🔴\n\n同族群 3~4%：\n希華 2484　+3.5%\n\n⚠️ 此為系統測試訊息"
+    msg = "🚀 漲停通知｜光通訊\n時間：09:01:23\n━━━━━━━━━━━━━━━━\n漲停：\n聯鈞 3450　+10.0% 🔴\n環宇-KY 4991　+9.6% 🔴\n\n同族群：\n華星光 4979　+9.5%\n聯光通 4903　+4.7%\n上詮 3363　+2.1%\n\n⚠️ 此為系統測試訊息"
     send_line_message(msg)
     return "測試訊息已發送！", 200
 
