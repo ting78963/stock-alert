@@ -1,5 +1,8 @@
 import os
 import time
+import math
+import json
+import base64
 import requests
 import threading
 from datetime import datetime
@@ -9,7 +12,9 @@ app = Flask(__name__)
 
 LINE_TOKEN = os.environ.get("LINE_TOKEN", "")
 GROUP_ID = os.environ.get("GROUP_ID", "")
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
 
+# ===== 族群清單 =====
 GROUPS = {
     "IC設計": ["3661","3443","3035","2388","8040","4966","3209","2363","2401","6415"],
     "IC通路商": ["3034","2379"],
@@ -80,7 +85,21 @@ for group_name, stocks in GROUPS.items():
         if stock not in STOCK_TO_GROUP:
             STOCK_TO_GROUP[stock] = group_name
 
-notified = set()
+# ===== 常數 =====
+FIRST_MULT = 1.25
+SECOND_MULT = round(math.sqrt(1.25), 3)  # 1.118
+MAX_SECOND_THRESHOLD = 9.5
+TRACK_MIN_PCT = 3.0
+
+# ===== 狀態變數 =====
+notified = set()  # 已發漲停通知的股票
+
+# 追蹤中的股票：{code: {name, group, start_pct, first_trigger_pct, trigger_count}}
+tracking = {}
+
+# 勝率記錄
+daily_records = []
+closing_done_date = None
 
 def is_trading_time():
     from datetime import timezone, timedelta
@@ -128,6 +147,173 @@ def send_line_message(msg):
     except Exception as e:
         print(f"LINE錯誤: {e}", flush=True)
 
+def get_group_ranking():
+    """讀取歷史資料，計算各族群20天勝率排名"""
+    if not GITHUB_TOKEN:
+        return {}
+    try:
+        raw_url = "https://raw.githubusercontent.com/ting78963/stock/main/stats.json"
+        res = requests.get(raw_url, timeout=10)
+        if res.status_code != 200:
+            return {}
+        history = res.json()
+    except Exception:
+        return {}
+
+    sorted_dates = sorted(history.keys(), reverse=True)[:20]
+    group_stats = {}
+    for d in sorted_dates:
+        for r in history.get(d, []):
+            g = r.get("group")
+            if not g:
+                continue
+            if g not in group_stats:
+                group_stats[g] = {"total": 0, "win": 0}
+            if r.get("category") == "above_4":
+                group_stats[g]["total"] += 1
+                if r.get("final_limit_up"):
+                    group_stats[g]["win"] += 1
+
+    rankings = []
+    for g, s in group_stats.items():
+        if s["total"] >= 5:
+            win_rate = s["win"] / s["total"]
+            rankings.append((g, win_rate, s["total"]))
+    rankings.sort(key=lambda x: x[1], reverse=True)
+
+    rank_map = {}
+    medals = ["🥇", "🥈", "🥉"]
+    for i, (g, rate, total) in enumerate(rankings[:3]):
+        rank_map[g] = f"{medals[i]} 20日勝率第{i+1}｜{rate*100:.0f}%"
+    return rank_map
+
+def record_signal(group_name, code, name, pct, category):
+    daily_records.append({
+        "group": group_name, "code": code, "name": name,
+        "signal_pct": round(pct, 1), "category": category,
+        "time": datetime.now().strftime("%H:%M:%S")
+    })
+
+def push_to_github(filename, content_dict):
+    if not GITHUB_TOKEN:
+        return
+    repo = "ting78963/stock"
+    api_url = f"https://api.github.com/repos/{repo}/contents/{filename}"
+    headers = {"Authorization": f"token {GITHUB_TOKEN}", "Accept": "application/vnd.github.v3+json"}
+    sha = None
+    try:
+        res = requests.get(api_url, headers=headers, timeout=10)
+        if res.status_code == 200:
+            sha = res.json().get("sha")
+    except Exception:
+        pass
+    content_b64 = base64.b64encode(json.dumps(content_dict, ensure_ascii=False, indent=2).encode()).decode()
+    data = {"message": f"Update {filename}", "content": content_b64}
+    if sha:
+        data["sha"] = sha
+    try:
+        res = requests.put(api_url, headers=headers, json=data, timeout=15)
+        print(f"GitHub push: {res.status_code}", flush=True)
+    except Exception as e:
+        print(f"GitHub push錯誤: {e}", flush=True)
+
+def do_closing_summary():
+    if not daily_records:
+        return
+    codes = list(set([r["code"] for r in daily_records]))
+    final_data = {}
+    batch_size = 25
+    for i in range(0, len(codes), batch_size):
+        batch = codes[i:i+batch_size]
+        ex_ch = "|".join([f"tse_{s}.tw|otc_{s}.tw" for s in batch])
+        url = f"https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch={ex_ch}&json=1&delay=0"
+        try:
+            res = requests.get(url, timeout=10)
+            data = res.json()
+            for item in data.get("msgArray", []):
+                code = item.get("c", "")
+                h = item.get("h", "-")
+                z = item.get("z", "-")
+                y = item.get("y", "-")
+                if code and h not in ["-",""] and y not in ["-",""] and float(y) > 0:
+                    high_pct = (float(h) - float(y)) / float(y) * 100
+                    close_pct = (float(z) - float(y)) / float(y) * 100 if z not in ["-",""] else None
+                    final_data[code] = {"high_pct": round(high_pct, 1), "close_pct": round(close_pct, 1) if close_pct else None}
+        except Exception as e:
+            print(f"收盤查詢錯誤: {e}", flush=True)
+        time.sleep(0.2)
+
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    today_records = []
+    for r in daily_records:
+        code = r["code"]
+        final = final_data.get(code, {})
+        high_pct = final.get("high_pct")
+        close_pct = final.get("close_pct")
+        signal_pct = r["signal_pct"]
+        today_records.append({
+            **r,
+            "high_pct": high_pct,
+            "close_pct": close_pct,
+            "final_limit_up": (high_pct is not None and high_pct >= 9.5),
+            "exceeded_signal_pct": (high_pct is not None and high_pct > signal_pct)
+        })
+
+    history = {}
+    try:
+        raw_url = "https://raw.githubusercontent.com/ting78963/stock/main/stats.json"
+        res = requests.get(raw_url, timeout=10)
+        if res.status_code == 200:
+            history = res.json()
+    except Exception:
+        pass
+
+    history[today_str] = today_records
+    push_to_github("stats.json", history)
+    print(f"收盤統計完成，共{len(today_records)}筆", flush=True)
+
+    # ===== 發LINE收盤總結 =====
+    above4 = [r for r in today_records if r["category"] == "above_4"]
+    above3 = [r for r in today_records if r["category"] == "above_3"]
+    above4_win = [r for r in above4 if r["exceeded_signal_pct"]]
+    above3_win = [r for r in above3 if r["exceeded_signal_pct"]]
+
+    today_str2 = datetime.now().strftime("%Y-%m-%d")
+    msg = f"📊 今日收盤統計｜{today_str2}\n"
+    msg += "━━━━━━━━━━━━━━━━\n"
+
+    if above4:
+        msg += f"\n4%以上訊號（{len(above4)}筆，勝率{len(above4_win)}/{len(above4)}）：\n"
+        for r in above4:
+            win = "✅" if r["exceeded_signal_pct"] else "❌"
+            high = f"+{r['high_pct']}%" if r["high_pct"] else "?"
+            msg += f"{win} {r['name']} {r['code']}\t通知+{r['signal_pct']}% → 最高{high}\n"
+
+    if above3:
+        msg += f"\n3~4%訊號（{len(above3)}筆，勝率{len(above3_win)}/{len(above3)}）：\n"
+        for r in above3:
+            win = "✅" if r["exceeded_signal_pct"] else "❌"
+            high = f"+{r['high_pct']}%" if r["high_pct"] else "?"
+            msg += f"{win} {r['name']} {r['code']}\t通知+{r['signal_pct']}% → 最高{high}\n"
+
+    if not above4 and not above3:
+        msg += "今日無訊號記錄"
+
+    send_line_message(msg)
+    print(msg, flush=True)
+    daily_records.clear()
+
+def check_closing_time():
+    global closing_done_date
+    from datetime import timezone, timedelta
+    tz_taipei = timezone(timedelta(hours=8))
+    now = datetime.now(tz_taipei)
+    today_str = now.strftime("%Y-%m-%d")
+    t = now.hour * 60 + now.minute
+    if 13*60+30 <= t <= 13*60+35 and closing_done_date != today_str and now.weekday() < 5:
+        do_closing_summary()
+        closing_done_date = today_str
+
 def check_stocks():
     from datetime import timezone, timedelta
     tz_taipei = timezone(timedelta(hours=8))
@@ -135,8 +321,74 @@ def check_stocks():
     print(f"監控中 台灣時間：{now.strftime('%H:%M:%S')} 交易時間：{is_trading_time()}", flush=True)
     if not is_trading_time():
         notified.clear()
+        tracking.clear()
         return
+
     stock_data = fetch_stock_data()
+
+    # ===== 檢查追蹤中的股票，有沒有觸發⚡ =====
+    for code, track_info in list(tracking.items()):
+        if code not in stock_data:
+            continue
+        current_pct = stock_data[code]["change_pct"]
+        trigger_count = track_info["trigger_count"]
+        name = stock_data[code]["name"] or code
+        group_name = track_info["group"]
+
+        if trigger_count == 0:
+            # 等待第一次觸發
+            threshold = track_info["start_pct"] * FIRST_MULT
+            if current_pct >= threshold:
+                tracking[code]["trigger_count"] = 1
+                tracking[code]["first_trigger_pct"] = current_pct
+                record_signal(group_name, code, name, current_pct, "above_4" if current_pct >= 4.0 else "above_3")
+
+                # 發⚡第一次通知
+                other_stocks = []
+                for other_code in GROUPS.get(group_name, []):
+                    if other_code != code and other_code in stock_data:
+                        other_pct = stock_data[other_code]["change_pct"]
+                        other_name = stock_data[other_code]["name"] or other_code
+                        if other_pct >= 3.0:
+                            other_stocks.append(f"{other_name} {other_code}　+{other_pct:.1f}%")
+
+                msg = f"⚡ 急拉訊號｜{group_name}\n"
+                msg += "━━━━━━━━━━━━━━━━\n"
+                msg += f"{name} {code}　+{track_info['start_pct']:.1f}%→+{current_pct:.1f}%\n"
+                msg += f"時間：{now.strftime('%H:%M:%S')}\n"
+                if other_stocks:
+                    msg += f"\n同族群目前：\n" + "\n".join(other_stocks)
+                send_line_message(msg)
+                print(msg, flush=True)
+
+        elif trigger_count == 1:
+            # 等待第二次觸發
+            first_pct = track_info["first_trigger_pct"]
+            threshold2 = min(first_pct * SECOND_MULT, MAX_SECOND_THRESHOLD)
+            if current_pct >= threshold2:
+                tracking[code]["trigger_count"] = 2
+
+                # 發⚡第二次通知
+                other_stocks = []
+                for other_code in GROUPS.get(group_name, []):
+                    if other_code != code and other_code in stock_data:
+                        other_pct = stock_data[other_code]["change_pct"]
+                        other_name = stock_data[other_code]["name"] or other_code
+                        if other_pct >= 3.0:
+                            other_stocks.append(f"{other_name} {other_code}　+{other_pct:.1f}%")
+
+                msg = f"⚡⚡ 持續急拉｜{group_name}\n"
+                msg += "━━━━━━━━━━━━━━━━\n"
+                msg += f"{name} {code}　+{first_pct:.1f}%→+{current_pct:.1f}%\n"
+                msg += f"時間：{now.strftime('%H:%M:%S')}\n"
+                if other_stocks:
+                    msg += f"\n同族群目前：\n" + "\n".join(other_stocks)
+                send_line_message(msg)
+                print(msg, flush=True)
+
+    # ===== 偵測新漲停 =====
+    rank_map = get_group_ranking()
+
     for code, info in stock_data.items():
         if code in notified:
             continue
@@ -145,19 +397,40 @@ def check_stocks():
             group_name = STOCK_TO_GROUP.get(code, "")
             high = []
             mid = []
+
             if group_name:
                 for other_code in GROUPS.get(group_name, []):
                     if other_code != code and other_code in stock_data:
                         other_pct = stock_data[other_code]["change_pct"]
                         other_name = stock_data[other_code]["name"] or other_code
+
+                        # 3%以上加入追蹤
+                        if other_pct >= TRACK_MIN_PCT and other_code not in tracking:
+                            tracking[other_code] = {
+                                "name": other_name,
+                                "group": group_name,
+                                "start_pct": other_pct,
+                                "first_trigger_pct": None,
+                                "trigger_count": 0
+                            }
+
                         if other_pct >= 4.0:
                             high.append(f"{other_name} {other_code}　+{other_pct:.1f}%")
+                            record_signal(group_name, other_code, other_name, other_pct, "above_4")
                         elif other_pct >= 3.0:
                             mid.append(f"{other_name} {other_code}　+{other_pct:.1f}%")
+                            record_signal(group_name, other_code, other_name, other_pct, "above_3")
+
             now_str = now.strftime("%H:%M:%S")
             name = info["name"] or code
             pct = info["change_pct"]
-            msg = f"🚀 漲停通知｜{group_name}\n"
+
+            rank_tag = rank_map.get(group_name, "")
+            title = f"🚀 漲停通知｜{group_name}"
+            if rank_tag:
+                title += f"\n{rank_tag}"
+
+            msg = f"{title}\n"
             msg += "━━━━━━━━━━━━━━━━\n"
             msg += f"{name} {code}　+{pct:.1f}% 🔴\n"
             msg += f"時間：{now_str}\n"
@@ -167,6 +440,14 @@ def check_stocks():
                 msg += f"\n\n同族群 3~4%：\n" + "\n".join(mid)
             send_line_message(msg)
             print(msg, flush=True)
+
+        else:
+            # 還沒漲停的股票，如果3%以上但還沒在追蹤，也開始追蹤
+            if info["change_pct"] >= TRACK_MIN_PCT and code in STOCK_TO_GROUP and code not in tracking and code not in notified:
+                group_name = STOCK_TO_GROUP.get(code, "")
+                # 只追蹤族群裡有漲停的股票的同族群
+                # （這部分由上面漲停邏輯處理，這裡不重複）
+                pass
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
@@ -251,6 +532,7 @@ def monitor_loop():
     while True:
         try:
             check_stocks()
+            check_closing_time()
         except Exception as e:
             print(f"監控錯誤: {e}", flush=True)
         time.sleep(5)
