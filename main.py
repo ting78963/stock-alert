@@ -121,7 +121,8 @@ golden_snapshot_done = False  # 今天09:10快照是否已完成
 pending_fire = []
 
 # 收盤記錄
-daily_records = []
+daily_records = []    # 族群系統
+golden_records = []   # 黃金奇點系統
 closing_done_date = None
 
 def now_taipei():
@@ -140,6 +141,7 @@ def can_add_new_tracking():
     return now.hour < SIGNAL_CUTOFF
 
 def send_line(msg):
+    """純文字訊息（保留作 fallback）"""
     if not GROUP_ID or not LINE_TOKEN:
         print(msg, flush=True)
         return
@@ -151,6 +153,430 @@ def send_line(msg):
         print(f"LINE: {res.status_code}", flush=True)
     except Exception as e:
         print(f"LINE錯誤: {e}", flush=True)
+
+def send_flex(flex_message):
+    """發送 Flex Message"""
+    if not GROUP_ID or not LINE_TOKEN:
+        print(json.dumps(flex_message, ensure_ascii=False, indent=2), flush=True)
+        return
+    url = "https://api.line.me/v2/bot/message/push"
+    headers = {"Authorization": f"Bearer {LINE_TOKEN}", "Content-Type": "application/json"}
+    data = {"to": GROUP_ID, "messages": [flex_message]}
+    try:
+        res = requests.post(url, headers=headers, json=data, timeout=10)
+        print(f"LINE Flex: {res.status_code}", flush=True)
+    except Exception as e:
+        print(f"LINE Flex錯誤: {e}", flush=True)
+
+# ===== Flex Message 顏色常數 =====
+C_WINE   = "#8b1a1a"   # 漲停通知 header
+C_RED    = "#dc2626"   # 買進 header / 動作區
+C_GREEN  = "#16a34a"   # 出場 header / 動作區
+C_GOLD   = "#facc15"   # 黃金奇點文字
+C_WHITE  = "#ffffff"
+C_TEXT   = "#1a1a1a"
+C_LABEL  = "#aaaaaa"
+C_BORDER = "#f0f0f0"
+
+def _row(label, value, value_color=None):
+    """Flex 單行 label / value"""
+    color = value_color or C_TEXT
+    return {
+        "type": "box",
+        "layout": "horizontal",
+        "paddingTop": "5px",
+        "paddingBottom": "5px",
+        "borderWidth": "0px",
+        "contents": [
+            {"type": "text", "text": label, "color": C_LABEL, "size": "sm", "flex": 3},
+            {"type": "text", "text": value, "color": color, "size": "sm", "flex": 4,
+             "align": "end", "weight": "bold"}
+        ]
+    }
+
+def _separator():
+    return {"type": "separator", "color": "#f5f5f5"}
+
+def _action_bar(text, bg_color):
+    """底部動作色塊"""
+    return {
+        "type": "box",
+        "layout": "vertical",
+        "backgroundColor": bg_color,
+        "paddingAll": "10px",
+        "contents": [
+            {"type": "text", "text": text, "color": C_WHITE,
+             "align": "center", "weight": "bold", "size": "sm"}
+        ]
+    }
+
+def flex_limit_up(name, code, group, pct, count, has_momentum, peers, now_str):
+    """🚀 漲停通知"""
+    peer_rows = []
+    for pname, pcode, ppct, is_lu in peers[:6]:
+        lu_tag = " 🔴" if is_lu else ""
+        color = C_RED if ppct >= 3.0 else C_LABEL
+        peer_rows.append(_separator())
+        peer_rows.append(_row(f"{pname} {pcode}", f"+{ppct:.1f}%{lu_tag}", color))
+
+    momentum = "今日資金進駐 ✅" if has_momentum else "今日資金進駐 ❌"
+
+    return {
+        "type": "flex",
+        "altText": f"🚀 漲停通知｜{group}｜{name} {code}",
+        "contents": {
+            "type": "bubble",
+            "body": {
+                "type": "box",
+                "layout": "vertical",
+                "paddingAll": "0px",
+                "contents": [
+                    # Header
+                    {
+                        "type": "box",
+                        "layout": "vertical",
+                        "backgroundColor": C_WINE,
+                        "paddingAll": "14px",
+                        "contents": [
+                            {"type": "text",
+                             "text": f"🚀 漲停通知　第 {count} 支",
+                             "color": "#ffffff99", "size": "xs", "weight": "bold",
+                             "align": "center"},
+                            {"type": "text",
+                             "text": f"{name} {code}",
+                             "color": C_WHITE, "size": "xl", "weight": "bold",
+                             "align": "center", "margin": "sm"},
+                            {"type": "text",
+                             "text": f"{group}　{momentum}",
+                             "color": "#ffffff99", "size": "xs",
+                             "align": "center", "margin": "sm"},
+                        ]
+                    },
+                    # 同族群列表
+                    {
+                        "type": "box",
+                        "layout": "vertical",
+                        "paddingAll": "12px",
+                        "contents": [
+                            {"type": "text", "text": "同族群漲幅", "color": C_LABEL,
+                             "size": "xs", "margin": "none"},
+                            *peer_rows
+                        ] if peers else [
+                            {"type": "text", "text": "同族群無 3% 以上個股",
+                             "color": C_LABEL, "size": "xs", "align": "center"}
+                        ]
+                    },
+                    # Footer 時間
+                    {
+                        "type": "box",
+                        "layout": "horizontal",
+                        "backgroundColor": "#fafafa",
+                        "paddingAll": "8px",
+                        "contents": [
+                            {"type": "text", "text": "時間", "color": C_LABEL, "size": "xs"},
+                            {"type": "text", "text": now_str, "color": C_LABEL,
+                             "size": "xs", "align": "end"}
+                        ]
+                    }
+                ]
+            }
+        }
+    }
+
+def flex_fire(name, code, group, start_pct, fire_pct, now_str):
+    """🔥 確認突破（族群）"""
+    remaining = round(9.0 - fire_pct, 2)
+    return {
+        "type": "flex",
+        "altText": f"🔥 確認突破｜{name} {code} +{fire_pct:.2f}%",
+        "contents": {
+            "type": "bubble",
+            "body": {
+                "type": "box",
+                "layout": "vertical",
+                "paddingAll": "0px",
+                "contents": [
+                    {
+                        "type": "box",
+                        "layout": "vertical",
+                        "backgroundColor": C_RED,
+                        "paddingAll": "14px",
+                        "contents": [
+                            {"type": "text",
+                             "text": "🔥 確認突破　⚠️ 考驗通過",
+                             "color": "#ffffff99", "size": "xs", "weight": "bold",
+                             "align": "center"},
+                            {"type": "text",
+                             "text": f"{name} {code}",
+                             "color": C_WHITE, "size": "xl", "weight": "bold",
+                             "align": "center", "margin": "sm"},
+                            {"type": "text",
+                             "text": group,
+                             "color": "#ffffff99", "size": "xs",
+                             "align": "center", "margin": "sm"},
+                        ]
+                    },
+                    {
+                        "type": "box",
+                        "layout": "vertical",
+                        "paddingAll": "12px",
+                        "contents": [
+                            _row("起始點", f"+{start_pct:.1f}%"),
+                            _separator(),
+                            _row("突破點", f"+{fire_pct:.2f}%", C_RED),
+                            _separator(),
+                            _row("剩餘空間", f"+{remaining:.2f}%"),
+                            _separator(),
+                            _row("時間", now_str),
+                        ]
+                    },
+                    _action_bar("▲ 買進", C_RED)
+                ]
+            }
+        }
+    }
+
+def flex_trail(name, code, group, fire_pct, peak_pct, trail_pct, cur_pct):
+    """⚠️ 移動停利（族群）"""
+    now_str = now_taipei().strftime("%H:%M")
+    return {
+        "type": "flex",
+        "altText": f"⚠️ 移動停利｜{name} {code}　建議出場！",
+        "contents": {
+            "type": "bubble",
+            "body": {
+                "type": "box",
+                "layout": "vertical",
+                "paddingAll": "0px",
+                "contents": [
+                    {
+                        "type": "box",
+                        "layout": "vertical",
+                        "backgroundColor": C_GREEN,
+                        "paddingAll": "14px",
+                        "contents": [
+                            {"type": "text",
+                             "text": "⚠️ 移動停利　建議出場",
+                             "color": "#ffffff99", "size": "xs", "weight": "bold",
+                             "align": "center"},
+                            {"type": "text",
+                             "text": f"{name} {code}",
+                             "color": C_WHITE, "size": "xl", "weight": "bold",
+                             "align": "center", "margin": "sm"},
+                            {"type": "text",
+                             "text": group,
+                             "color": "#ffffff99", "size": "xs",
+                             "align": "center", "margin": "sm"},
+                        ]
+                    },
+                    {
+                        "type": "box",
+                        "layout": "vertical",
+                        "paddingAll": "12px",
+                        "contents": [
+                            _row("進場點", f"🔥 +{fire_pct:.2f}%"),
+                            _separator(),
+                            _row("最高點", f"+{peak_pct:.2f}%"),
+                            _separator(),
+                            _row("停利觸發", f"+{trail_pct:.2f}%", C_GREEN),
+                            _separator(),
+                            _row("現在", f"+{cur_pct:.2f}%", C_GREEN),
+                        ]
+                    },
+                    _action_bar("▼ 出場", C_GREEN)
+                ]
+            }
+        }
+    }
+
+def flex_golden_fire(name, code, start_pct, fire_pct, now_str):
+    """⭐ 黃金奇點 確認突破"""
+    remaining = round(9.0 - fire_pct, 2)
+    return {
+        "type": "flex",
+        "altText": f"⭐ 黃金奇點｜確認突破｜{name} {code} +{fire_pct:.2f}%",
+        "contents": {
+            "type": "bubble",
+            "body": {
+                "type": "box",
+                "layout": "vertical",
+                "paddingAll": "0px",
+                "contents": [
+                    {
+                        "type": "box",
+                        "layout": "vertical",
+                        "backgroundColor": C_WHITE,
+                        "paddingAll": "14px",
+                        "borderWidth": "0px",
+                        "contents": [
+                            {"type": "text",
+                             "text": "⭐ 黃金奇點　確認突破",
+                             "color": C_GOLD, "size": "xs", "weight": "bold",
+                             "align": "center"},
+                            {"type": "text",
+                             "text": f"{name} {code}",
+                             "color": C_GOLD, "size": "xl", "weight": "bold",
+                             "align": "center", "margin": "sm"},
+                            {"type": "text",
+                             "text": "101～130元優選股",
+                             "color": C_LABEL, "size": "xs",
+                             "align": "center", "margin": "sm"},
+                        ]
+                    },
+                    {"type": "separator", "color": C_BORDER},
+                    {
+                        "type": "box",
+                        "layout": "vertical",
+                        "paddingAll": "12px",
+                        "contents": [
+                            _row("起始點", f"+{start_pct:.1f}%"),
+                            _separator(),
+                            _row("突破點", f"+{fire_pct:.2f}%", C_RED),
+                            _separator(),
+                            _row("剩餘空間", f"+{remaining:.2f}%"),
+                            _separator(),
+                            _row("時間", now_str),
+                        ]
+                    },
+                    _action_bar("▲ 買進", C_RED)
+                ]
+            }
+        }
+    }
+
+def flex_golden_trail(name, code, fire_pct, peak_pct, trail_pct, cur_pct):
+    """⭐ 黃金奇點 移動停利"""
+    now_str = now_taipei().strftime("%H:%M")
+    return {
+        "type": "flex",
+        "altText": f"⭐ 黃金奇點｜移動停利｜{name} {code}　建議出場！",
+        "contents": {
+            "type": "bubble",
+            "body": {
+                "type": "box",
+                "layout": "vertical",
+                "paddingAll": "0px",
+                "contents": [
+                    {
+                        "type": "box",
+                        "layout": "vertical",
+                        "backgroundColor": C_WHITE,
+                        "paddingAll": "14px",
+                        "contents": [
+                            {"type": "text",
+                             "text": "⭐ 黃金奇點　移動停利",
+                             "color": C_GOLD, "size": "xs", "weight": "bold",
+                             "align": "center"},
+                            {"type": "text",
+                             "text": f"{name} {code}",
+                             "color": C_GOLD, "size": "xl", "weight": "bold",
+                             "align": "center", "margin": "sm"},
+                            {"type": "text",
+                             "text": "101～130元優選股",
+                             "color": C_LABEL, "size": "xs",
+                             "align": "center", "margin": "sm"},
+                        ]
+                    },
+                    {"type": "separator", "color": C_BORDER},
+                    {
+                        "type": "box",
+                        "layout": "vertical",
+                        "paddingAll": "12px",
+                        "contents": [
+                            _row("進場點", f"🔥 +{fire_pct:.2f}%"),
+                            _separator(),
+                            _row("最高點", f"+{peak_pct:.2f}%"),
+                            _separator(),
+                            _row("停利觸發", f"+{trail_pct:.2f}%", C_GREEN),
+                            _separator(),
+                            _row("現在", f"+{cur_pct:.2f}%", C_GREEN),
+                        ]
+                    },
+                    _action_bar("▼ 出場", C_GREEN)
+                ]
+            }
+        }
+    }
+
+def flex_closing(date_str, fired, won, trailed, records):
+    """📊 收盤統計"""
+    win_rate = f"{len(won)/len(fired)*100:.0f}%" if fired else "—"
+    rows = []
+    for r in records[:8]:
+        win = "✅" if r.get("high_pct") and r["high_pct"] >= 9.0 else "❌"
+        fire = f"+{r['fire_pct']:.2f}%"
+        high = f"+{r['high_pct']:.1f}%" if r.get("high_pct") else "?"
+        src = "⭐" if r.get("source") == "golden" else "🔥"
+        rows.append(_separator())
+        rows.append({
+            "type": "box",
+            "layout": "horizontal",
+            "paddingTop": "5px",
+            "paddingBottom": "5px",
+            "contents": [
+                {"type": "text",
+                 "text": f"{win} {src} {r['name']} {r['code']}",
+                 "size": "xs", "color": C_TEXT, "flex": 5},
+                {"type": "text",
+                 "text": f"{fire}→{high}",
+                 "size": "xs", "color": C_LABEL, "flex": 3, "align": "end"}
+            ]
+        })
+
+    return {
+        "type": "flex",
+        "altText": f"📊 收盤統計｜{date_str}　🔥{len(fired)}隻 勝率{win_rate}",
+        "contents": {
+            "type": "bubble",
+            "body": {
+                "type": "box",
+                "layout": "vertical",
+                "paddingAll": "0px",
+                "contents": [
+                    {
+                        "type": "box",
+                        "layout": "vertical",
+                        "backgroundColor": C_WINE,
+                        "paddingAll": "14px",
+                        "contents": [
+                            {"type": "text",
+                             "text": "📊 收盤統計",
+                             "color": "#ffffff99", "size": "xs", "weight": "bold",
+                             "align": "center"},
+                            {"type": "text",
+                             "text": date_str,
+                             "color": C_WHITE, "size": "xl", "weight": "bold",
+                             "align": "center", "margin": "sm"},
+                        ]
+                    },
+                    {
+                        "type": "box",
+                        "layout": "vertical",
+                        "paddingAll": "12px",
+                        "contents": [
+                            _row("🔥 訊號總數", f"{len(fired)} 隻"),
+                            _separator(),
+                            _row("勝率（達 9%）",
+                                 f"{len(won)}/{len(fired)} = {win_rate}", C_RED),
+                            _separator(),
+                            _row("移動停利觸發", f"{len(trailed)} 隻"),
+                        ]
+                    },
+                    {
+                        "type": "box",
+                        "layout": "vertical",
+                        "paddingAll": "12px",
+                        "paddingTop": "0px",
+                        "contents": [
+                            {"type": "text", "text": "個股明細",
+                             "color": C_LABEL, "size": "xs"},
+                            *rows
+                        ]
+                    } if records else {"type": "box", "layout": "vertical", "contents": []}
+                ]
+            }
+        }
+    }
 
 def fetch_stocks(codes):
     """抓指定代號的即時資料"""
@@ -247,52 +673,36 @@ def on_group_limit_up(code, group, stock_data):
     has_momentum = any(p >= TRACK_MIN_PCT for _, _, p, _ in group_stocks_lines)
     momentum_tag = "今日資金進駐 ✅" if has_momentum else "今日資金進駐 ❌"
 
-    # 發漲停通知
-    msg = f"🚀 漲停通知｜{group}\n"
-    msg += "━━━━━━━━━━━━━━━━\n"
-    msg += f"{name} {code}　+{pct:.1f}% 🔴 漲停\n"
-    msg += f"時間：{now_str}　第{count}支\n"
-    msg += f"{momentum_tag}\n"
-
-    if group_stocks_lines:
-        msg += "━━━━━━━━━━━━━━━━\n"
-        msg += "同族群當下漲幅：\n"
-        # 按漲幅排序
-        group_stocks_lines.sort(key=lambda x: x[2], reverse=True)
-        for c, n, p, is_lu in group_stocks_lines:
-            lu_tag = " 🔴" if is_lu else ""
-            msg += f"{n} {c}　+{p:.1f}%{lu_tag}\n"
-
-    send_line(msg)
-    print(msg, flush=True)
+    # 發漲停通知（Flex）
+    group_stocks_lines.sort(key=lambda x: x[2], reverse=True)
+    peers = [(n, c, p, is_lu) for c, n, p, is_lu in group_stocks_lines]
+    flex = flex_limit_up(name, code, group, pct, count, has_momentum, peers, now_str)
+    send_flex(flex)
+    print(f"🚀 {group} 第{count}支 {name} {code} +{pct:.1f}%", flush=True)
 
 def send_pending_fire():
-    """發送批次🔥訊號"""
+    """發送批次🔥訊號（每隻獨立一張 Flex 卡片）"""
     global pending_fire
     if not pending_fire:
         return
 
     now = now_taipei()
     now_str = now.strftime("%H:%M")
-    msg = f"🔥 確認突破｜{now_str}\n"
 
     for item in pending_fire:
-        msg += "━━━━━━━━━━━━━━━━\n"
-        msg += f"{item['name']} {item['code']}｜{item['group']}\n"
-        remaining = round(9.0 - item['fire_pct'], 2)
-
-        if item['type'] == 'HIGH':
-            msg += f"起始+{item['start_pct']:.1f}% → 🔥+{item['fire_pct']:.2f}% ⚠️考驗通過\n"
-        else:
-            msg += f"起始+{item['start_pct']:.1f}% → 🔥+{item['fire_pct']:.2f}% ⚠️考驗通過\n"
-
-        msg += f"剩餘空間：+{remaining:.2f}%\n"
+        flex = flex_fire(
+            item['name'], item['code'], item['group'],
+            item['start_pct'], item['fire_pct'], now_str
+        )
+        send_flex(flex)
+        print(f"🔥 {item['name']} {item['code']} +{item['fire_pct']:.2f}%", flush=True)
 
         # 記錄
         daily_records.append({
             "code": item['code'],
             "name": item['name'],
             "group": item['group'],
+            "source": "group",
             "start_pct": item['start_pct'],
             "fire_pct": item['fire_pct'],
             "fire_type": item['type'],
@@ -303,8 +713,6 @@ def send_pending_fire():
             "close_pct": None,
         })
 
-    send_line(msg)
-    print(msg, flush=True)
     pending_fire = []
 
 def process_tracking(stock_data):
@@ -345,16 +753,10 @@ def process_tracking(stock_data):
                 if pct <= trail_threshold:
                     # 只有notified_fire才發LINE通知
                     if notified_fire:
-                        msg = f"⚠️ 移動停利｜{name} {code}\n"
-                        msg += "━━━━━━━━━━━━━━━━\n"
-                        msg += f"族群：{group}\n"
-                        msg += f"進場：🔥+{fire_pct:.2f}%\n"
-                        msg += f"最高：+{peak_pct:.2f}% → 停利+{trail_threshold:.2f}%\n"
-                        msg += f"現在：+{pct:.2f}%\n"
-                        msg += "━━━━━━━━━━━━━━━━\n"
-                        msg += "建議出場！"
-                        send_line(msg)
-                        print(msg, flush=True)
+                        flex = flex_trail(name, code, group, fire_pct,
+                                          peak_pct, trail_threshold, pct)
+                        send_flex(flex)
+                        print(f"⚠️ 移動停利 {name} {code} 現在+{pct:.2f}%", flush=True)
 
                         # 更新記錄
                         for r in daily_records:
@@ -531,18 +933,26 @@ def add_to_golden_tracking(code, name, start_pct):
     print(f"⭐加入黃金奇點追蹤 {name} {code} 起始+{start_pct:.2f}%", flush=True)
 
 def send_golden_fire(items):
-    """發送黃金奇點🔥通知"""
-    now = now_taipei()
-    now_str = now.strftime("%H:%M")
-    msg = f"⭐ 黃金奇點｜確認突破｜{now_str}\n"
+    """發送黃金奇點確認突破（每隻獨立一張 Flex）"""
+    now_str = now_taipei().strftime("%H:%M")
     for item in items:
-        msg += "━━━━━━━━━━━━━━━━\n"
-        msg += f"{item['name']} {item['code']}\n"
-        remaining = round(9.0 - item['fire_pct'], 2)
-        msg += f"起始+{item['start_pct']:.1f}% → 🔥+{item['fire_pct']:.2f}% ⚠️考驗通過\n"
-        msg += f"剩餘空間：+{remaining:.2f}%\n"
-    send_line(msg)
-    print(msg, flush=True)
+        flex = flex_golden_fire(
+            item['name'], item['code'],
+            item['start_pct'], item['fire_pct'], now_str
+        )
+        send_flex(flex)
+        print(f"⭐🔥 {item['name']} {item['code']} +{item['fire_pct']:.2f}%", flush=True)
+        golden_records.append({
+            "code": item['code'],
+            "name": item['name'],
+            "source": "golden",
+            "start_pct": item['start_pct'],
+            "fire_pct": item['fire_pct'],
+            "fire_time": now_str,
+            "peak_pct": None,
+            "trail_pct": None,
+            "close_pct": None,
+        })
 
 def process_golden_tracking(stock_data):
     """處理黃金奇點追蹤（邏輯與process_tracking相同）"""
@@ -579,15 +989,15 @@ def process_golden_tracking(stock_data):
                 trail_threshold = round(peak_pct * TRAIL_RATIO, 2)
                 if pct <= trail_threshold:
                     if notified_fire:
-                        msg = f"⭐ 黃金奇點｜移動停利｜{name} {code}\n"
-                        msg += "━━━━━━━━━━━━━━━━\n"
-                        msg += f"進場：🔥+{fire_pct:.2f}%\n"
-                        msg += f"最高：+{peak_pct:.2f}% → 停利+{trail_threshold:.2f}%\n"
-                        msg += f"現在：+{pct:.2f}%\n"
-                        msg += "━━━━━━━━━━━━━━━━\n"
-                        msg += "建議出場！"
-                        send_line(msg)
-                        print(msg, flush=True)
+                        flex = flex_golden_trail(name, code, fire_pct,
+                                                  peak_pct, trail_threshold, pct)
+                        send_flex(flex)
+                        print(f"⭐⚠️ 移動停利 {name} {code} 現在+{pct:.2f}%", flush=True)
+                        for r in golden_records:
+                            if r["code"] == code and r["trail_pct"] is None:
+                                r["peak_pct"] = peak_pct
+                                r["trail_pct"] = pct
+                                break
 
                     # 重設狀態等待下次進場
                     golden_tracking[code]["fired"] = False
@@ -660,11 +1070,13 @@ def process_golden_tracking(stock_data):
 
 def do_closing_summary():
     """收盤統計"""
-    if not daily_records:
+    all_records = daily_records + golden_records
+    if not all_records:
         print("今天沒有記錄", flush=True)
         return
 
-    codes = list(set([r["code"] for r in daily_records]))
+    # 抓收盤價
+    codes = list(set([r["code"] for r in all_records]))
     final_data = {}
     for i in range(0, len(codes), 25):
         batch = codes[i:i+25]
@@ -686,51 +1098,43 @@ def do_closing_summary():
             print(f"收盤查詢錯誤: {e}", flush=True)
         time.sleep(0.2)
 
-    # 更新記錄
-    for r in daily_records:
+    for r in all_records:
         final = final_data.get(r["code"], {})
         r["high_pct"] = final.get("high_pct")
         r["close_pct"] = final.get("close_pct")
 
     today_str = now_taipei().strftime("%Y-%m-%d")
 
-    # 讀取歷史並push
-    history = {}
+    # 族群歷史 push
+    history_group = {}
     try:
-        raw_url = "https://raw.githubusercontent.com/ting78963/stock/main/stats.json"
-        res = requests.get(raw_url, timeout=10)
+        res = requests.get("https://raw.githubusercontent.com/ting78963/stock-alert/main/stats.json", timeout=10)
         if res.status_code == 200:
-            history = res.json()
-    except:
-        pass
-    history[today_str] = daily_records
-    push_to_github("stats.json", history)
+            history_group = res.json()
+    except: pass
+    history_group[today_str] = daily_records
+    push_to_github("stats.json", history_group)
 
-    # 計算勝率
-    fired = [r for r in daily_records if r.get("fire_pct")]
+    # 黃金奇點歷史 push
+    history_golden = {}
+    try:
+        res = requests.get("https://raw.githubusercontent.com/ting78963/stock-alert/main/stats_golden.json", timeout=10)
+        if res.status_code == 200:
+            history_golden = res.json()
+    except: pass
+    history_golden[today_str] = golden_records
+    push_to_github("stats_golden.json", history_golden)
+
+    # 合併計算勝率
+    fired = [r for r in all_records if r.get("fire_pct")]
     won = [r for r in fired if r.get("high_pct") and r["high_pct"] >= 9.0]
-    lost = [r for r in fired if r.get("high_pct") and r["high_pct"] < r.get("fire_pct", 0)]
     trailed = [r for r in fired if r.get("trail_pct")]
 
-    msg = f"📊 收盤統計｜{today_str}\n"
-    msg += "━━━━━━━━━━━━━━━━\n"
-    msg += f"🔥訊號：{len(fired)}隻\n"
-    if fired:
-        win_rate = len(won)/len(fired)*100
-        msg += f"勝率（到9%）：{len(won)}/{len(fired)} = {win_rate:.0f}%\n"
-        msg += f"移動停利觸發：{len(trailed)}隻\n"
-        msg += "━━━━━━━━━━━━━━━━\n"
-        for r in fired:
-            high = f"+{r['high_pct']:.1f}%" if r.get("high_pct") else "?"
-            fire = f"+{r['fire_pct']:.2f}%"
-            typ = "⚠️考驗" if r.get("fire_type") == "B" else "直接"
-            win = "✅" if r.get("high_pct") and r["high_pct"] >= 9.0 else "❌"
-            msg += f"{win} {r['name']} {r['code']} {typ}\n"
-            msg += f"   🔥{fire} → 最高{high}\n"
-
-    send_line(msg)
-    print(f"收盤統計完成，共{len(fired)}筆🔥", flush=True)
+    flex = flex_closing(today_str, fired, won, trailed, fired)
+    send_flex(flex)
+    print(f"收盤統計完成，族群{len(daily_records)}筆 黃金{len(golden_records)}筆", flush=True)
     daily_records.clear()
+    golden_records.clear()
 
 def push_to_github(filename, content):
     if not GITHUB_TOKEN:
@@ -778,6 +1182,7 @@ def check_stocks():
         tracking.clear()
         golden_tracking.clear()
         daily_records.clear()
+        golden_records.clear()
         golden_snapshot_done = False
         return
 
@@ -870,33 +1275,45 @@ def ping():
 
 @app.route("/test")
 def test():
-    # 測試🔥確認突破
-    msg1 = "🔥 確認突破｜09:22\n"
-    msg1 += "━━━━━━━━━━━━━━━━\n"
-    msg1 += "聯光通 4903｜光通訊\n"
-    msg1 += "起始+3.1% → 🔥+3.92% ⚠️考驗通過\n"
-    msg1 += "剩餘空間：+5.08%\n"
-    msg1 += "━━━━━━━━━━━━━━━━\n"
-    msg1 += "雷科 6207｜半導體設備\n"
-    msg1 += "起始+3.6% → 🔥+4.60% 直接突破\n"
-    msg1 += "⚡未經回落，謹慎操作\n"
-    msg1 += "剩餘空間：+4.40%"
-    send_line(msg1)
+    now_str = now_taipei().strftime("%H:%M")
 
-    time.sleep(1)
+    # 1. 🚀 漲停通知
+    send_flex(flex_limit_up(
+        "穩懋", "3105", "光通訊", 10.0, 2, True,
+        [("聯亞", "3081", 4.2, False), ("上詮", "3363", 3.7, False), ("光聖", "6442", 1.8, False)],
+        now_str
+    ))
+    time.sleep(0.5)
 
-    # 測試⚠️移動停利
-    msg2 = "⚠️ 移動停利｜臺慶科 3357\n"
-    msg2 += "━━━━━━━━━━━━━━━━\n"
-    msg2 += "族群：被動元件\n"
-    msg2 += "進場：🔥+5.02%\n"
-    msg2 += "最高：+6.28% → 停利+5.65%\n"
-    msg2 += "現在：+5.30%\n"
-    msg2 += "━━━━━━━━━━━━━━━━\n"
-    msg2 += "建議出場！"
-    send_line(msg2)
+    # 2. 🔥 確認突破
+    send_flex(flex_fire("聯亞", "3081", "光通訊", 3.1, 3.92, now_str))
+    time.sleep(0.5)
 
-    return "測試訊息已發送！", 200
+    # 3. ⚠️ 移動停利
+    send_flex(flex_trail("臺慶科", "3357", "被動元件", 5.02, 6.28, 5.65, 5.30))
+    time.sleep(0.5)
+
+    # 4. ⭐ 黃金奇點 確認突破
+    send_flex(flex_golden_fire("台虹", "8039", 3.4, 4.25, now_str))
+    time.sleep(0.5)
+
+    # 5. ⭐ 黃金奇點 移動停利
+    send_flex(flex_golden_trail("台虹", "8039", 3.92, 5.80, 5.22, 5.10))
+    time.sleep(0.5)
+
+    # 6. 📊 收盤統計（模擬）
+    mock_records = [
+        {"code":"3081","name":"聯亞","source":"group","fire_pct":3.92,"high_pct":9.1,"trail_pct":None},
+        {"code":"3357","name":"臺慶科","source":"group","fire_pct":5.02,"high_pct":6.8,"trail_pct":5.65},
+        {"code":"8039","name":"台虹","source":"golden","fire_pct":4.25,"high_pct":9.3,"trail_pct":None},
+        {"code":"6207","name":"雷科","source":"group","fire_pct":4.60,"high_pct":4.1,"trail_pct":None},
+    ]
+    fired = mock_records
+    won = [r for r in fired if r.get("high_pct") and r["high_pct"] >= 9.0]
+    trailed = [r for r in fired if r.get("trail_pct")]
+    send_flex(flex_closing(now_taipei().strftime("%Y-%m-%d"), fired, won, trailed, fired))
+
+    return "✅ 六種測試訊息已發送！", 200
 
 @app.route("/golden")
 def golden_status():
