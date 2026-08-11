@@ -998,12 +998,55 @@ def process_tracking(stock_data):
                             print(f"⭐黃金奇點優先，族群跳過 {name} {code}", flush=True)
                     print(f"🔥高起始 {name} {code} +{pct:.2f}% {'✅通知' if notified else '❌靜默'}", flush=True)
 
-        else:
-            # ===== 起始3~4%：⚡×1.25 → 回落 → 反彈回⚡點 → 🔥(B) =====
+        elif 4.6 <= start_pct < 5.0:
+            # ===== 起始4.6~4.9%：⚡×1.25 → 回落 → 反彈回⚡點 → 🔥 =====
             spark_pct = t["spark_pct"]
 
             if spark_pct is None:
-                # 等待⚡觸發（12:00前才追）
+                if not can_add_new_tracking():
+                    continue
+                threshold = round(start_pct * FIRST_MULT, 2)
+                if pct >= threshold:
+                    tracking[code]["spark_count"] = t.get("spark_count", 0) + 1
+                    if tracking[code]["spark_count"] >= 2:
+                        tracking[code]["spark_pct"] = pct
+                        tracking[code]["spark_count"] = 0
+                        print(f"⚡(中) {name} {code} +{pct:.2f}%", flush=True)
+                else:
+                    tracking[code]["spark_count"] = 0
+            else:
+                warn_threshold = round(spark_pct * WARN_RATIO, 2)
+                if not had_pullback:
+                    if pct <= warn_threshold:
+                        tracking[code]["had_pullback"] = True
+                        tracking[code]["pullback_low"] = pct
+                        print(f"⚠️中段回落 {name} {code} +{pct:.2f}%", flush=True)
+                else:
+                    if t.get("pullback_low") and pct < t["pullback_low"]:
+                        tracking[code]["pullback_low"] = pct
+                    if pct >= spark_pct and pct < 9.5:
+                        notified = pct <= FIRE_MAX_PCT
+                        tracking[code]["fire_pct"] = pct
+                        tracking[code]["fired"] = True
+                        tracking[code]["peak_pct"] = pct
+                        tracking[code]["notified_fire"] = notified
+                        if notified:
+                            if code not in golden_tracking:
+                                fire_batch.append({
+                                    "code": code, "name": name, "group": group,
+                                    "start_pct": start_pct, "fire_pct": pct,
+                                    "type": "MID",
+                                    "signals": "▶→⚡→⚠️→🔥"
+                                })
+                            else:
+                                print(f"⭐黃金奇點優先，族群跳過 {name} {code}", flush=True)
+                        print(f"🔥(中) {name} {code} +{pct:.2f}% {'✅通知' if notified else '❌靜默'}", flush=True)
+
+        else:
+            # ===== 起始3~4.5%：⚡×1.25 → 回落 → 反彈到⚡×1.118 → 🔥 =====
+            spark_pct = t["spark_pct"]
+
+            if spark_pct is None:
                 if not can_add_new_tracking():
                     continue
                 threshold = round(start_pct * FIRST_MULT, 2)
@@ -1017,39 +1060,33 @@ def process_tracking(stock_data):
                     tracking[code]["spark_count"] = 0
             else:
                 warn_threshold = round(spark_pct * WARN_RATIO, 2)
+                fire_threshold = round(spark_pct * SECOND_MULT, 2)
 
                 if not had_pullback:
-                    # 等回落（A類型直接突破→不通知，等下一次B機會）
                     if pct <= warn_threshold:
                         tracking[code]["had_pullback"] = True
                         tracking[code]["pullback_low"] = pct
                         print(f"⚠️內部回落 {name} {code} +{pct:.2f}%", flush=True)
-                    # A類型（沒有回落直接上去）→ 完全不處理，等回落
-
                 else:
-                    # 有回落，等反彈回⚡點 → 🔥(B)
                     if t.get("pullback_low") and pct < t["pullback_low"]:
                         tracking[code]["pullback_low"] = pct
-
-                    if pct >= spark_pct and pct < 9.5:
-                        # 🔥(B)觸發
+                    if pct >= fire_threshold and pct < 9.5:
                         notified = pct <= FIRE_MAX_PCT
                         tracking[code]["fire_pct"] = pct
                         tracking[code]["fired"] = True
                         tracking[code]["peak_pct"] = pct
                         tracking[code]["notified_fire"] = notified
-
                         if notified:
                             if code not in golden_tracking:
                                 fire_batch.append({
                                     "code": code, "name": name, "group": group,
                                     "start_pct": start_pct, "fire_pct": pct,
-                                    "type": "B",
-                                    "signals": "▶→⚡→⚠️→🔥"
+                                    "type": "LOW",
+                                    "signals": "▶→⚡→⚠️→🔥×1.118"
                                 })
                             else:
                                 print(f"⭐黃金奇點優先，族群跳過 {name} {code}", flush=True)
-                        print(f"🔥(B) {name} {code} +{pct:.2f}% {'✅通知' if notified else '❌靜默'}", flush=True)
+                        print(f"🔥(低) {name} {code} +{pct:.2f}% {'✅通知' if notified else '❌靜默'}", flush=True)
 
     # 發批次🔥通知
     if fire_batch:
@@ -1216,8 +1253,43 @@ def process_golden_tracking(stock_data):
                     if notified:
                         fire_batch.append({"code": code, "name": name,
                             "start_pct": start_pct, "fire_pct": pct})
+        elif 4.6 <= start_pct < 5.0:
+            # 起始4.6~4.9%：⚡×1.25→⚠️→反彈回⚡點
+            spark_pct = t["spark_pct"]
+
+            if spark_pct is None:
+                if not can_add_new_tracking():
+                    continue
+                threshold = round(start_pct * FIRST_MULT, 2)
+                if pct >= threshold:
+                    golden_tracking[code]["spark_count"] = t.get("spark_count", 0) + 1
+                    if golden_tracking[code]["spark_count"] >= 2:
+                        golden_tracking[code]["spark_pct"] = pct
+                        golden_tracking[code]["spark_count"] = 0
+                        print(f"⭐⚡(中) {name} {code} +{pct:.2f}%", flush=True)
+                else:
+                    golden_tracking[code]["spark_count"] = 0
+            else:
+                warn_threshold = round(spark_pct * WARN_RATIO, 2)
+                if not had_pullback:
+                    if pct <= warn_threshold:
+                        golden_tracking[code]["had_pullback"] = True
+                        golden_tracking[code]["pullback_low"] = pct
+                else:
+                    if t.get("pullback_low") and pct < t["pullback_low"]:
+                        golden_tracking[code]["pullback_low"] = pct
+                    if pct >= spark_pct and pct < 9.5:
+                        notified = pct <= FIRE_MAX_PCT
+                        golden_tracking[code]["fire_pct"] = pct
+                        golden_tracking[code]["fired"] = True
+                        golden_tracking[code]["peak_pct"] = pct
+                        golden_tracking[code]["notified_fire"] = notified
+                        if notified:
+                            fire_batch.append({"code": code, "name": name,
+                                "start_pct": start_pct, "fire_pct": pct})
+
         else:
-            # 起始3~4%：⚡×1.25→⚠️→反彈回⚡點
+            # 起始3~4.5%：⚡×1.25→⚠️→反彈到⚡×1.118
             spark_pct = t["spark_pct"]
 
             if spark_pct is None:
@@ -1234,7 +1306,7 @@ def process_golden_tracking(stock_data):
                     golden_tracking[code]["spark_count"] = 0
             else:
                 warn_threshold = round(spark_pct * WARN_RATIO, 2)
-
+                fire_threshold = round(spark_pct * SECOND_MULT, 2)
                 if not had_pullback:
                     if pct <= warn_threshold:
                         golden_tracking[code]["had_pullback"] = True
@@ -1242,7 +1314,7 @@ def process_golden_tracking(stock_data):
                 else:
                     if t.get("pullback_low") and pct < t["pullback_low"]:
                         golden_tracking[code]["pullback_low"] = pct
-                    if pct >= spark_pct and pct < 9.5:
+                    if pct >= fire_threshold and pct < 9.5:
                         notified = pct <= FIRE_MAX_PCT
                         golden_tracking[code]["fire_pct"] = pct
                         golden_tracking[code]["fired"] = True
@@ -1391,7 +1463,7 @@ def check_stocks():
 
     # 黃金奇點：09:10固定快照一次
     now = now_taipei()
-    if now.hour == 9 and now.minute == 10 and not golden_snapshot_done:
+    if now.hour == 9 and now.minute == 0 and not golden_snapshot_done:
         count = 0
         for code in golden_codes:
             if code in golden_tracking or code not in stock_data:
@@ -1402,7 +1474,7 @@ def check_stocks():
                 add_to_golden_tracking(code, name, pct)
                 count += 1
         golden_snapshot_done = True
-        print(f"⭐ 09:10快照完成！共{count}隻黃金奇點股票加入追蹤", flush=True)
+        print(f"⭐ 09:00快照完成！共{count}隻黃金奇點股票加入追蹤", flush=True)
         if count > 0:
             names = [golden_tracking[c]["name"] for c in list(golden_tracking.keys())[:10]]
             print(f"⭐ 追蹤名單：{', '.join(names)}", flush=True)
