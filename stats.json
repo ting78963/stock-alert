@@ -1,0 +1,60 @@
+{
+  "2026-08-11": [
+    {
+      "code": "3026",
+      "name": "禾伸堂",
+      "group": "被動元件",
+      "start_pct": 4.25,
+      "fire_pct": 7.65,
+      "fire_type": "B",
+      "fire_time": "10:36",
+      "signals": "▶→⚡→⚠️→🔥",
+      "peak_pct": null,
+      "trail_pct": null,
+      "close_pct": 9.86,
+      "high_pct": 9.86
+    },
+    {
+      "code": "2327",
+      "name": "國巨*",
+      "group": "被動元件",
+      "start_pct": 3.66,
+      "fire_pct": 5.06,
+      "fire_type": "B",
+      "fire_time": "10:39",
+      "signals": "▶→⚡→⚠️→🔥",
+      "peak_pct": 7.5,
+      "trail_pct": 5.93,
+      "close_pct": 7.68,
+      "high_pct": 8.73
+    },
+    {
+      "code": "3624",
+      "name": "光頡",
+      "group": "被動元件",
+      "start_pct": 4.99,
+      "fire_pct": 7.06,
+      "fire_type": "B",
+      "fire_time": "10:41",
+      "signals": "▶→⚡→⚠️→🔥",
+      "peak_pct": 7.06,
+      "trail_pct": 6.33,
+      "close_pct": null,
+      "high_pct": 8.76
+    },
+    {
+      "code": "2327",
+      "name": "國巨*",
+      "group": "被動元件",
+      "start_pct": 5.93,
+      "fire_pct": 8.03,
+      "fire_type": "B",
+      "fire_time": "13:01",
+      "signals": "▶→⚡→⚠️→🔥",
+      "peak_pct": 8.38,
+      "trail_pct": 7.5,
+      "close_pct": 7.68,
+      "high_pct": 8.73
+    }
+  ]
+}
