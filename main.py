@@ -124,6 +124,7 @@ pending_fire = []
 daily_records = []    # 族群系統
 golden_records = []   # 黃金奇點系統
 closing_done_date = None
+noon_done_date = None  # 12:00 停利通知是否已發
 
 def now_taipei():
     return datetime.now(TZ)
@@ -498,12 +499,17 @@ def flex_golden_trail(name, code, fire_pct, peak_pct, trail_pct, cur_pct):
         }
     }
 
-def flex_closing(date_str, fired, won, trailed, records):
-    """📊 收盤統計"""
-    win_rate = f"{len(won)/len(fired)*100:.0f}%" if fired else "—"
+def _closing_detail_bubble(records_chunk, page, total_pages, date_str):
+    """收盤統計明細卡（每5隻一張）"""
     rows = []
-    for r in records[:8]:
-        win = "✅" if r.get("high_pct") and r["high_pct"] >= 9.0 else "❌"
+    for r in records_chunk:
+        # 成功：有停利觸發 OR 收盤 >= 進場點（沒賠就算成功）
+        is_win = (
+            r.get("trail_pct") is not None or
+            (r.get("close_pct") is not None and r["close_pct"] >= r["fire_pct"]) or
+            (r.get("high_pct") is not None and r["high_pct"] >= 9.0)
+        )
+        win = "✅" if is_win else "❌"
         fire = f"+{r['fire_pct']:.2f}%"
         high = f"+{r['high_pct']:.1f}%" if r.get("high_pct") else "?"
         src = "⭐" if r.get("source") == "golden" else "🔥"
@@ -511,8 +517,8 @@ def flex_closing(date_str, fired, won, trailed, records):
         rows.append({
             "type": "box",
             "layout": "horizontal",
-            "paddingTop": "5px",
-            "paddingBottom": "5px",
+            "paddingTop": "6px",
+            "paddingBottom": "6px",
             "contents": [
                 {"type": "text",
                  "text": f"{win} {src} {r['name']} {r['code']}",
@@ -522,10 +528,67 @@ def flex_closing(date_str, fired, won, trailed, records):
                  "size": "xs", "color": C_LABEL, "flex": 3, "align": "end"}
             ]
         })
+    return {
+        "type": "bubble",
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "paddingAll": "0px",
+            "contents": [
+                {
+                    "type": "box",
+                    "layout": "vertical",
+                    "backgroundColor": C_WINE,
+                    "paddingAll": "14px",
+                    "contents": [
+                        {"type": "text",
+                         "text": f"📊 個股明細　{page}/{total_pages}",
+                         "color": "#ffffff99", "size": "xs", "weight": "bold",
+                         "align": "center"},
+                        {"type": "text",
+                         "text": date_str,
+                         "color": C_WHITE, "size": "lg", "weight": "bold",
+                         "align": "center", "margin": "sm"},
+                    ]
+                },
+                {
+                    "type": "box",
+                    "layout": "vertical",
+                    "paddingAll": "12px",
+                    "contents": rows
+                }
+            ]
+        }
+    }
 
+def flex_noon(holdings, now_str):
+    """🕛 12:00 停利提醒 Flex"""
+    rows = []
+    for name, code, cur_pct, fire_pct in holdings:
+        gain = cur_pct - fire_pct
+        color = C_RED if cur_pct >= fire_pct else "#e97316"
+        rows.append(_separator())
+        rows.append({
+            "type": "box",
+            "layout": "horizontal",
+            "paddingTop": "6px",
+            "paddingBottom": "6px",
+            "contents": [
+                {"type": "text",
+                 "text": f"{name} {code}",
+                 "size": "sm", "color": C_TEXT, "flex": 4, "weight": "bold"},
+                {"type": "text",
+                 "text": f"+{cur_pct:.2f}%",
+                 "size": "sm", "color": color, "flex": 3,
+                 "align": "end", "weight": "bold"},
+                {"type": "text",
+                 "text": f"進場+{fire_pct:.2f}%",
+                 "size": "xs", "color": C_LABEL, "flex": 3, "align": "end"},
+            ]
+        })
     return {
         "type": "flex",
-        "altText": f"📊 收盤統計｜{date_str}　🔥{len(fired)}隻 勝率{win_rate}",
+        "altText": f"🕛 12:00 停利提醒｜持有 {len(holdings)} 隻",
         "contents": {
             "type": "bubble",
             "body": {
@@ -536,45 +599,167 @@ def flex_closing(date_str, fired, won, trailed, records):
                     {
                         "type": "box",
                         "layout": "vertical",
-                        "backgroundColor": C_WINE,
+                        "backgroundColor": "#e97316",
                         "paddingAll": "14px",
                         "contents": [
                             {"type": "text",
-                             "text": "📊 收盤統計",
-                             "color": "#ffffff99", "size": "xs", "weight": "bold",
-                             "align": "center"},
+                             "text": "🕛 12:00 停利提醒",
+                             "color": "#ffffff99", "size": "xs",
+                             "weight": "bold", "align": "center"},
                             {"type": "text",
-                             "text": date_str,
-                             "color": C_WHITE, "size": "xl", "weight": "bold",
-                             "align": "center", "margin": "sm"},
+                             "text": f"持有 {len(holdings)} 隻　建議評估出場",
+                             "color": C_WHITE, "size": "lg",
+                             "weight": "bold", "align": "center", "margin": "sm"},
+                            {"type": "text",
+                             "text": now_str,
+                             "color": "#ffffff99", "size": "xs", "align": "center",
+                             "margin": "sm"},
                         ]
                     },
                     {
                         "type": "box",
                         "layout": "vertical",
                         "paddingAll": "12px",
-                        "contents": [
-                            _row("🔥 訊號總數", f"{len(fired)} 隻"),
-                            _separator(),
-                            _row("勝率（達 9%）",
-                                 f"{len(won)}/{len(fired)} = {win_rate}", C_RED),
-                            _separator(),
-                            _row("移動停利觸發", f"{len(trailed)} 隻"),
-                        ]
+                        "contents": rows
                     },
                     {
                         "type": "box",
                         "layout": "vertical",
-                        "paddingAll": "12px",
-                        "paddingTop": "0px",
+                        "backgroundColor": "#e9731620",
+                        "paddingAll": "10px",
                         "contents": [
-                            {"type": "text", "text": "個股明細",
-                             "color": C_LABEL, "size": "xs"},
-                            *rows
+                            {"type": "text",
+                             "text": "日內交易稅減半，今日結算",
+                             "color": "#e97316", "size": "xs", "align": "center"}
                         ]
-                    } if records else {"type": "box", "layout": "vertical", "contents": []}
+                    }
                 ]
             }
+        }
+    }
+
+def do_noon_alert(stock_data):
+    """12:00 整點：記錄 noon_pct，發停利提醒"""
+    now_str = now_taipei().strftime("%H:%M")
+    all_records = daily_records + golden_records
+
+    # 更新所有記錄的 noon_pct
+    for r in all_records:
+        if r.get("noon_pct") is None and r["code"] in stock_data:
+            r["noon_pct"] = stock_data[r["code"]]["pct"]
+
+    # 找出仍持有（已🔥但未停利）的股票
+    holdings = []
+    fired_codes = {r["code"] for r in all_records if r.get("fire_pct")}
+
+    for code in fired_codes:
+        # 族群 tracking
+        if code in tracking and tracking[code].get("fired"):
+            t = tracking[code]
+            if code in stock_data:
+                holdings.append((
+                    t["name"], code,
+                    stock_data[code]["pct"],
+                    t["fire_pct"]
+                ))
+        # 黃金奇點 tracking
+        elif code in golden_tracking and golden_tracking[code].get("fired"):
+            t = golden_tracking[code]
+            if code in stock_data:
+                holdings.append((
+                    t["name"], code,
+                    stock_data[code]["pct"],
+                    t["fire_pct"]
+                ))
+
+    if holdings:
+        holdings.sort(key=lambda x: x[2], reverse=True)
+        flex = flex_noon(holdings, now_str)
+        send_flex(flex)
+        print(f"🕛 12:00 停利提醒，{len(holdings)} 隻", flush=True)
+    else:
+        print("🕛 12:00 無持有部位", flush=True)
+
+def flex_closing(date_str, fired, won, trailed, records):
+    """📊 收盤統計 Carousel（第1張總覽 + 每5隻一張明細）"""
+    win_rate = f"{len(won)}/{len(fired)} = {len(won)/len(fired)*100:.0f}%" if fired else "—"
+
+    # 第1張：總覽
+    group_fired  = [r for r in fired if r.get("source") != "golden"]
+    golden_fired = [r for r in fired if r.get("source") == "golden"]
+    overview_bubble = {
+        "type": "bubble",
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "paddingAll": "0px",
+            "contents": [
+                {
+                    "type": "box",
+                    "layout": "vertical",
+                    "backgroundColor": C_WINE,
+                    "paddingAll": "14px",
+                    "contents": [
+                        {"type": "text",
+                         "text": "📊 收盤統計",
+                         "color": "#ffffff99", "size": "xs", "weight": "bold",
+                         "align": "center"},
+                        {"type": "text",
+                         "text": date_str,
+                         "color": C_WHITE, "size": "xl", "weight": "bold",
+                         "align": "center", "margin": "sm"},
+                    ]
+                },
+                {
+                    "type": "box",
+                    "layout": "vertical",
+                    "paddingAll": "12px",
+                    "contents": [
+                        _row("🔥 族群訊號", f"{len(group_fired)} 隻"),
+                        _separator(),
+                        _row("⭐ 黃金奇點", f"{len(golden_fired)} 隻"),
+                        _separator(),
+                        _row("訊號合計", f"{len(fired)} 隻"),
+                        _separator(),
+                        _row("勝率（達 9%）", win_rate, C_RED),
+                        _separator(),
+                        _row("移動停利觸發", f"{len(trailed)} 隻"),
+                    ]
+                },
+                {
+                    "type": "box",
+                    "layout": "vertical",
+                    "paddingAll": "10px",
+                    "paddingTop": "0px",
+                    "contents": [
+                        {"type": "text",
+                         "text": "← 左滑看個股明細",
+                         "color": C_LABEL, "size": "xs", "align": "center"}
+                    ]
+                }
+            ]
+        }
+    }
+
+    # 後續張：每5隻一張
+    CHUNK = 5
+    chunks = [records[i:i+CHUNK] for i in range(0, len(records), CHUNK)]
+    total_pages = len(chunks)
+    detail_bubbles = [
+        _closing_detail_bubble(chunk, i+1, total_pages, date_str)
+        for i, chunk in enumerate(chunks)
+    ]
+
+    # 組 Carousel（最多12張）
+    all_bubbles = [overview_bubble] + detail_bubbles
+    all_bubbles = all_bubbles[:12]
+
+    return {
+        "type": "flex",
+        "altText": f"📊 收盤統計｜{date_str}　{len(fired)}隻 勝率{win_rate}",
+        "contents": {
+            "type": "carousel",
+            "contents": all_bubbles
         }
     }
 
@@ -710,6 +895,7 @@ def send_pending_fire():
             "signals": item['signals'],
             "peak_pct": None,
             "trail_pct": None,
+            "noon_pct": None,
             "close_pct": None,
         })
 
@@ -951,6 +1137,7 @@ def send_golden_fire(items):
             "fire_time": now_str,
             "peak_pct": None,
             "trail_pct": None,
+            "noon_pct": None,
             "close_pct": None,
         })
 
@@ -1127,7 +1314,11 @@ def do_closing_summary():
 
     # 合併計算勝率
     fired = [r for r in all_records if r.get("fire_pct")]
-    won = [r for r in fired if r.get("high_pct") and r["high_pct"] >= 9.0]
+    won = [r for r in fired if (
+        r.get("trail_pct") is not None or
+        (r.get("close_pct") is not None and r["close_pct"] >= r["fire_pct"]) or
+        (r.get("high_pct") is not None and r["high_pct"] >= 9.0)
+    )]
     trailed = [r for r in fired if r.get("trail_pct")]
 
     flex = flex_closing(today_str, fired, won, trailed, fired)
@@ -1171,7 +1362,7 @@ def check_closing_time():
         update_golden_codes()
 
 def check_stocks():
-    global golden_snapshot_done
+    global golden_snapshot_done, noon_done_date
     now = now_taipei()
     print(f"監控中 {now.strftime('%H:%M:%S')} 交易時間：{is_trading_time()}", flush=True)
 
@@ -1251,6 +1442,13 @@ def check_stocks():
                 name = stock_data[code]["name"] or STOCK_TO_NAME.get(code, code)
                 add_to_tracking(code, name, group, pct)
 
+    # 12:00 停利提醒（stock_data 已抓好，在這裡觸發）
+    now2 = now_taipei()
+    today_str2 = now2.strftime("%Y-%m-%d")
+    if now2.hour == 12 and now2.minute == 0 and noon_done_date != today_str2 and now2.weekday() < 5:
+        noon_done_date = today_str2
+        do_noon_alert(stock_data)
+
 # ===== Flask路由 =====
 @app.route("/webhook", methods=["POST"])
 def webhook():
@@ -1301,15 +1499,45 @@ def test():
     send_flex(flex_golden_trail("台虹", "8039", 3.92, 5.80, 5.22, 5.10))
     time.sleep(0.5)
 
-    # 6. 📊 收盤統計（模擬）
+    # 6. 🕛 12:00 停利提醒（模擬）
+    mock_holdings = [
+        ("聯亞", "3081", 5.20, 3.92),
+        ("臺慶科", "3357", 4.80, 5.02),
+        ("台虹", "8039", 6.10, 4.25),
+    ]
+    send_flex(flex_noon(mock_holdings, now_str))
+    time.sleep(0.5)
+
+    # 7. 📊 收盤統計（模擬 21 隻）
     mock_records = [
         {"code":"3081","name":"聯亞","source":"group","fire_pct":3.92,"high_pct":9.1,"trail_pct":None},
         {"code":"3357","name":"臺慶科","source":"group","fire_pct":5.02,"high_pct":6.8,"trail_pct":5.65},
         {"code":"8039","name":"台虹","source":"golden","fire_pct":4.25,"high_pct":9.3,"trail_pct":None},
         {"code":"6207","name":"雷科","source":"group","fire_pct":4.60,"high_pct":4.1,"trail_pct":None},
+        {"code":"3105","name":"穩懋","source":"group","fire_pct":3.55,"high_pct":9.5,"trail_pct":None},
+        {"code":"3363","name":"上詮","source":"group","fire_pct":4.10,"high_pct":7.2,"trail_pct":4.80},
+        {"code":"6442","name":"光聖","source":"group","fire_pct":3.80,"high_pct":9.2,"trail_pct":None},
+        {"code":"2327","name":"國巨","source":"group","fire_pct":3.20,"high_pct":3.5,"trail_pct":None},
+        {"code":"3042","name":"晶技","source":"golden","fire_pct":4.50,"high_pct":9.6,"trail_pct":None},
+        {"code":"2481","name":"強茂","source":"group","fire_pct":3.70,"high_pct":5.1,"trail_pct":None},
+        {"code":"3017","name":"奇鋐","source":"group","fire_pct":3.30,"high_pct":9.0,"trail_pct":None},
+        {"code":"3324","name":"雙鴻","source":"group","fire_pct":4.20,"high_pct":6.3,"trail_pct":5.10},
+        {"code":"2317","name":"鴻海","source":"group","fire_pct":3.10,"high_pct":4.0,"trail_pct":None},
+        {"code":"6669","name":"緯穎","source":"group","fire_pct":5.20,"high_pct":9.8,"trail_pct":None},
+        {"code":"3035","name":"智原","source":"group","fire_pct":3.90,"high_pct":9.1,"trail_pct":None},
+        {"code":"3661","name":"世芯-KY","source":"golden","fire_pct":4.80,"high_pct":8.5,"trail_pct":None},
+        {"code":"6285","name":"啟碁","source":"group","fire_pct":3.40,"high_pct":9.3,"trail_pct":None},
+        {"code":"2344","name":"華邦電","source":"group","fire_pct":3.60,"high_pct":3.8,"trail_pct":None},
+        {"code":"3037","name":"欣興","source":"group","fire_pct":4.30,"high_pct":9.5,"trail_pct":None},
+        {"code":"6239","name":"力成","source":"group","fire_pct":3.75,"high_pct":7.8,"trail_pct":6.20},
+        {"code":"2395","name":"研華","source":"golden","fire_pct":4.10,"high_pct":9.2,"trail_pct":None},
     ]
     fired = mock_records
-    won = [r for r in fired if r.get("high_pct") and r["high_pct"] >= 9.0]
+    won = [r for r in fired if (
+        r.get("trail_pct") is not None or
+        (r.get("close_pct") is not None and r["close_pct"] >= r.get("fire_pct", 0)) or
+        (r.get("high_pct") is not None and r["high_pct"] >= 9.0)
+    )]
     trailed = [r for r in fired if r.get("trail_pct")]
     send_flex(flex_closing(now_taipei().strftime("%Y-%m-%d"), fired, won, trailed, fired))
 
