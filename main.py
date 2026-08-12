@@ -1539,7 +1539,7 @@ def check_stocks():
 
     # 黃金奇點：09:10固定快照一次
     now = now_taipei()
-    if now.hour == 9 and now.minute == 0 and not golden_snapshot_done:
+    if now.hour == 9 and now.minute == 10 and not golden_snapshot_done:
         count = 0
         for code in golden_codes:
             if code in golden_tracking or code not in stock_data:
@@ -1550,7 +1550,7 @@ def check_stocks():
                 add_to_golden_tracking(code, name, pct)
                 count += 1
         golden_snapshot_done = True
-        print(f"⭐ 09:00快照完成！共{count}隻黃金奇點股票加入追蹤", flush=True)
+        print(f"⭐ 09:10快照完成！共{count}隻黃金奇點股票加入追蹤", flush=True)
         if count > 0:
             names = [golden_tracking[c]["name"] for c in list(golden_tracking.keys())[:10]]
             print(f"⭐ 追蹤名單：{', '.join(names)}", flush=True)
