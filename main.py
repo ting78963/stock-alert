@@ -1093,6 +1093,18 @@ def process_tracking(stock_data):
         pending_fire = fire_batch
         send_pending_fire()
 
+def get_last_trading_date():
+    """取得最近一個交易日（週一往前推到週五）"""
+    now = now_taipei()
+    d = now.date()
+    # 如果今天還沒收盤（13:30前），往前一天
+    if now.hour < 14:
+        d -= __import__('datetime').timedelta(days=1)
+    # 跳過週末
+    while d.weekday() >= 5:
+        d -= __import__('datetime').timedelta(days=1)
+    return d
+
 def update_golden_codes():
     """收盤後抓全市場101~130元的股票（上市+上櫃），建立黃金奇點清單"""
     global golden_codes, golden_update_date
@@ -1104,9 +1116,12 @@ def update_golden_codes():
     print("⭐ 更新黃金奇點清單...", flush=True)
     all_found = {}  # code -> name
 
+    last_trade = get_last_trading_date()
+    date_str = last_trade.strftime("%Y%m%d")
+    print(f"⭐ 使用交易日：{last_trade}", flush=True)
+
     # ===== 上市（TWSE）=====
     try:
-        date_str = now.strftime("%Y%m%d")
         twse_url = f"https://www.twse.com.tw/exchangeReport/MI_INDEX?response=json&date={date_str}&type=ALLBUT0999"
         res = requests.get(twse_url, timeout=15)
         data = res.json()
@@ -1128,13 +1143,10 @@ def update_golden_codes():
 
     # ===== 上櫃（TPEx）=====
     try:
-        import datetime
-        d = now.strftime("%Y/%m/%d")
-        # TPEx 日期格式用民國年
-        roc_year = now.year - 1911
-        d_roc = f"{roc_year}/{now.strftime('%m/%d')}"
+        roc_year = last_trade.year - 1911
+        d_roc = f"{roc_year}/{last_trade.strftime('%m/%d')}"
         otc_url = f"https://www.tpex.org.tw/web/stock/aftertrading/daily_close_quotes/stk_quote_result.php?d={d_roc}&s=0,asc&o=json"
-        res = requests.get(otc_url, timeout=15)
+        res = requests.get(otc_url, timeout=15, verify=False)
         data = res.json()
         count_before = len(all_found)
         for row in data.get("aaData", []):
