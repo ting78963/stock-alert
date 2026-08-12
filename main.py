@@ -13,6 +13,7 @@ app = Flask(__name__)
 LINE_TOKEN = os.environ.get("LINE_TOKEN", "")
 GROUP_ID = os.environ.get("GROUP_ID", "")
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
+FINMIND_TOKEN = os.environ.get("FINMIND_TOKEN", "")
 
 TZ = timezone(timedelta(hours=8))
 
@@ -1095,87 +1096,71 @@ def process_tracking(stock_data):
 
 def get_last_trading_date():
     """取得最近一個交易日（週一往前推到週五）"""
+    import datetime as dt
     now = now_taipei()
     d = now.date()
-    # 如果今天還沒收盤（13:30前），往前一天
     if now.hour < 14:
-        d -= __import__('datetime').timedelta(days=1)
-    # 跳過週末
+        d -= dt.timedelta(days=1)
     while d.weekday() >= 5:
-        d -= __import__('datetime').timedelta(days=1)
+        d -= dt.timedelta(days=1)
     return d
 
 def update_golden_codes():
-    """收盤後抓全市場101~130元的股票（上市+上櫃），建立黃金奇點清單"""
+    """用 FinMind 抓前一交易日全市場收盤價，篩選101~130元，建立黃金奇點清單"""
     global golden_codes, golden_update_date
     now = now_taipei()
     today_str = now.strftime("%Y-%m-%d")
     if golden_update_date == today_str:
         return
 
-    print("⭐ 更新黃金奇點清單...", flush=True)
+    print("⭐ 更新黃金奇點清單（FinMind）...", flush=True)
     all_found = {}  # code -> name
 
     last_trade = get_last_trading_date()
-    date_str = last_trade.strftime("%Y%m%d")
-    print(f"⭐ 使用交易日：{last_trade}", flush=True)
+    date_str = last_trade.strftime("%Y-%m-%d")
+    print(f"⭐ 使用交易日：{date_str}", flush=True)
 
-    # ===== 上市（TWSE）=====
     try:
-        twse_url = f"https://www.twse.com.tw/exchangeReport/MI_INDEX?response=json&date={date_str}&type=ALLBUT0999"
-        res = requests.get(twse_url, timeout=15)
+        url = "https://api.finmindtrade.com/api/v4/data"
+        params = {
+            "dataset": "TaiwanStockPrice",
+            "start_date": date_str,
+            "end_date": date_str,
+            "token": FINMIND_TOKEN,
+        }
+        res = requests.get(url, params=params, timeout=30)
         data = res.json()
-        for row in data.get("data9", []):
+
+        if data.get("status") != 200:
+            print(f"⭐ FinMind 回傳錯誤：{data.get('msg')}", flush=True)
+            return None
+
+        records = data.get("data", [])
+        print(f"⭐ FinMind 共回傳 {len(records)} 筆", flush=True)
+
+        for row in records:
             try:
-                code = row[0].strip()
-                name = row[1].strip()
-                close_str = row[8].replace(",", "").strip()
-                if not close_str or close_str == "--":
-                    continue
-                close = float(close_str)
+                code = str(row.get("stock_id", "")).strip()
+                close = float(row.get("close", 0))
                 if 101 <= close <= 130:
+                    # 名稱從 STOCK_TO_NAME 找，找不到就用代號
+                    name = STOCK_TO_NAME.get(code, code)
                     all_found[code] = name
             except:
                 continue
-        print(f"⭐ 上市掃描完成：{len(all_found)}隻", flush=True)
-    except Exception as e:
-        print(f"⭐ 上市掃描失敗：{e}", flush=True)
 
-    # ===== 上櫃（TPEx）=====
-    try:
-        roc_year = last_trade.year - 1911
-        d_roc = f"{roc_year}/{last_trade.strftime('%m/%d')}"
-        otc_url = f"https://www.tpex.org.tw/web/stock/aftertrading/daily_close_quotes/stk_quote_result.php?d={d_roc}&s=0,asc&o=json"
-        res = requests.get(otc_url, timeout=15, verify=False)
-        data = res.json()
-        count_before = len(all_found)
-        for row in data.get("aaData", []):
-            try:
-                code = str(row[0]).strip()
-                name = str(row[1]).strip()
-                close_str = str(row[2]).replace(",", "").strip()
-                if not close_str or close_str == "--":
-                    continue
-                close = float(close_str)
-                if 101 <= close <= 130:
-                    all_found[code] = name
-            except:
-                continue
-        otc_count = len(all_found) - count_before
-        print(f"⭐ 上櫃掃描完成：新增{otc_count}隻", flush=True)
+        print(f"⭐ 篩選完成：{len(all_found)}隻（101~130元）", flush=True)
+
     except Exception as e:
-        print(f"⭐ 上櫃掃描失敗：{e}", flush=True)
+        print(f"⭐ FinMind 抓取失敗：{e}", flush=True)
 
     if not all_found:
-        print("⭐ 黃金奇點更新失敗：上市+上櫃都抓不到資料", flush=True)
+        print("⭐ 黃金奇點更新失敗：沒有抓到任何資料", flush=True)
         return None
 
     golden_codes = set(all_found.keys())
-    for code, name in all_found.items():
-        if code not in STOCK_TO_NAME or not STOCK_TO_NAME[code]:
-            STOCK_TO_NAME[code] = name
     golden_update_date = today_str
-    print(f"⭐ 黃金奇點更新完成：共{len(golden_codes)}隻（上市+上櫃，101~130元）", flush=True)
+    print(f"⭐ 黃金奇點更新完成：共{len(golden_codes)}隻", flush=True)
     return all_found
 
 def add_to_golden_tracking(code, name, start_pct):
