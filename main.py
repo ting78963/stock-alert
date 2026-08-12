@@ -1094,48 +1094,77 @@ def process_tracking(stock_data):
         send_pending_fire()
 
 def update_golden_codes():
-    """收盤後抓全市場101~130元的股票，建立黃金奇點清單"""
+    """收盤後抓全市場101~130元的股票（上市+上櫃），建立黃金奇點清單"""
     global golden_codes, golden_update_date
     now = now_taipei()
     today_str = now.strftime("%Y-%m-%d")
     if golden_update_date == today_str:
-        return  # 今天已更新過
+        return
 
     print("⭐ 更新黃金奇點清單...", flush=True)
+    all_found = {}  # code -> name
 
-    # 抓上市股票（tse）
-    all_found = set()
+    # ===== 上市（TWSE）=====
     try:
-        # 用TWSE API抓全部股票即時資料
-        url = "https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=tse_2330.tw&json=1&delay=0"
-        # 先抓上市全部
-        url_all = "https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=tse_%s.tw&json=1&delay=0"
-
-        # 用TWSE每日收盤資料API
         date_str = now.strftime("%Y%m%d")
         twse_url = f"https://www.twse.com.tw/exchangeReport/MI_INDEX?response=json&date={date_str}&type=ALLBUT0999"
         res = requests.get(twse_url, timeout=15)
         data = res.json()
-
-        # 上市股票
         for row in data.get("data9", []):
             try:
                 code = row[0].strip()
+                name = row[1].strip()
                 close_str = row[8].replace(",", "").strip()
                 if not close_str or close_str == "--":
                     continue
                 close = float(close_str)
                 if 101 <= close <= 130:
-                    all_found.add(code)
+                    all_found[code] = name
             except:
                 continue
-
-        print(f"⭐ 黃金奇點更新完成：{len(all_found)}隻（101~130元）", flush=True)
-        golden_codes = all_found
-        golden_update_date = today_str
-
+        print(f"⭐ 上市掃描完成：{len(all_found)}隻", flush=True)
     except Exception as e:
-        print(f"⭐ 黃金奇點更新失敗：{e}", flush=True)
+        print(f"⭐ 上市掃描失敗：{e}", flush=True)
+
+    # ===== 上櫃（TPEx）=====
+    try:
+        import datetime
+        d = now.strftime("%Y/%m/%d")
+        # TPEx 日期格式用民國年
+        roc_year = now.year - 1911
+        d_roc = f"{roc_year}/{now.strftime('%m/%d')}"
+        otc_url = f"https://www.tpex.org.tw/web/stock/aftertrading/daily_close_quotes/stk_quote_result.php?d={d_roc}&s=0,asc&o=json"
+        res = requests.get(otc_url, timeout=15)
+        data = res.json()
+        count_before = len(all_found)
+        for row in data.get("aaData", []):
+            try:
+                code = str(row[0]).strip()
+                name = str(row[1]).strip()
+                close_str = str(row[2]).replace(",", "").strip()
+                if not close_str or close_str == "--":
+                    continue
+                close = float(close_str)
+                if 101 <= close <= 130:
+                    all_found[code] = name
+            except:
+                continue
+        otc_count = len(all_found) - count_before
+        print(f"⭐ 上櫃掃描完成：新增{otc_count}隻", flush=True)
+    except Exception as e:
+        print(f"⭐ 上櫃掃描失敗：{e}", flush=True)
+
+    if not all_found:
+        print("⭐ 黃金奇點更新失敗：上市+上櫃都抓不到資料", flush=True)
+        return None
+
+    golden_codes = set(all_found.keys())
+    for code, name in all_found.items():
+        if code not in STOCK_TO_NAME or not STOCK_TO_NAME[code]:
+            STOCK_TO_NAME[code] = name
+    golden_update_date = today_str
+    print(f"⭐ 黃金奇點更新完成：共{len(golden_codes)}隻（上市+上櫃，101~130元）", flush=True)
+    return all_found
 
 def add_to_golden_tracking(code, name, start_pct):
     """加入黃金奇點追蹤"""
@@ -1522,6 +1551,22 @@ def check_stocks():
         do_noon_alert(stock_data)
 
 # ===== Flask路由 =====
+@app.route("/golden_test")
+def golden_test():
+    """強制重跑黃金奇點清單，列出所有抓到的股票"""
+    global golden_update_date
+    golden_update_date = None  # 強制重跑
+    result = update_golden_codes()
+    if result is None:
+        return "❌ 抓取失敗，請看 Render logs", 500
+
+    # 按股票代號排序輸出
+    lines = [f"⭐ 黃金奇點清單（101~130元）共 {len(result)} 隻"]
+    lines.append("=" * 30)
+    for code in sorted(result.keys()):
+        name = result[code]
+        lines.append(f"{code}　{name}")
+    return "<br>".join(lines), 200, {"Content-Type": "text/html; charset=utf-8"}
 @app.route("/webhook", methods=["POST"])
 def webhook():
     body = request.get_json()
