@@ -117,6 +117,8 @@ golden_codes = set()       # 101~130元的股票代號（收盤後更新）
 golden_tracking = {}       # 獨立追蹤字典（邏輯與tracking相同）
 golden_update_date = None  # 上次更新黃金奇點清單的日期
 golden_snapshot_done = False  # 今天09:10快照是否已完成
+opening_peak = {}             # 09:00~09:10 每隻股票最高漲幅
+opening_peak_done = False     # 09:10 快照是否完成
 
 # 待發🔥訊號（批次合併發送）
 pending_fire = []
@@ -830,10 +832,11 @@ def on_group_limit_up(code, group, stock_data):
             if other_code == code or other_code in notified_limit_up:
                 continue
             if other_code in stock_data:
-                other_pct = stock_data[other_code]["pct"]
                 other_name = stock_data[other_code]["name"] or STOCK_TO_NAME.get(other_code, other_code)
-                if TRACK_MIN_PCT <= other_pct and other_code not in tracking and can_add_new_tracking():
-                    add_to_tracking(other_code, other_name, group, other_pct)
+                # 用 opening_peak 最高點當起始點，沒記錄就不追
+                start = opening_peak.get(other_code)
+                if start and start >= TRACK_MIN_PCT and other_code not in tracking and can_add_new_tracking():
+                    add_to_tracking(other_code, other_name, group, start)
         return
 
     # 建立同族群股票漲幅列表（3%以上）
@@ -851,12 +854,14 @@ def on_group_limit_up(code, group, stock_data):
             group_stocks_lines.append((other_code, other_name, other_pct, True))
         elif other_pct >= TRACK_MIN_PCT:
             group_stocks_lines.append((other_code, other_name, other_pct, False))
-            # 加入追蹤
+            # 用 opening_peak 最高點當起始點，沒記錄就不追
             if other_code not in tracking:
-                add_to_tracking(other_code, other_name, group, other_pct)
+                start = opening_peak.get(other_code)
+                if start and start >= TRACK_MIN_PCT:
+                    add_to_tracking(other_code, other_name, group, start)
 
-    # 判斷今日資金進駐
-    has_momentum = any(p >= TRACK_MIN_PCT for _, _, p, _ in group_stocks_lines)
+    # 判斷今日資金進駐（同族群已有3支以上漲停）
+    has_momentum = group_limit_up_count.get(group, 0) >= 3
     momentum_tag = "今日資金進駐 ✅" if has_momentum else "今日資金進駐 ❌"
 
     # 發漲停通知（Flex）
@@ -874,6 +879,12 @@ def send_pending_fire():
 
     now = now_taipei()
     now_str = now.strftime("%H:%M")
+
+    # 12:00 後不發新🔥
+    if now.hour >= 12:
+        print("12:00後不發新🔥，清空pending_fire", flush=True)
+        pending_fire = []
+        return
 
     for item in pending_fire:
         flex = flex_fire(
@@ -898,6 +909,8 @@ def send_pending_fire():
             "trail_pct": None,
             "noon_pct": None,
             "close_pct": None,
+            "exit_type": None,
+            "exit_pct": None,
         })
 
     pending_fire = []
@@ -950,16 +963,26 @@ def process_tracking(stock_data):
                             if r["code"] == code and r["trail_pct"] is None:
                                 r["peak_pct"] = peak_pct
                                 r["trail_pct"] = pct
+                                r["exit_type"] = "trail"
+                                r["exit_pct"] = pct
                                 break
 
                     # 不移除tracking！重設狀態等待下次🔥(B)
+                    trail_count = tracking[code].get("trail_count", 0) + 1
+                    if trail_count >= 2:
+                        # 同一天已停利一次，不再追蹤
+                        del tracking[code]
+                        print(f"🚫 {name} {code} 已停利{trail_count}次，停止追蹤", flush=True)
+                        continue
+                    tracking[code]["trail_count"] = trail_count
                     tracking[code]["fired"] = False
                     tracking[code]["fire_pct"] = None
                     tracking[code]["peak_pct"] = None
                     tracking[code]["notified_fire"] = False
-                    tracking[code]["had_pullback"] = True  # 保留，視為已有回落
-                    # spark_pct / start_pct 不變
-                    print(f"↩️ 重設tracking {name} {code}，等待下次進場", flush=True)
+                    tracking[code]["had_pullback"] = True
+                    tracking[code]["start_pct"] = pct  # 更新起始點為當下漲幅
+                    tracking[code]["spark_pct"] = None  # 重設⚡
+                    print(f"↩️ 重設tracking {name} {code}，等待下次進場（第{trail_count}次）", flush=True)
             continue
 
         # ===== 還沒🔥：分兩條路線 =====
@@ -967,7 +990,7 @@ def process_tracking(stock_data):
         if is_high_start:
             # ===== 起始5%以上：等回落→回起始×1.05 → 🔥(B) =====
             warn_threshold = round(start_pct * WARN_RATIO, 2)
-            fire_threshold = round(start_pct * 1.05, 2)
+            fire_threshold = start_pct
 
             if not had_pullback:
                 if pct <= warn_threshold:
@@ -999,7 +1022,7 @@ def process_tracking(stock_data):
                             print(f"⭐黃金奇點優先，族群跳過 {name} {code}", flush=True)
                     print(f"🔥高起始 {name} {code} +{pct:.2f}% {'✅通知' if notified else '❌靜默'}", flush=True)
 
-        elif 4.6 <= start_pct < 5.0:
+        elif 4.66 <= start_pct:
             # ===== 起始4.6~4.9%：⚡×1.25 → 回落 → 反彈回⚡點 → 🔥 =====
             spark_pct = t["spark_pct"]
 
@@ -1252,6 +1275,8 @@ def send_golden_fire(items):
             "trail_pct": None,
             "noon_pct": None,
             "close_pct": None,
+            "exit_type": None,
+            "exit_pct": None,
         })
 
 def process_golden_tracking(stock_data):
@@ -1311,7 +1336,7 @@ def process_golden_tracking(stock_data):
         if is_high_start:
             # 起始5%以上：等回落→回起始×1.05
             warn_threshold = round(start_pct * WARN_RATIO, 2)
-            fire_threshold = round(start_pct * 1.05, 2)
+            fire_threshold = start_pct
 
             if not had_pullback:
                 if pct <= warn_threshold:
@@ -1329,7 +1354,7 @@ def process_golden_tracking(stock_data):
                     if notified:
                         fire_batch.append({"code": code, "name": name,
                             "start_pct": start_pct, "fire_pct": pct})
-        elif 4.6 <= start_pct < 5.0:
+        elif 4.66 <= start_pct:
             # 起始4.6~4.9%：⚡×1.25→⚠️→反彈回⚡點
             spark_pct = t["spark_pct"]
 
@@ -1510,12 +1535,14 @@ def check_closing_time():
         update_golden_codes()
 
 def check_stocks():
-    global golden_snapshot_done, noon_done_date
+    global golden_snapshot_done, noon_done_date, opening_peak_done
     now = now_taipei()
     print(f"監控中 {now.strftime('%H:%M:%S')} 交易時間：{is_trading_time()}", flush=True)
 
     if not is_trading_time():
-        notified_limit_up.clear()
+        t = now.hour * 60 + now.minute
+        if t >= 13*60+36:
+            notified_limit_up.clear()
         group_limit_up_count.clear()
         group_triggered.clear()
         tracking.clear()
@@ -1523,6 +1550,8 @@ def check_stocks():
         daily_records.clear()
         golden_records.clear()
         golden_snapshot_done = False
+        opening_peak.clear()
+        opening_peak_done = False
         return
 
     # 抓所有股票資料（含黃金奇點）
@@ -1537,17 +1566,27 @@ def check_stocks():
     # 處理族群追蹤
     process_tracking(stock_data)
 
-    # 黃金奇點：09:10固定快照一次
+    # 09:00~09:10：記錄所有股票最高漲幅
+    if now.hour == 9 and now.minute < 10 and not opening_peak_done:
+        for code, data in stock_data.items():
+            pct = data.get("pct", 0)
+            if pct >= TRACK_MIN_PCT:
+                if code not in opening_peak or pct > opening_peak[code]:
+                    opening_peak[code] = pct
+
+    # 黃金奇點：09:10固定快照一次（用 opening_peak 最高點當起始點）
     now = now_taipei()
     if now.hour == 9 and now.minute == 10 and not golden_snapshot_done:
+        opening_peak_done = True
         count = 0
         for code in golden_codes:
             if code in golden_tracking or code not in stock_data:
                 continue
-            pct = stock_data[code]["pct"]
-            if pct >= TRACK_MIN_PCT:
+            # 用 09:00~09:10 最高點，沒記錄（<3%）就不追
+            start = opening_peak.get(code)
+            if start and start >= TRACK_MIN_PCT:
                 name = stock_data[code]["name"] or STOCK_TO_NAME.get(code, code)
-                add_to_golden_tracking(code, name, pct)
+                add_to_golden_tracking(code, name, start)
                 count += 1
         golden_snapshot_done = True
         print(f"⭐ 09:10快照完成！共{count}隻黃金奇點股票加入追蹤", flush=True)
@@ -1716,6 +1755,8 @@ def golden_status():
         "golden_tracking": len(golden_tracking),
         "sample": list(golden_codes)[:10],
     }
+
+@app.route("/status")
 def status():
     now = now_taipei()
     return {
