@@ -1105,8 +1105,21 @@ def get_last_trading_date():
         d -= dt.timedelta(days=1)
     return d
 
+# 黃金奇點排除產業
+GOLDEN_EXCLUDE_INDUSTRIES = {
+    "金融保險", "金融業", "銀行業", "證券", "保險",
+    "觀光餐旅", "觀光事業",
+    "貿易百貨", "百貨",
+    "建材營造", "建設",
+    "食品工業", "食品",
+    "造紙工業", "造紙",
+    "文化創意業", "文化創意",
+    "生技醫療", "生物科技",
+    "航運業", "航運",
+}
+
 def update_golden_codes():
-    """用 FinMind 抓前一交易日全市場收盤價，篩選101~130元，建立黃金奇點清單"""
+    """用 FinMind 抓前一交易日收盤價+產業，篩選101~130元，排除特定產業"""
     global golden_codes, golden_update_date
     now = now_taipei()
     today_str = now.strftime("%Y-%m-%d")
@@ -1114,55 +1127,88 @@ def update_golden_codes():
         return
 
     print("⭐ 更新黃金奇點清單（FinMind）...", flush=True)
-    all_found = {}  # code -> name
 
     last_trade = get_last_trading_date()
     date_str = last_trade.strftime("%Y-%m-%d")
     print(f"⭐ 使用交易日：{date_str}", flush=True)
 
+    # Step 1：抓股票基本資料（名稱+產業）
+    stock_info = {}
     try:
-        url = "https://api.finmindtrade.com/api/v4/data"
-        params = {
-            "dataset": "TaiwanStockPrice",
-            "start_date": date_str,
-            "end_date": date_str,
-            "token": FINMIND_TOKEN,
-        }
-        res = requests.get(url, params=params, timeout=30)
+        res = requests.get("https://api.finmindtrade.com/api/v4/data",
+            params={"dataset": "TaiwanStockInfo", "token": FINMIND_TOKEN},
+            timeout=30)
+        data = res.json()
+        if data.get("status") == 200:
+            for row in data.get("data", []):
+                code = str(row.get("stock_id", "")).strip()
+                if not code.isdigit() or len(code) != 4:
+                    continue
+                stock_info[code] = {
+                    "name": row.get("stock_name", code),
+                    "industry": row.get("industry_category", ""),
+                }
+            print(f"⭐ 股票基本資料：{len(stock_info)}隻", flush=True)
+        else:
+            print(f"⭐ TaiwanStockInfo 失敗：{data.get('msg')}", flush=True)
+    except Exception as e:
+        print(f"⭐ TaiwanStockInfo 錯誤：{e}", flush=True)
+
+    # Step 2：抓收盤價，篩選 101~130，排除產業
+    all_found = {}
+    try:
+        res = requests.get("https://api.finmindtrade.com/api/v4/data",
+            params={
+                "dataset": "TaiwanStockPrice",
+                "start_date": date_str,
+                "end_date": date_str,
+                "token": FINMIND_TOKEN,
+            }, timeout=30)
         data = res.json()
 
         if data.get("status") != 200:
-            print(f"⭐ FinMind 回傳錯誤：{data.get('msg')}", flush=True)
+            print(f"⭐ TaiwanStockPrice 失敗：{data.get('msg')}", flush=True)
             return None
 
         records = data.get("data", [])
-        print(f"⭐ FinMind 共回傳 {len(records)} 筆", flush=True)
+        print(f"⭐ 收盤價共 {len(records)} 筆", flush=True)
 
         for row in records:
             try:
                 code = str(row.get("stock_id", "")).strip()
+                # 只保留 4 位純數字（排除 ETF、特殊商品）
+                if not code.isdigit() or len(code) != 4:
+                    continue
                 close = float(row.get("close", 0))
-                if 101 <= close <= 130:
-                    # 名稱從 STOCK_TO_NAME 找，找不到就用代號
-                    name = STOCK_TO_NAME.get(code, code)
-                    all_found[code] = name
+                if not (101 <= close <= 130):
+                    continue
+                # 排除特定產業
+                industry = stock_info.get(code, {}).get("industry", "")
+                if any(ex in industry for ex in GOLDEN_EXCLUDE_INDUSTRIES):
+                    continue
+                name = stock_info.get(code, {}).get("name", code)
+                all_found[code] = {"name": name, "close": close}
             except:
                 continue
 
-        print(f"⭐ 篩選完成：{len(all_found)}隻（101~130元）", flush=True)
+        print(f"⭐ 篩選完成：{len(all_found)}隻（101~130元，已排除特定產業）", flush=True)
 
     except Exception as e:
-        print(f"⭐ FinMind 抓取失敗：{e}", flush=True)
+        print(f"⭐ TaiwanStockPrice 錯誤：{e}", flush=True)
 
     if not all_found:
         print("⭐ 黃金奇點更新失敗：沒有抓到任何資料", flush=True)
         return None
 
+    # 補充名稱到 STOCK_TO_NAME
+    for code, info in all_found.items():
+        if code not in STOCK_TO_NAME or not STOCK_TO_NAME[code]:
+            STOCK_TO_NAME[code] = info["name"]
+
     golden_codes = set(all_found.keys())
     golden_update_date = today_str
     print(f"⭐ 黃金奇點更新完成：共{len(golden_codes)}隻", flush=True)
     return all_found
-
 def add_to_golden_tracking(code, name, start_pct):
     """加入黃金奇點追蹤"""
     if code in golden_tracking:
@@ -1561,8 +1607,10 @@ def golden_test():
     lines = [f"⭐ 黃金奇點清單（101~130元）共 {len(result)} 隻"]
     lines.append("=" * 30)
     for code in sorted(result.keys()):
-        name = result[code]
-        lines.append(f"{code}　{name}")
+        info = result[code]
+        name = info["name"] if isinstance(info, dict) else info
+        close = info["close"] if isinstance(info, dict) else ""
+        lines.append(f"{code}　{name}　${close}")
     return "<br>".join(lines), 200, {"Content-Type": "text/html; charset=utf-8"}
 @app.route("/webhook", methods=["POST"])
 def webhook():
