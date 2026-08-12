@@ -1182,6 +1182,10 @@ def update_golden_codes():
                 close = float(row.get("close", 0))
                 if not (101 <= close <= 130):
                     continue
+                # 流動性篩選：成交量 >= 4000張
+                volume = float(row.get("Trading_Volume", 0)) / 1000
+                if volume < 4000:
+                    continue
                 # 排除特定產業
                 industry = stock_info.get(code, {}).get("industry", "")
                 if any(ex in industry for ex in GOLDEN_EXCLUDE_INDUSTRIES):
@@ -1582,7 +1586,7 @@ def check_stocks():
             if code not in stock_data:
                 continue
             pct = stock_data[code]["pct"]
-            if TRACK_MIN_PCT <= pct and can_add_spark():
+            if TRACK_MIN_PCT <= pct and can_add_new_tracking():
                 name = stock_data[code]["name"] or STOCK_TO_NAME.get(code, code)
                 add_to_tracking(code, name, group, pct)
 
