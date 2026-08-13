@@ -154,5 +154,43 @@
       "close_pct": 5.25,
       "high_pct": 6.85
     }
+  ],
+  "2026-08-13": [
+    {
+      "code": "8042",
+      "name": "金山電",
+      "group": "被動元件",
+      "source": "group",
+      "start_pct": 5.75,
+      "fire_pct": 6.19,
+      "fire_type": "HIGH",
+      "fire_time": "09:11",
+      "signals": "▶→⚠️→🔥",
+      "peak_pct": 7.96,
+      "trail_pct": 7.08,
+      "noon_pct": null,
+      "close_pct": null,
+      "exit_type": "trail",
+      "exit_pct": 7.08,
+      "high_pct": 8.85
+    },
+    {
+      "code": "3680",
+      "name": "家登",
+      "group": "半導體設備",
+      "source": "group",
+      "start_pct": 5.08,
+      "fire_pct": 5.08,
+      "fire_type": "HIGH",
+      "fire_time": "10:49",
+      "signals": "▶→⚠️→🔥",
+      "peak_pct": 5.64,
+      "trail_pct": 4.75,
+      "noon_pct": null,
+      "close_pct": null,
+      "exit_type": "trail",
+      "exit_pct": 4.75,
+      "high_pct": 6.08
+    }
   ]
 }
