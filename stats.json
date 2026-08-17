@@ -192,5 +192,23 @@
       "exit_pct": 4.75,
       "high_pct": 6.08
     }
+  ],
+  "2026-08-17": [
+    {
+      "code": "6451",
+      "name": "訊芯-KY",
+      "group": "光通訊",
+      "source": "group",
+      "start_pct": 3.17,
+      "fire_pct": 5.76,
+      "fire_time": "12:02",
+      "peak_pct": 5.76,
+      "trail_pct": 5.17,
+      "noon_pct": null,
+      "close_pct": 7.4,
+      "exit_type": "trail",
+      "exit_pct": 5.17,
+      "high_pct": 7.4
+    }
   ]
 }
