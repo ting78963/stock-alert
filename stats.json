@@ -230,5 +230,41 @@
       "exit_pct": 3.58,
       "high_pct": 7.16
     }
+  ],
+  "2026-08-21": [
+    {
+      "code": "6278",
+      "name": "台表科",
+      "group": "光通訊",
+      "source": "group",
+      "start_pct": 3.06,
+      "fire_pct": 5.0,
+      "fire_type": "B",
+      "fire_time": "10:04",
+      "signals": "▶→⚡→⚠️→🔥",
+      "peak_pct": 5.56,
+      "trail_pct": 5.0,
+      "noon_pct": null,
+      "close_pct": null,
+      "exit_type": "trail",
+      "exit_pct": 5.0,
+      "high_pct": 5.83
+    },
+    {
+      "code": "3163",
+      "name": "波若威",
+      "group": "光通訊",
+      "source": "group",
+      "start_pct": 3.26,
+      "fire_pct": 4.48,
+      "fire_time": "12:37",
+      "peak_pct": 5.16,
+      "trail_pct": 4.62,
+      "noon_pct": null,
+      "close_pct": 6.11,
+      "exit_type": "trail",
+      "exit_pct": 4.62,
+      "high_pct": 6.11
+    }
   ]
 }
