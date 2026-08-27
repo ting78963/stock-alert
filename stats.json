@@ -354,5 +354,41 @@
       "exit_pct": null,
       "high_pct": 6.5
     }
+  ],
+  "2026-08-27": [
+    {
+      "code": "4576",
+      "name": "大銀微系統",
+      "group": "機器人",
+      "source": "group",
+      "start_pct": 3.2,
+      "fire_pct": 5.91,
+      "fire_type": "B",
+      "fire_time": "09:56",
+      "signals": "▶→⚡→⚠️→🔥",
+      "peak_pct": 5.91,
+      "trail_pct": 4.93,
+      "noon_pct": null,
+      "close_pct": null,
+      "exit_type": "trail",
+      "exit_pct": 4.93,
+      "high_pct": 8.62
+    },
+    {
+      "code": "4931",
+      "name": "新盛力",
+      "group": "BBU備援電池",
+      "source": "group",
+      "start_pct": 3.33,
+      "fire_pct": 5.09,
+      "fire_time": "13:18",
+      "peak_pct": 5.09,
+      "trail_pct": 3.91,
+      "noon_pct": null,
+      "close_pct": null,
+      "exit_type": "trail",
+      "exit_pct": 3.91,
+      "high_pct": 5.28
+    }
   ]
 }
