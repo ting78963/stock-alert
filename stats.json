@@ -390,5 +390,23 @@
       "exit_pct": 3.91,
       "high_pct": 5.28
     }
+  ],
+  "2026-08-31": [
+    {
+      "code": "3441",
+      "name": "聯一光",
+      "group": "光學鏡頭",
+      "source": "group",
+      "start_pct": 3.85,
+      "fire_pct": 5.0,
+      "fire_time": "12:25",
+      "peak_pct": 5.77,
+      "trail_pct": 5.0,
+      "noon_pct": null,
+      "close_pct": 5.0,
+      "exit_type": "trail",
+      "exit_pct": 5.0,
+      "high_pct": 5.77
+    }
   ]
 }
