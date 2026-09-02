@@ -462,5 +462,23 @@
       "exit_pct": 3.7,
       "high_pct": 5.64
     }
+  ],
+  "2026-09-02": [
+    {
+      "code": "3362",
+      "name": "先進光",
+      "group": "光學鏡頭",
+      "source": "group",
+      "start_pct": 3.75,
+      "fire_pct": 5.0,
+      "fire_time": "13:30",
+      "peak_pct": null,
+      "trail_pct": null,
+      "noon_pct": null,
+      "close_pct": 5.0,
+      "exit_type": null,
+      "exit_pct": null,
+      "high_pct": 6.5
+    }
   ]
 }
