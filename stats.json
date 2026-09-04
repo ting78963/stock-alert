@@ -480,5 +480,61 @@
       "exit_pct": null,
       "high_pct": 6.5
     }
+  ],
+  "2026-09-04": [
+    {
+      "code": "4908",
+      "name": "前鼎",
+      "group": "光通訊",
+      "source": "group",
+      "start_pct": 3.18,
+      "fire_pct": 4.4,
+      "fire_type": "B",
+      "fire_time": "11:01",
+      "signals": "▶→⚡→⚠️→🔥",
+      "peak_pct": 4.4,
+      "trail_pct": 3.91,
+      "noon_pct": null,
+      "close_pct": 9.54,
+      "exit_type": "trail",
+      "exit_pct": 3.91,
+      "high_pct": 9.78
+    },
+    {
+      "code": "3357",
+      "name": "臺慶科",
+      "group": "被動元件",
+      "source": "group",
+      "start_pct": 3.45,
+      "fire_pct": 5.42,
+      "fire_type": "B",
+      "fire_time": "11:05",
+      "signals": "▶→⚡→⚠️→🔥",
+      "peak_pct": 5.42,
+      "trail_pct": 4.68,
+      "noon_pct": null,
+      "close_pct": 5.42,
+      "exit_type": "trail",
+      "exit_pct": 4.68,
+      "high_pct": 6.16
+    },
+    {
+      "code": "6640",
+      "name": "均華",
+      "group": "半導體設備",
+      "source": "group",
+      "start_pct": 3.38,
+      "fire_pct": 6.33,
+      "fire_type": "B",
+      "fire_time": "11:06",
+      "signals": "▶→⚡→⚠️→🔥",
+      "peak_pct": 6.33,
+      "trail_pct": 4.22,
+      "noon_pct": null,
+      "close_pct": 5.06,
+      "exit_type": "trail",
+      "exit_pct": 4.22,
+      "high_pct": 6.75
+    }
   ]
 }
