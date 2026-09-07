@@ -536,5 +536,61 @@
       "exit_pct": 4.22,
       "high_pct": 6.75
     }
+  ],
+  "2026-09-07": [
+    {
+      "code": "3624",
+      "name": "光頡",
+      "group": "被動元件",
+      "source": "group",
+      "start_pct": 4.08,
+      "fire_pct": 5.26,
+      "fire_type": "B",
+      "fire_time": "09:10",
+      "signals": "▶→⚡→⚠️→🔥",
+      "peak_pct": 8.37,
+      "trail_pct": 6.55,
+      "noon_pct": null,
+      "close_pct": null,
+      "exit_type": "trail",
+      "exit_pct": 6.55,
+      "high_pct": 9.44
+    },
+    {
+      "code": "2327",
+      "name": "國巨*",
+      "group": "被動元件",
+      "source": "group",
+      "start_pct": 3.02,
+      "fire_pct": 4.98,
+      "fire_type": "B",
+      "fire_time": "09:29",
+      "signals": "▶→⚡→⚠️→🔥",
+      "peak_pct": 4.98,
+      "trail_pct": 4.45,
+      "noon_pct": null,
+      "close_pct": 4.8,
+      "exit_type": "trail",
+      "exit_pct": 4.45,
+      "high_pct": 7.65
+    },
+    {
+      "code": "8358",
+      "name": "金居",
+      "group": "PCB高階",
+      "source": "group",
+      "start_pct": 3.0,
+      "fire_pct": 4.0,
+      "fire_type": "B",
+      "fire_time": "11:39",
+      "signals": "▶→⚡→⚠️→🔥",
+      "peak_pct": 4.0,
+      "trail_pct": 3.2,
+      "noon_pct": 2.8,
+      "close_pct": 3.0,
+      "exit_type": "trail",
+      "exit_pct": 3.2,
+      "high_pct": 4.8
+    }
   ]
 }
