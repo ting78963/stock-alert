@@ -646,5 +646,43 @@
       "exit_pct": 4.1,
       "high_pct": 6.61
     }
+  ],
+  "2026-09-16": [
+    {
+      "code": "4979",
+      "name": "華星光",
+      "group": "光通訊",
+      "source": "group",
+      "start_pct": 3.54,
+      "fire_pct": 4.52,
+      "fire_type": "B",
+      "fire_time": "09:37",
+      "signals": "▶→⚡→⚠️→🔥",
+      "peak_pct": 4.52,
+      "trail_pct": 3.93,
+      "noon_pct": null,
+      "close_pct": 7.47,
+      "exit_type": "trail",
+      "exit_pct": 3.93,
+      "high_pct": 7.47
+    },
+    {
+      "code": "4908",
+      "name": "前鼎",
+      "group": "光通訊",
+      "source": "group",
+      "start_pct": 4.02,
+      "fire_pct": 6.25,
+      "fire_type": "B",
+      "fire_time": "10:05",
+      "signals": "▶→⚡→⚠️→🔥",
+      "peak_pct": 6.25,
+      "trail_pct": 5.36,
+      "noon_pct": null,
+      "close_pct": 6.92,
+      "exit_type": "trail",
+      "exit_pct": 5.36,
+      "high_pct": 8.48
+    }
   ]
 }
