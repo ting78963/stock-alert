@@ -684,5 +684,59 @@
       "exit_pct": 5.36,
       "high_pct": 8.48
     }
+  ],
+  "2026-09-17": [
+    {
+      "code": "2489",
+      "name": "瑞軒",
+      "group": "光通訊",
+      "source": "group",
+      "start_pct": 3.39,
+      "fire_pct": 5.7,
+      "fire_type": "B",
+      "fire_time": "11:28",
+      "signals": "▶→⚡→⚠️→🔥",
+      "peak_pct": 6.79,
+      "trail_pct": 5.94,
+      "noon_pct": null,
+      "close_pct": 4.73,
+      "exit_type": "trail",
+      "exit_pct": 5.94,
+      "high_pct": 8.48
+    },
+    {
+      "code": "6530",
+      "name": "創威",
+      "group": "光通訊",
+      "source": "group",
+      "start_pct": 3.52,
+      "fire_pct": 4.55,
+      "fire_type": "B",
+      "fire_time": "11:56",
+      "signals": "▶→⚡→⚠️→🔥",
+      "peak_pct": 4.55,
+      "trail_pct": 4.04,
+      "noon_pct": null,
+      "close_pct": 3.31,
+      "exit_type": "trail",
+      "exit_pct": 4.04,
+      "high_pct": 5.07
+    },
+    {
+      "code": "8028",
+      "name": "昇陽半導體",
+      "group": "半導體設備",
+      "source": "group",
+      "start_pct": 4.08,
+      "fire_pct": 6.22,
+      "fire_time": "12:42",
+      "peak_pct": 6.44,
+      "trail_pct": 5.36,
+      "noon_pct": null,
+      "close_pct": null,
+      "exit_type": "trail",
+      "exit_pct": 5.36,
+      "high_pct": 7.08
+    }
   ]
 }
