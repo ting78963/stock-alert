@@ -738,5 +738,55 @@
       "exit_pct": 5.36,
       "high_pct": 7.08
     }
+  ],
+  "2026-09-18": [
+    {
+      "code": "2426",
+      "name": "鼎元",
+      "group": "LED",
+      "source": "group",
+      "start_pct": 3.44,
+      "fire_pct": 4.69,
+      "fire_time": "12:50",
+      "peak_pct": 4.69,
+      "trail_pct": 4.17,
+      "noon_pct": null,
+      "close_pct": 6.25,
+      "exit_type": "trail",
+      "exit_pct": 4.17,
+      "high_pct": 6.25
+    },
+    {
+      "code": "2421",
+      "name": "建準",
+      "group": "散熱",
+      "source": "group",
+      "start_pct": 3.09,
+      "fire_pct": 4.01,
+      "fire_time": "13:05",
+      "peak_pct": null,
+      "trail_pct": null,
+      "noon_pct": null,
+      "close_pct": 3.09,
+      "exit_type": null,
+      "exit_pct": null,
+      "high_pct": 4.32
+    },
+    {
+      "code": "8040",
+      "name": "九暘",
+      "group": "IC設計",
+      "source": "group",
+      "start_pct": 4.09,
+      "fire_pct": 6.0,
+      "fire_time": "13:22",
+      "peak_pct": null,
+      "trail_pct": null,
+      "noon_pct": null,
+      "close_pct": null,
+      "exit_type": null,
+      "exit_pct": null,
+      "high_pct": 6.64
+    }
   ]
 }
