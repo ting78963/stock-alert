@@ -1,0 +1,108 @@
+from __future__ import annotations
+import json,os,threading,time
+from datetime import datetime,timedelta
+from pathlib import Path
+from zoneinfo import ZoneInfo
+import pandas as pd
+from abc_buy_flex import abc_buy_flex
+from fugle_adapter import api_key,historical_1m,previous_context,DataError
+from trend_engine import bars_df,reconstruct_a2,candidate_type,replay_early
+
+TPE=ZoneInfo("Asia/Taipei")
+STATE_DIR=Path(os.environ.get("ABC_STATE_DIR","/tmp/stock-alert-abc"))
+STATE_DIR.mkdir(parents=True,exist_ok=True)
+_lock=threading.Lock()
+_watch={}
+_sent=set()
+_state_date=None
+
+def _clock(s): return str(s)[:8]
+def _today(): return datetime.now(TPE).date().isoformat()
+
+def _reset_day():
+    global _state_date
+    d=_today()
+    with _lock:
+        if d!=_state_date:
+            _state_date=d; _watch.clear(); _sent.clear()
+
+def _post_flex(msg,line_token,group_id):
+    import requests
+    if not line_token or not group_id:
+        print(json.dumps(msg,ensure_ascii=False),flush=True); return False
+    r=requests.post("https://api.line.me/v2/bot/message/push",
+      headers={"Authorization":f"Bearer {line_token}","Content-Type":"application/json"},
+      json={"to":group_id,"messages":[msg]},timeout=10)
+    print(f"LINE ABC: {r.status_code}",flush=True)
+    return 200<=r.status_code<300
+
+def discover(symbol,discovered_at=None,name=None):
+    """A hands a stock to B once. B owns all later trend tracking."""
+    _reset_day(); symbol=str(symbol).zfill(4)
+    discovered_at=discovered_at or datetime.now(TPE).strftime("%H:%M:%S")
+    with _lock:
+        if symbol in _watch:return False
+        _watch[symbol]={"discovered_at":_clock(discovered_at),"name":name}
+    print(f"B DISCOVER {symbol} at {discovered_at}",flush=True)
+    return True
+
+def _completed_cutoff():
+    # A bar labelled HH:MM is eligible only after that minute has completed.
+    n=datetime.now(TPE)
+    return (n-timedelta(minutes=1)).strftime("%H:%M:59")
+
+def _evaluate(symbol,meta,line_token,group_id):
+    date=_today(); cutoff=_completed_cutoff()
+    key=api_key(); rows=historical_1m(symbol,date,key)
+    rows=[r for r in rows if _clock(r["minute"])<=cutoff]
+    if not rows:return
+    pdate,pc,pv=previous_context(symbol,date,key)
+    d=bars_df(rows,date,symbol)
+    if d.empty:raise DataError("empty canonical minute store")
+    a2=reconstruct_a2(d,pc,pv)
+    if a2.get("attack_count",0)<2 or not a2.get("a2_upward"):return
+    cls=candidate_type(float(a2.get("a2_vr")),float(a2.get("early_high_pct")))
+    if cls=="NO_BUY":return
+    early=replay_early(d,a2.get("a2_end"))
+    if early.get("early_status")!="EARLY":return
+
+    recognition=_clock(early["early_time"])
+    discovered=_clock(meta["discovered_at"])
+    live_known=max(recognition,discovered)
+    event_id=f"{date}:{symbol}:{cls}:{recognition}:{live_known}"
+    with _lock:
+        if event_id in _sent:return
+
+    event={
+      "schema":"abc_signal_v1","date":date,"stock_id":symbol,"signal_class":cls,
+      "discovered_at":discovered,"recognition_time":recognition,"live_known_time":live_known,
+      "a2_end":_clock(a2.get("a2_end")),"a2_vr":float(a2.get("a2_vr")),
+      "early_high_pct":float(a2.get("early_high_pct")),"frozen_early_price":float(early.get("early_price")),
+      "late_discovery":recognition<discovered,"source":"Fugle","line_sent":False,
+      "prior_trading_date":pdate
+    }
+    ok=_post_flex(abc_buy_flex(event,meta.get("name")),line_token,group_id)
+    if not ok:return
+    event["line_sent"]=True
+    with _lock:_sent.add(event_id)
+    p=STATE_DIR/f"{date}_{symbol}_{cls}.json"
+    p.write_text(json.dumps(event,ensure_ascii=False,indent=2),encoding="utf-8")
+    print(f"ABC SIGNAL {symbol} {cls} recognition={recognition} live_known={live_known}",flush=True)
+
+def monitor_loop(line_token,group_id,interval=15):
+    """REST-reconciled B runner. No synthetic minutes; no backdating; one event per id."""
+    while True:
+        try:
+            _reset_day()
+            n=datetime.now(TPE); m=n.hour*60+n.minute
+            if n.weekday()<5 and 540<=m<=810:
+                with _lock: items=list(_watch.items())
+                for symbol,meta in items:
+                    try:_evaluate(symbol,meta,line_token,group_id)
+                    except Exception as e:print(f"B {symbol} error: {e}",flush=True)
+        except Exception as e:print(f"B monitor error: {e}",flush=True)
+        time.sleep(interval)
+
+def status():
+    _reset_day()
+    with _lock:return {"watching":len(_watch),"symbols":list(_watch),"sent":len(_sent)}
