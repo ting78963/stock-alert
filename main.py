@@ -7,6 +7,7 @@ import requests
 from flask import Flask, jsonify
 from group_limit_up import monitor_loop as group_limit_up_monitor_loop
 from b_runner import monitor_loop as b_monitor_loop, discover as b_discover, status as b_status
+from benchmark_3714 import run as run_3714_benchmark
 
 app = Flask(__name__)
 TPE = ZoneInfo("Asia/Taipei")
@@ -72,6 +73,16 @@ def internal_discover(symbol):
     at=body.get("discovered_at") or datetime.now(TPE).strftime("%H:%M:%S")
     added=b_discover(symbol,at,body.get("name"))
     return jsonify(ok=True,added=added,stock_id=str(symbol).zfill(4),discovered_at=at)
+
+@app.get("/audit/3714")
+def audit_3714():
+    try:
+        result=run_3714_benchmark()
+        code=200 if result.get("audit")=="PASS" else 409
+        return jsonify(result),code
+    except Exception as e:
+        return jsonify(audit="AUDIT FAILED -> STOP -> NO PRODUCTION SIGNAL",
+                       line_sent=False,error=type(e).__name__,detail=str(e)),500
 
 @app.get("/status")
 def status():
