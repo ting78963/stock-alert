@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 import requests
 from flask import Flask, jsonify
 from group_limit_up import monitor_loop as group_limit_up_monitor_loop
+from b_runner import monitor_loop as b_monitor_loop, discover as b_discover, status as b_status
 
 app = Flask(__name__)
 TPE = ZoneInfo("Asia/Taipei")
@@ -13,9 +14,10 @@ LINE_TOKEN = os.environ.get("LINE_TOKEN", "").strip()
 GROUP_ID = os.environ.get("GROUP_ID", "").strip()
 
 _group_limit_up_thread = None
+_b_thread = None
 
 def start_background_services():
-    global _group_limit_up_thread
+    global _group_limit_up_thread, _b_thread
     if _group_limit_up_thread is None or not _group_limit_up_thread.is_alive():
         _group_limit_up_thread = threading.Thread(
             target=group_limit_up_monitor_loop,
@@ -25,6 +27,15 @@ def start_background_services():
         )
         _group_limit_up_thread.start()
         print("group limit-up notifier started", flush=True)
+    if _b_thread is None or not _b_thread.is_alive():
+        _b_thread = threading.Thread(
+            target=b_monitor_loop,
+            args=(LINE_TOKEN, GROUP_ID),
+            name="abc-b-runner",
+            daemon=True,
+        )
+        _b_thread.start()
+        print("ABC B runner started", flush=True)
 
 start_background_services()
 
@@ -49,6 +60,19 @@ def root():
 def ping():
     return "pong", 200
 
+
+@app.post("/internal/discover/<symbol>")
+def internal_discover(symbol):
+    # Temporary A->B handoff endpoint. Protected by ABC_DISCOVERY_TOKEN.
+    from flask import request
+    expected=os.environ.get("ABC_DISCOVERY_TOKEN","").strip()
+    if not expected or request.headers.get("X-ABC-Token","") != expected:
+        return jsonify(ok=False,error="unauthorized"),403
+    body=request.get_json(silent=True) or {}
+    at=body.get("discovered_at") or datetime.now(TPE).strftime("%H:%M:%S")
+    added=b_discover(symbol,at,body.get("name"))
+    return jsonify(ok=True,added=added,stock_id=str(symbol).zfill(4),discovered_at=at)
+
 @app.get("/status")
 def status():
     return jsonify(
@@ -58,7 +82,7 @@ def status():
         line_configured=bool(LINE_TOKEN and GROUP_ID),
         legacy_trading_strategy="removed",
         group_limit_up_notifier="enabled",
-        b_engine="being_installed",
+        b_engine=b_status(),
         scanner_a="blocked_until_fugle_snapshot_permission",
     )
 
