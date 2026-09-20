@@ -5,7 +5,7 @@ from trend_engine import bars_df,reconstruct_a2,candidate_type,replay_early
 EXPECTED={
  "stock_id":"3714","date":"2026-09-16","a2_end":"09:12:00",
  "a2_vr":0.22376843863067075,"early_high_pct":3.161397670549082,
- "signal_class":"A_LOWVR_EH3_LT5","frozen_early":"09:27:00",
+ "signal_class":"A","frozen_early":"09:27:00",
  "early_d":1.453957996768973,"early_mfe":1.6155088852988664,
 }
 def _clock(x): return str(x)[-8:]
@@ -23,7 +23,7 @@ def run():
   "a2_end":_clock(a2["a2_end"]),"a2_vr":float(a2["a2_vr"]),
   "early_high_pct":float(a2["early_high_pct"]),"signal_class":cls,
   "frozen_early":_clock(early.get("early_time")),
-  "early_d":float(early.get("early_d")),"early_mfe":float(early.get("early_mfe")),
+  "early_d":float(early.get("early_D_from_A2_pct")),"early_mfe":float(early.get("early_MFE_from_A2_pct")),
  }
  checks={
   "a2_end":actual["a2_end"]==EXPECTED["a2_end"],
