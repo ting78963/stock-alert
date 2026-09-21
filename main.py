@@ -103,6 +103,18 @@ def audit_2369_live():
     except Exception as e:
         return jsonify(ok=False,stock_id=sid,error=type(e).__name__,detail=str(e)),500
 
+@app.get("/audit/2369-attack-trace")
+def audit_2369_attack_trace():
+    """Fixed read-only 2369 Attack audit through 11:10; no LINE/state mutation."""
+    import b_runner
+    try:
+        result=b_runner.attack_trace("2369",{"discovered_at":"11:10:00","name":None})
+        # Keep only decisive Attack transitions plus the key/A2 summary.
+        result["trace"]=[x for x in result.get("trace",[]) if x.get("event")]
+        return jsonify(ok=True,result=result)
+    except Exception as e:
+        return jsonify(ok=False,stock_id="2369",error=type(e).__name__,detail=str(e)),500
+
 @app.get("/internal/b-evaluate/<symbol>")
 def internal_b_evaluate(symbol):
     # Diagnostic production evaluation for an already-discovered symbol.
