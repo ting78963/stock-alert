@@ -86,6 +86,8 @@ _state_date=None
 _notified=set()
 _group_count={}
 _STATE_FILE="/tmp/stock-alert-group-limit-up.json"
+_PROCESS_LOCK="/tmp/stock-alert-group-limit-up-monitor.lock"
+_monitor_owner=False
 _bootstrapped=False
 
 def _save_state():
