@@ -84,6 +84,25 @@ def audit_3714():
         return jsonify(audit="AUDIT FAILED -> STOP -> NO PRODUCTION SIGNAL",
                        line_sent=False,error=type(e).__name__,detail=str(e)),500
 
+@app.get("/audit/2369-live")
+def audit_2369_live():
+    """Fixed one-stock production replay for today's agreed 2369 handoff.
+
+    Uses the exact production B evaluator and the fixed 10:38 discovery time.
+    This endpoint accepts no user-selected symbol/time, so it cannot become an
+    unprotected general production control surface. A genuine production
+    A/B/C+Early result may send the real LINE notification, exactly as B does.
+    """
+    import b_runner
+    sid="2369"
+    meta={"discovered_at":"10:38:00","name":None}
+    try:
+        b_runner._evaluate(sid,meta,LINE_TOKEN,GROUP_ID)
+        return jsonify(ok=True,stock_id=sid,discovered_at="10:38:00",
+                       engine="production_B",status=b_status())
+    except Exception as e:
+        return jsonify(ok=False,stock_id=sid,error=type(e).__name__,detail=str(e)),500
+
 @app.get("/internal/b-evaluate/<symbol>")
 def internal_b_evaluate(symbol):
     # Diagnostic production evaluation for an already-discovered symbol.
