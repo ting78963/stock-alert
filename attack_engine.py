@@ -24,7 +24,7 @@ def _build_attack_record(bars, key_price):
         "entry_next_open":None,"entry_next_close":None,"_bars":bars,
     }
 
-def find_attacks(df: pd.DataFrame,key_price:float,key_created_time:str,search_end:str=ATTACK_SEARCH_END):
+def find_attacks(df: pd.DataFrame,key_price:float,key_created_time:str,search_end:str=ATTACK_SEARCH_END,finalize_last:bool=True):
     df_search=df[(df["time_str"]>key_created_time)&(df["time_str"]<=search_end)].copy().reset_index(drop=True)
     if df_search.empty:return []
     before=df[df["time_str"]<=key_created_time]
@@ -36,11 +36,11 @@ def find_attacks(df: pd.DataFrame,key_price:float,key_created_time:str,search_en
         if not in_attack:
             if prev_close<key_price and h>=key_price:
                 in_attack=True; bars=[_make_bar_dict(t,o,h,l,c,v)]
-                if c<key_price or last:
+                if c<key_price or (last and finalize_last):
                     attacks.append(_build_attack_record(bars,key_price)); in_attack=False; bars=[]
         else:
             bars.append(_make_bar_dict(t,o,h,l,c,v))
-            if c<key_price or last:
+            if c<key_price or (last and finalize_last):
                 attacks.append(_build_attack_record(bars,key_price)); in_attack=False; bars=[]
         prev_close=c
     return attacks
