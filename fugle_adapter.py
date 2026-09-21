@@ -39,18 +39,18 @@ def intraday_1m(symbol,date,key=None):
     o=_get(f"{BASE}/intraday/candles/{symbol}?{q}",key)
     response_date=str(o.get("date",""))[:10]
     if response_date!=date:raise DataError(f"Fugle intraday date mismatch: expected {date}, got {response_date}")
-    # Canonical engine volume unit is shares, matching historical candles.
+    # Canonical engine volume unit is shares.
     return _canonical_minutes(o,symbol,date,volume_scale=1000.0)
 
 def historical_1m(symbol,date,key=None):
-    """Historical 1m candles. Fugle returns the recent 30-day minute window."""
+    """Historical 1m candles. Fugle historical minute volume is already shares."""
     key=key or api_key()
     q=urllib.parse.urlencode({"timeframe":"1","fields":"open,high,low,close,volume","sort":"asc"})
     o=_get(f"{BASE}/historical/candles/{symbol}?{q}",key)
     return _canonical_minutes(o,symbol,date,volume_scale=1.0)
 
 def previous_context(symbol,date,key=None):
-    """Previous complete trading-day close/volume from daily candles only."""
+    """Previous complete trading-day close/volume, normalized to canonical shares."""
     key=key or api_key(); d=pd.Timestamp(date); start=(d-pd.Timedelta(days=14)).strftime("%Y-%m-%d")
     q=urllib.parse.urlencode({"timeframe":"D","from":start,"to":date,"fields":"open,high,low,close,volume","sort":"asc"})
     o=_get(f"{BASE}/historical/candles/{symbol}?{q}",key)
@@ -61,6 +61,9 @@ def previous_context(symbol,date,key=None):
         if ds<date:prior.append((ds,b))
     if not prior:raise DataError("No prior trading day")
     p,b=max(prior,key=lambda x:x[0])
-    pc=float(b["close"]); pv=float(b["volume"])
+    pc=float(b["close"])
+    # Fugle historical daily volume is lots while historical minute volume is
+    # shares. Normalize daily volume to shares before AttackVR division.
+    pv=float(b["volume"])*1000.0
     if pc<=0 or pv<=0:raise DataError("Invalid prior context")
     return p,pc,pv
