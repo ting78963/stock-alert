@@ -59,17 +59,16 @@ def _evaluate(symbol,meta,line_token,group_id):
         print(f"B EVAL {symbol} result=WAIT reason=NO_MINUTE_ROWS cutoff={cutoff}",flush=True)
         return
 
-    # Causal replay boundary: when A discovered the stock, B may backfill only
-    # information that already existed at discovery. Later bars may continue
-    # live tracking, but they must never rewrite the discovery-time A2/Early
-    # identity. Freeze the initial reconstruction at discovered_at.
+    # Production semantics: discovery is the A->B handoff boundary, not a
+    # permanent data cutoff. Every evaluation uses only bars completed NOW.
+    # This naturally replays 09:00->discovery and then continues causally with
+    # each newly completed minute after discovery. No future bar is available.
     discovered=_clock(meta["discovered_at"])
-    replay_rows=[r for r in rows if _clock(r["minute"])<=discovered]
-    if not replay_rows:
+    if not any(_clock(r["minute"])<=discovered for r in rows):
         print(f"B EVAL {symbol} result=WAIT reason=NO_ROWS_BY_DISCOVERY discovery={discovered}",flush=True)
         return
     pdate,pc,pv=previous_context(symbol,date,key)
-    d=bars_df(replay_rows,date,symbol)
+    d=bars_df(rows,date,symbol)
     if d.empty:raise DataError("empty canonical minute store")
     a2=reconstruct_a2(d,pc,pv)
     attacks=a2.get("attack_count",0)
