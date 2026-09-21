@@ -84,13 +84,39 @@ _lock=threading.Lock()
 _state_date=None
 _notified=set()
 _group_count={}
+_STATE_FILE="/tmp/stock-alert-group-limit-up.json"
+_bootstrapped=False
+
+def _save_state():
+    try:
+        with open(_STATE_FILE,"w",encoding="utf-8") as f:
+            json.dump({"date":_state_date,"notified":sorted(_notified),"group_count":_group_count},f,ensure_ascii=False)
+    except Exception as e:
+        print(f"group-limit-up state save error: {e}",flush=True)
+
+def _load_state_for_today():
+    global _state_date,_notified,_group_count
+    today=datetime.now(TPE).date().isoformat()
+    try:
+        with open(_STATE_FILE,"r",encoding="utf-8") as f:
+            s=json.load(f)
+        if s.get("date")==today:
+            _state_date=today
+            _notified=set(s.get("notified",[]))
+            _group_count={str(k):int(v) for k,v in (s.get("group_count") or {}).items()}
+            return True
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        print(f"group-limit-up state load error: {e}",flush=True)
+    return False
 
 def _reset_day_if_needed():
     global _state_date
     d=datetime.now(TPE).date().isoformat()
     with _lock:
         if d!=_state_date:
-            _state_date=d; _notified.clear(); _group_count.clear()
+            _state_date=d; _notified.clear(); _group_count.clear(); _save_state()
 
 def _trading_time():
     n=datetime.now(TPE)
@@ -150,9 +176,30 @@ def _fetch(codes):
     return out
 
 def scan_once(line_token,group_id):
+    global _bootstrapped,_state_date
     _reset_day_if_needed()
     if not _trading_time(): return
     data=_fetch(list(STOCK_TO_GROUP))
+
+    # Restart/deploy safety: restore today's sent set when possible. If no state
+    # exists (e.g. a fresh Render instance), treat stocks already at limit-up
+    # as the baseline so a restart cannot resend old limit-up alerts.
+    if not _bootstrapped:
+        restored=_load_state_for_today()
+        if not restored:
+            with _lock:
+                _state_date=datetime.now(TPE).date().isoformat()
+                for code,info in data.items():
+                    if info["is_limit_up"]:
+                        _notified.add(code)
+                        group=STOCK_TO_GROUP.get(code)
+                        if group:
+                            _group_count[group]=_group_count.get(group,0)+1
+                _save_state()
+            print(f"group-limit-up bootstrap baseline: {len(_notified)} already-limit-up stocks suppressed",flush=True)
+        else:
+            print(f"group-limit-up restored dedupe state: {len(_notified)} stocks",flush=True)
+        _bootstrapped=True
     for code,info in data.items():
         if not info["is_limit_up"]:continue
         group=STOCK_TO_GROUP.get(code)
@@ -161,6 +208,7 @@ def scan_once(line_token,group_id):
             if code in _notified:continue
             _notified.add(code)
             count=_group_count.get(group,0)+1; _group_count[group]=count
+            _save_state()
         if count>MAX_LIMIT_UP_NOTIFY:continue
         peers=[]
         for other in GROUPS.get(group,[]):
