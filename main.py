@@ -84,6 +84,25 @@ def audit_3714():
         return jsonify(audit="AUDIT FAILED -> STOP -> NO PRODUCTION SIGNAL",
                        line_sent=False,error=type(e).__name__,detail=str(e)),500
 
+@app.get("/internal/b-evaluate/<symbol>")
+def internal_b_evaluate(symbol):
+    # Diagnostic production evaluation for an already-discovered symbol.
+    # Uses the exact same B evaluation path; does not alter signal semantics.
+    from flask import request
+    expected=os.environ.get("ABC_DISCOVERY_TOKEN","").strip()
+    if not expected or request.headers.get("X-ABC-Token","") != expected:
+        return jsonify(ok=False,error="unauthorized"),403
+    sid=str(symbol).zfill(4)
+    with __import__("b_runner")._lock:
+        meta=__import__("b_runner")._watch.get(sid)
+    if not meta:
+        return jsonify(ok=False,error="not_watching",stock_id=sid),404
+    try:
+        __import__("b_runner")._evaluate(sid,meta,LINE_TOKEN,GROUP_ID)
+        return jsonify(ok=True,stock_id=sid,status=b_status())
+    except Exception as e:
+        return jsonify(ok=False,stock_id=sid,error=type(e).__name__,detail=str(e)),500
+
 @app.get("/status")
 def status():
     return jsonify(
