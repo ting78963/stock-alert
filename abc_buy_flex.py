@@ -1,51 +1,125 @@
 from __future__ import annotations
 
-C_RED="#dc2626"; C_WHITE="#ffffff"; C_TEXT="#1a1a1a"; C_LABEL="#aaaaaa"
+C_RED="#dc2626"
+C_WHITE="#ffffff"
+C_TEXT="#111827"
+C_MUTED="#6b7280"
+C_SOFT="#f7f7f8"
+C_PINK="#fee2e2"
 
-def _row(label,value,value_color=None):
-    return {"type":"box","layout":"horizontal","paddingTop":"5px","paddingBottom":"5px","borderWidth":"0px","contents":[
-        {"type":"text","text":label,"color":C_LABEL,"size":"sm","flex":3},
-        {"type":"text","text":str(value),"color":value_color or C_TEXT,"size":"sm","flex":4,"align":"end","weight":"bold"}]}
+PROFILE = {
+    "A": {
+        "trait": "穩定延伸",
+        "target": "+10%",
+        "median_days": "約 4 個交易日",
+        "p75_days": "7 個交易日內",
+        "d15_mean_mfe": "約 +17%",
+    },
+    "B": {
+        "trait": "高延伸",
+        "target": "+15%",
+        "median_days": "約 4 個交易日",
+        "p75_days": "8 個交易日內",
+        "d15_mean_mfe": "約 +23%",
+    },
+    "C": {
+        "trait": "高爆發・高回吐",
+        "target": "+20%",
+        "median_days": "約 5 個交易日",
+        "p75_days": "10 個交易日內",
+        "d15_mean_mfe": "約 +21%",
+    },
+}
 
-def _sep():
-    return {"type":"separator","color":"#f5f5f5"}
+def _metric(icon, label, value):
+    return {
+        "type": "box",
+        "layout": "horizontal",
+        "backgroundColor": C_SOFT,
+        "cornerRadius": "10px",
+        "paddingAll": "10px",
+        "margin": "sm",
+        "contents": [
+            {"type": "text", "text": icon, "size": "lg", "flex": 1, "gravity": "center"},
+            {"type": "box", "layout": "vertical", "flex": 6, "contents": [
+                {"type": "text", "text": label, "size": "xs", "color": C_MUTED, "weight": "bold"},
+                {"type": "text", "text": value, "size": "md", "color": C_TEXT, "weight": "bold", "margin": "xs", "wrap": True},
+            ]},
+        ],
+    }
 
-def abc_buy_flex(event,name=None):
-    """Keep the old red buy-signal visual shell; content is exclusively the new A/B/C system."""
-    code=str(event.get("stock_id") or event.get("symbol") or "")
-    cls=str(event.get("signal_class") or event.get("abc") or "?")
-    title=f"{name} {code}".strip() if name else code
-    vr=event.get("a2_vr")
-    eh=event.get("early_high_pct")
-    rec=event.get("recognition_time") or "—"
-    known=event.get("live_known_time") or rec
-    late=bool(event.get("late_discovery",False))
-
-    vr_s=f"{float(vr):.3f}" if vr is not None else "—"
-    eh_s=f"{float(eh):.2f}%" if eh is not None else "—"
-    timing="補回後確認" if late else "即時確認"
+def abc_buy_flex(event, name=None):
+    """Old red buy-card shell, with only production-facing A/B/C information."""
+    code = str(event.get("stock_id") or event.get("symbol") or "")
+    cls = str(event.get("signal_class") or event.get("abc") or "?").upper()
+    profile = PROFILE.get(cls, {
+        "trait": "趨勢確認",
+        "target": "—",
+        "median_days": "—",
+        "p75_days": "—",
+        "d15_mean_mfe": "—",
+    })
+    title = f"{name} {code}".strip() if name else code
 
     return {
-      "type":"flex",
-      "altText":f"🔥 {cls} 買進訊號｜{title}",
-      "contents":{"type":"bubble","body":{"type":"box","layout":"vertical","paddingAll":"0px","contents":[
-        {"type":"box","layout":"vertical","backgroundColor":C_RED,"paddingAll":"14px","contents":[
-          {"type":"text","text":"🔥 趨勢確認　買進訊號","color":"#ffffff99","size":"xs","weight":"bold","align":"center"},
-          {"type":"text","text":title,"color":C_WHITE,"size":"xl","weight":"bold","align":"center","margin":"sm"},
-          {"type":"text","text":f"{cls} 型｜Frozen Early","color":"#ffffff99","size":"xs","align":"center","margin":"sm"}]},
-        {"type":"box","layout":"vertical","paddingAll":"12px","contents":[
-          _row("辨識類型",f"{cls} 型",C_RED),_sep(),
-          _row("A2 VR",vr_s),_sep(),
-          _row("Early High",eh_s),_sep(),
-          _row("Frozen Early",rec),_sep(),
-          _row("系統知道時間",known),_sep(),
-          _row("辨識狀態",timing)]},
-        {"type":"box","layout":"vertical","backgroundColor":C_RED,"paddingAll":"10px","contents":[
-          {"type":"text","text":"▲ 買進","color":C_WHITE,"align":"center","weight":"bold","size":"sm"}]}
-      ]}}}
+        "type": "flex",
+        "altText": f"🔥 {cls} 型買進訊號｜{title}",
+        "contents": {
+            "type": "bubble",
+            "body": {
+                "type": "box",
+                "layout": "vertical",
+                "paddingAll": "0px",
+                "contents": [
+                    {
+                        "type": "box",
+                        "layout": "vertical",
+                        "backgroundColor": C_RED,
+                        "paddingAll": "14px",
+                        "contents": [
+                            {"type": "text", "text": "🔥 趨勢確認｜買進訊號", "color": C_WHITE, "size": "sm", "weight": "bold", "align": "center"},
+                            {"type": "text", "text": title, "color": C_WHITE, "size": "xl", "weight": "bold", "align": "center", "margin": "sm", "wrap": True},
+                        ],
+                    },
+                    {
+                        "type": "box",
+                        "layout": "vertical",
+                        "paddingAll": "12px",
+                        "contents": [
+                            {
+                                "type": "box",
+                                "layout": "vertical",
+                                "backgroundColor": C_PINK,
+                                "cornerRadius": "12px",
+                                "paddingAll": "9px",
+                                "contents": [
+                                    {"type": "text", "text": f"{cls} 型｜{profile['trait']}", "color": "#991b1b", "size": "md", "weight": "bold", "align": "center", "wrap": True}
+                                ],
+                            },
+                            _metric("🎯", "目標漲幅", profile["target"]),
+                            _metric("⏱", "常見達標", profile["median_days"]),
+                            _metric("📅", "多數達標", profile["p75_days"]),
+                            _metric("📈", "15日平均最大延伸", profile["d15_mean_mfe"]),
+                        ],
+                    },
+                    {
+                        "type": "box",
+                        "layout": "vertical",
+                        "backgroundColor": C_RED,
+                        "paddingAll": "10px",
+                        "contents": [
+                            {"type": "text", "text": "▲ 買進", "color": C_WHITE, "align": "center", "weight": "bold", "size": "sm"}
+                        ],
+                    },
+                ],
+            },
+        },
+    }
 
-def format_buy_text(event,name=None):
-    code=str(event.get("stock_id") or event.get("symbol") or "")
-    cls=str(event.get("signal_class") or "?")
-    title=f"{name} {code}".strip() if name else code
-    return f"🔥 {cls} 型買進訊號｜{title}"
+def format_buy_text(event, name=None):
+    code = str(event.get("stock_id") or event.get("symbol") or "")
+    cls = str(event.get("signal_class") or "?").upper()
+    profile = PROFILE.get(cls, {})
+    title = f"{name} {code}".strip() if name else code
+    trait = profile.get("trait", "趨勢確認")
+    return f"🔥 {cls} 型｜{trait}｜{title}"
