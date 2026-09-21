@@ -55,16 +55,30 @@ def _evaluate(symbol,meta,line_token,group_id):
     date=_today(); cutoff=_completed_cutoff()
     key=api_key(); rows=historical_1m(symbol,date,key)
     rows=[r for r in rows if _clock(r["minute"])<=cutoff]
-    if not rows:return
+    if not rows:
+        print(f"B EVAL {symbol} result=WAIT reason=NO_MINUTE_ROWS cutoff={cutoff}",flush=True)
+        return
     pdate,pc,pv=previous_context(symbol,date,key)
     d=bars_df(rows,date,symbol)
     if d.empty:raise DataError("empty canonical minute store")
     a2=reconstruct_a2(d,pc,pv)
-    if a2.get("attack_count",0)<2 or not a2.get("a2_upward"):return
-    cls=candidate_type(float(a2.get("a2_vr")),float(a2.get("early_high_pct")))
-    if cls=="NO_BUY":return
+    attacks=a2.get("attack_count",0)
+    upward=bool(a2.get("a2_upward"))
+    if attacks<2 or not upward:
+        print(f"B EVAL {symbol} bars={len(d)} attacks={attacks} a2_upward={upward} result=WAIT reason=NO_VALID_A2",flush=True)
+        return
+    vr=float(a2.get("a2_vr"))
+    eh=float(a2.get("early_high_pct"))
+    cls=candidate_type(vr,eh)
+    if cls=="NO_BUY":
+        print(f"B EVAL {symbol} bars={len(d)} a2={_clock(a2.get('a2_end'))} vr={vr:.6f} eh={eh:.6f} candidate=NO_BUY result=NO_BUY",flush=True)
+        return
     early=replay_early(d,a2.get("a2_end"))
-    if early.get("early_status")!="EARLY":return
+    early_status=early.get("early_status")
+    if early_status!="EARLY":
+        print(f"B EVAL {symbol} bars={len(d)} a2={_clock(a2.get('a2_end'))} vr={vr:.6f} eh={eh:.6f} candidate={cls} early={early_status} result=WAIT",flush=True)
+        return
+    print(f"B EVAL {symbol} bars={len(d)} a2={_clock(a2.get('a2_end'))} vr={vr:.6f} eh={eh:.6f} candidate={cls} early=EARLY early_time={_clock(early.get('early_time'))}",flush=True)
 
     recognition=_clock(early["early_time"])
     discovered=_clock(meta["discovered_at"])
