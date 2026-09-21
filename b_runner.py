@@ -112,6 +112,41 @@ def _evaluate(symbol,meta,line_token,group_id):
     p.write_text(json.dumps(event,ensure_ascii=False,indent=2),encoding="utf-8")
     print(f"ABC SIGNAL {symbol} {cls} recognition={recognition} live_known={live_known}",flush=True)
 
+
+def attack_trace(symbol,meta):
+    """Read-only causal trace of the exact Attack state machine through discovery."""
+    date=_today(); key=api_key(); discovered=_clock(meta["discovered_at"])
+    rows=intraday_1m(symbol,date,key)
+    replay_rows=[r for r in rows if _clock(r["minute"])<=discovered]
+    pdate,pc,pv=previous_context(symbol,date,key)
+    d=bars_df(replay_rows,date,symbol)
+    if d.empty: raise DataError("empty canonical minute store")
+    early=d[(d.time_str>="09:00:00")&(d.time_str<="09:10:00")]
+    if early.empty: raise DataError("no 09:00-09:10 bars")
+    key_price=float(early.high.max())
+    source=str(early.loc[early.high==key_price].iloc[0].time_str)
+    search=d[(d.time_str>"09:10:00")&(d.time_str<=discovered)].reset_index(drop=True)
+    before=d[d.time_str<="09:10:00"]
+    prev_close=float(before.iloc[-1].close) if len(before) else key_price
+    in_attack=False; attack_no=0; trace=[]
+    for i,row in search.iterrows():
+        t=str(row.time_str); h=float(row.high); close=float(row.close)
+        trigger=(not in_attack and prev_close<key_price and h>=key_price)
+        event=""
+        if trigger:
+            in_attack=True; attack_no+=1; event=f"A{attack_no}_START"
+        if in_attack and (close<key_price or i==len(search)-1):
+            event=(event+"+" if event else "")+f"A{attack_no}_END"
+            in_attack=False
+        trace.append({"minute":t,"prev_close":prev_close,"high":h,"close":close,
+                      "key":key_price,"trigger":trigger,"event":event})
+        prev_close=close
+    a2=reconstruct_a2(d,pc,pv)
+    return {"audit":"TRACE_ONLY_NO_SIGNAL_MUTATION","stock_id":symbol,"date":date,
+            "discovered_at":discovered,"bars":len(d),"key_price":key_price,
+            "key_source_time":source,"key_confirmed_time":"09:10:00",
+            "attack_count":a2.get("attack_count",0),"a2":a2,"trace":trace}
+
 def monitor_loop(line_token,group_id,interval=15):
     """REST-reconciled B runner. No synthetic minutes; no backdating; one event per id."""
     while True:
