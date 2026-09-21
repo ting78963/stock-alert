@@ -22,8 +22,7 @@ def _canonical_minutes(o,symbol,date,volume_scale=1.0):
     out=[]; seen=set()
     for b in o["data"]:
         dt=pd.to_datetime(b["date"]); ds=dt.strftime("%Y-%m-%d"); ts=dt.strftime("%H:%M:%S")
-        if ds!=date:
-            continue
+        if ds!=date: continue
         if ts in seen:raise DataError("duplicate minute")
         seen.add(ts); z={x:b.get(x) for x in ("open","high","low","close","volume")}
         if any(v is None for v in z.values()):raise DataError("missing OHLCV")
@@ -33,37 +32,50 @@ def _canonical_minutes(o,symbol,date,volume_scale=1.0):
     return out
 
 def intraday_1m(symbol,date,key=None):
-    """Current trading-day 1m candles. Fugle intraday volume is in lots."""
+    """Current trading-day 1m candles. Fugle intraday volume is lots; canonical unit is lots."""
     key=key or api_key()
     q=urllib.parse.urlencode({"timeframe":"1","sort":"asc"})
     o=_get(f"{BASE}/intraday/candles/{symbol}?{q}",key)
     response_date=str(o.get("date",""))[:10]
     if response_date!=date:raise DataError(f"Fugle intraday date mismatch: expected {date}, got {response_date}")
-    # Canonical engine volume unit is shares.
-    return _canonical_minutes(o,symbol,date,volume_scale=1000.0)
+    return _canonical_minutes(o,symbol,date,volume_scale=1.0)
 
 def historical_1m(symbol,date,key=None):
-    """Historical 1m candles. Fugle historical minute volume is already shares."""
+    """Historical 1m candles. Canonical AttackVR unit is the raw minute-bar unit."""
     key=key or api_key()
     q=urllib.parse.urlencode({"timeframe":"1","fields":"open,high,low,close,volume","sort":"asc"})
     o=_get(f"{BASE}/historical/candles/{symbol}?{q}",key)
     return _canonical_minutes(o,symbol,date,volume_scale=1.0)
 
-def previous_context(symbol,date,key=None):
-    """Previous complete trading-day close/volume, normalized to canonical shares."""
-    key=key or api_key(); d=pd.Timestamp(date); start=(d-pd.Timedelta(days=14)).strftime("%Y-%m-%d")
-    q=urllib.parse.urlencode({"timeframe":"D","from":start,"to":date,"fields":"open,high,low,close,volume","sort":"asc"})
+def _previous_trading_date(symbol,date,key):
+    d=pd.Timestamp(date); start=(d-pd.Timedelta(days=14)).strftime("%Y-%m-%d")
+    q=urllib.parse.urlencode({"timeframe":"D","from":start,"to":date,
+                              "fields":"open,high,low,close,volume","sort":"asc"})
     o=_get(f"{BASE}/historical/candles/{symbol}?{q}",key)
     if str(o.get("symbol"))!=str(symbol):raise DataError("Fugle prior-context identity failed")
-    prior=[]
+    dates=[]
     for b in o.get("data",[]):
         ds=pd.to_datetime(b["date"]).strftime("%Y-%m-%d")
-        if ds<date:prior.append((ds,b))
-    if not prior:raise DataError("No prior trading day")
-    p,b=max(prior,key=lambda x:x[0])
-    pc=float(b["close"])
-    # Fugle historical daily volume is lots while historical minute volume is
-    # shares. Normalize daily volume to shares before AttackVR division.
-    pv=float(b["volume"])*1000.0
+        if ds<date:dates.append(ds)
+    if not dates:raise DataError("No prior trading day")
+    return max(dates)
+
+def previous_context(symbol,date,key=None):
+    """Previous close/full-day volume from prior-day historical 1m bars.
+
+    The frozen Fugle equivalence benchmark defines AttackVR denominator as the
+    sum of the previous trading day's historical 1m volumes. Daily-candle
+    volume is deliberately NOT mixed into this ratio because Fugle's daily
+    aggregation/unit differs from the minute-bar series.
+    """
+    key=key or api_key()
+    pdate=_previous_trading_date(symbol,date,key)
+    rows=historical_1m(symbol,pdate,key)
+    y=pd.DataFrame(rows).sort_values("minute",kind="stable")
+    if y.empty or y["minute"].duplicated().any():raise DataError("Invalid prior-day minute coverage")
+    for c in ("close","volume"):y[c]=pd.to_numeric(y[c],errors="coerce")
+    if y[["close","volume"]].isna().any().any():raise DataError("Invalid prior-day close/volume")
+    pc=float(y.iloc[-1]["close"])
+    pv=float(y["volume"].clip(lower=0).sum())
     if pc<=0 or pv<=0:raise DataError("Invalid prior context")
-    return p,pc,pv
+    return pdate,pc,pv
