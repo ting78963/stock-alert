@@ -111,9 +111,8 @@ def _evaluate(symbol,meta,line_token,group_id):
     p.write_text(json.dumps(event,ensure_ascii=False,indent=2),encoding="utf-8")
     print(f"ABC SIGNAL {symbol} {cls} recognition={recognition} live_known={live_known}",flush=True)
 
-
 def attack_trace(symbol,meta):
-    """Read-only causal trace of the exact Attack state machine through discovery."""
+    """Read-only causal trace through discovery, aligned with live-partial Attack semantics."""
     date=_today(); key=api_key(); discovered=_clock(meta["discovered_at"])
     rows=intraday_1m(symbol,date,key)
     replay_rows=[r for r in rows if _clock(r["minute"])<=discovered]
@@ -128,23 +127,29 @@ def attack_trace(symbol,meta):
     before=d[d.time_str<="09:10:00"]
     prev_close=float(before.iloc[-1].close) if len(before) else key_price
     in_attack=False; attack_no=0; trace=[]
-    for i,row in search.iterrows():
+    for _,row in search.iterrows():
         t=str(row.time_str); h=float(row.high); close=float(row.close)
         trigger=(not in_attack and prev_close<key_price and h>=key_price)
         event=""
         if trigger:
             in_attack=True; attack_no+=1; event=f"A{attack_no}_START"
-        if in_attack and (close<key_price or i==len(search)-1):
+        # IMPORTANT: discovery is a partial live cutoff. Do NOT close an open
+        # Attack merely because this is the last replay row. This matches
+        # production find_attacks(..., finalize_last=False) before 13:30.
+        if in_attack and close<key_price:
             event=(event+"+" if event else "")+f"A{attack_no}_END"
             in_attack=False
         trace.append({"minute":t,"prev_close":prev_close,"high":h,"close":close,
-                      "key":key_price,"trigger":trigger,"event":event})
+                      "key":key_price,"trigger":trigger,"event":event,
+                      "in_attack_after_bar":in_attack})
         prev_close=close
     a2=reconstruct_a2(d,pc,pv)
     return {"audit":"TRACE_ONLY_NO_SIGNAL_MUTATION","stock_id":symbol,"date":date,
             "discovered_at":discovered,"bars":len(d),"key_price":key_price,
             "key_source_time":source,"key_confirmed_time":"09:10:00",
-            "attack_count":a2.get("attack_count",0),"a2":a2,"trace":trace}
+            "attack_count":a2.get("attack_count",0),"open_attack_state":bool(in_attack),
+            "open_attack_no":attack_no if in_attack else None,
+            "a2":a2,"trace":trace}
 
 def monitor_loop(line_token,group_id,interval=15):
     """REST-reconciled B runner. No synthetic minutes; no backdating; one event per id."""
