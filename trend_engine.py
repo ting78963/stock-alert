@@ -38,7 +38,7 @@ def reconstruct_a2(d,prev_close,prev_day_volume):
     early=d[(d.time_str>="09:00:00")&(d.time_str<="09:10:00")]
     if early.empty:return {"attack_count":0,"v1_pass":False,"v1_reason":"NO_EARLY_BARS"}
     key=float(early.high.max()); eh=(key/prev_close-1)*100
-    attacks=fill_entry_prices(compute_c_values(find_attacks(d.copy(),key,"09:10:00",search_end="13:30:00")),d)
+    attacks=fill_entry_prices(compute_c_values(find_attacks(d.copy(),key,"09:10:00",search_end="13:30:00",finalize_last=(str(d.iloc[-1].time_str)>="13:30:00"))),d)
     rec={"key_price":key,"early_high_pct":eh,"attack_count":len(attacks),"v1_pass":False,"v1_reason":""}
     if len(attacks)<2:return rec
     a1,a2=attacks[0],attacks[1]
