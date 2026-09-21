@@ -177,59 +177,67 @@ def _fetch(codes):
 
 def scan_once(line_token,group_id):
     global _bootstrapped,_state_date
-    if not _trading_time(): return
+    if not _trading_time():
+        return
+
     data=_fetch(list(STOCK_TO_GROUP))
 
-    # IMPORTANT: bootstrap BEFORE any daily reset/save. Otherwise a fresh
-    # process can write an empty state file and then mistake it for a valid
-    # restored dedupe state, causing already-limit-up stocks to be resent.
+    # Bootstrap before daily reset. On process start, stocks already at
+    # limit-up are baseline only and must not be re-notified.
     if not _bootstrapped:
         restored=_load_state_for_today()
         current_lu={code for code,info in data.items() if info["is_limit_up"]}
         with _lock:
             _state_date=datetime.now(TPE).date().isoformat()
-            # On every process start, current limit-up stocks are baseline.
-            # This deliberately prefers missing an alert during a deploy over
-            # spamming duplicate alerts for stocks that were already limit-up.
             _notified.update(current_lu)
-            for code in current_lu:
-                group=STOCK_TO_GROUP.get(code)
-                if group and not restored:
-                    _group_count[group]=_group_count.get(group,0)+1
+            if not restored:
+                for code in current_lu:
+                    group=STOCK_TO_GROUP.get(code)
+                    if group:
+                        _group_count[group]=_group_count.get(group,0)+1
             _save_state()
-        print(f"group-limit-up startup baseline: {len(current_lu)} current limit-up stocks suppressed; restored={restored}",flush=True)
+        print(
+            f"group-limit-up startup baseline: {len(current_lu)} current limit-up stocks suppressed; restored={restored}",
+            flush=True,
+        )
         _bootstrapped=True
         return
 
     _reset_day_if_needed()
+
     for code,info in data.items():
-                    if info["is_limit_up"]:
-                        _notified.add(code)
-                        group=STOCK_TO_GROUP.get(code)
-                        if group:
-                            _group_count[group]=_group_count.get(group,0)+1
-                _save_state()
-            print(f"group-limit-up bootstrap baseline: {len(_notified)} already-limit-up stocks suppressed",flush=True)
-        else:
-            print(f"group-limit-up restored dedupe state: {len(_notified)} stocks",flush=True)
-        _bootstrapped=True
-    for code,info in data.items():
-        if not info["is_limit_up"]:continue
+        if not info["is_limit_up"]:
+            continue
         group=STOCK_TO_GROUP.get(code)
-        if not group:continue
+        if not group:
+            continue
         with _lock:
-            if code in _notified:continue
+            if code in _notified:
+                continue
             _notified.add(code)
-            count=_group_count.get(group,0)+1; _group_count[group]=count
+            count=_group_count.get(group,0)+1
+            _group_count[group]=count
             _save_state()
-        if count>MAX_LIMIT_UP_NOTIFY:continue
+        if count>MAX_LIMIT_UP_NOTIFY:
+            continue
+
         peers=[]
         for other in GROUPS.get(group,[]):
-            if other==code or other not in data:continue
+            if other==code or other not in data:
+                continue
             p=data[other]["pct"]
-            if p>=3.0: peers.append((data[other]["name"],other,p,p>=9.5))
+            if p>=3.0:
+                peers.append((data[other]["name"],other,p,p>=9.5))
         peers.sort(key=lambda x:x[2],reverse=True)
-        _send_flex(_flex(info["name"],code,group,info["pct"],count,count>=3,peers,datetime.now(TPE).strftime("%H:%M:%S")),line_token,group_id)
+
+        _send_flex(
+            _flex(
+                info["name"],code,group,info["pct"],count,count>=3,peers,
+                datetime.now(TPE).strftime("%H:%M:%S"),
+            ),
+            line_token,
+            group_id,
+        )
         print(f"🚀 {group} 第{count}支 {info['name']} {code} +{info['pct']:.1f}%",flush=True)
 
 def monitor_loop(line_token,group_id,interval=3):
