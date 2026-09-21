@@ -241,7 +241,42 @@ def scan_once(line_token,group_id):
         print(f"🚀 {group} 第{count}支 {info['name']} {code} +{info['pct']:.1f}%",flush=True)
 
 def monitor_loop(line_token,group_id,interval=3):
-    while True:
-        try: scan_once(line_token,group_id)
-        except Exception as e: print(f"group-limit-up monitor error: {e}",flush=True)
-        time.sleep(interval)
+    global _monitor_owner
+    # Process-level singleton guard. This prevents duplicate notifier loops if
+    # the app startup path is executed more than once inside the same instance.
+    try:
+        fd=os.open(_PROCESS_LOCK,os.O_CREAT|os.O_EXCL|os.O_WRONLY)
+        os.write(fd,str(os.getpid()).encode("ascii"))
+        os.close(fd)
+        _monitor_owner=True
+    except FileExistsError:
+        try:
+            with open(_PROCESS_LOCK,"r",encoding="ascii") as f:
+                owner_pid=int((f.read() or "0").strip())
+            os.kill(owner_pid,0)
+            print(f"group-limit-up monitor duplicate suppressed; owner_pid={owner_pid}",flush=True)
+            return
+        except (ProcessLookupError,ValueError,OSError):
+            try:
+                os.remove(_PROCESS_LOCK)
+            except FileNotFoundError:
+                pass
+            fd=os.open(_PROCESS_LOCK,os.O_CREAT|os.O_EXCL|os.O_WRONLY)
+            os.write(fd,str(os.getpid()).encode("ascii"))
+            os.close(fd)
+            _monitor_owner=True
+
+    try:
+        while True:
+            try:
+                scan_once(line_token,group_id)
+            except Exception as e:
+                print(f"group-limit-up monitor error: {e}",flush=True)
+            time.sleep(interval)
+    finally:
+        if _monitor_owner:
+            try:
+                os.remove(_PROCESS_LOCK)
+            except FileNotFoundError:
+                pass
+            _monitor_owner=False
