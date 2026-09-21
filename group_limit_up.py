@@ -177,19 +177,32 @@ def _fetch(codes):
 
 def scan_once(line_token,group_id):
     global _bootstrapped,_state_date
-    _reset_day_if_needed()
     if not _trading_time(): return
     data=_fetch(list(STOCK_TO_GROUP))
 
-    # Restart/deploy safety: restore today's sent set when possible. If no state
-    # exists (e.g. a fresh Render instance), treat stocks already at limit-up
-    # as the baseline so a restart cannot resend old limit-up alerts.
+    # IMPORTANT: bootstrap BEFORE any daily reset/save. Otherwise a fresh
+    # process can write an empty state file and then mistake it for a valid
+    # restored dedupe state, causing already-limit-up stocks to be resent.
     if not _bootstrapped:
         restored=_load_state_for_today()
-        if not restored:
-            with _lock:
-                _state_date=datetime.now(TPE).date().isoformat()
-                for code,info in data.items():
+        current_lu={code for code,info in data.items() if info["is_limit_up"]}
+        with _lock:
+            _state_date=datetime.now(TPE).date().isoformat()
+            # On every process start, current limit-up stocks are baseline.
+            # This deliberately prefers missing an alert during a deploy over
+            # spamming duplicate alerts for stocks that were already limit-up.
+            _notified.update(current_lu)
+            for code in current_lu:
+                group=STOCK_TO_GROUP.get(code)
+                if group and not restored:
+                    _group_count[group]=_group_count.get(group,0)+1
+            _save_state()
+        print(f"group-limit-up startup baseline: {len(current_lu)} current limit-up stocks suppressed; restored={restored}",flush=True)
+        _bootstrapped=True
+        return
+
+    _reset_day_if_needed()
+    for code,info in data.items():
                     if info["is_limit_up"]:
                         _notified.add(code)
                         group=STOCK_TO_GROUP.get(code)
