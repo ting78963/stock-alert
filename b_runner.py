@@ -5,7 +5,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 import pandas as pd
 from abc_buy_flex import abc_buy_flex
-from fugle_adapter import api_key,historical_1m,previous_context,DataError
+from fugle_adapter import api_key,intraday_1m,previous_context,DataError
 from trend_engine import bars_df,reconstruct_a2,candidate_type,replay_early
 
 TPE=ZoneInfo("Asia/Taipei")
@@ -53,7 +53,7 @@ def _completed_cutoff():
 
 def _evaluate(symbol,meta,line_token,group_id):
     date=_today(); cutoff=_completed_cutoff()
-    key=api_key(); rows=historical_1m(symbol,date,key)
+    key=api_key(); rows=intraday_1m(symbol,date,key)
     rows=[r for r in rows if _clock(r["minute"])<=cutoff]
     if not rows:
         print(f"B EVAL {symbol} result=WAIT reason=NO_MINUTE_ROWS cutoff={cutoff}",flush=True)
