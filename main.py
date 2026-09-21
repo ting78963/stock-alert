@@ -103,6 +103,25 @@ def internal_b_evaluate(symbol):
     except Exception as e:
         return jsonify(ok=False,stock_id=sid,error=type(e).__name__,detail=str(e)),500
 
+
+@app.get("/internal/b-attack-trace/<symbol>")
+def internal_b_attack_trace(symbol):
+    # Protected, read-only causal trace. Never sends LINE and never mutates signal state.
+    from flask import request
+    import b_runner
+    expected=os.environ.get("ABC_DISCOVERY_TOKEN","").strip()
+    if not expected or request.headers.get("X-ABC-Token","") != expected:
+        return jsonify(ok=False,error="unauthorized"),403
+    sid=str(symbol).zfill(4)
+    with b_runner._lock:
+        meta=b_runner._watch.get(sid)
+    if not meta:
+        return jsonify(ok=False,error="not_watching",stock_id=sid),404
+    try:
+        return jsonify(ok=True,result=b_runner.attack_trace(sid,meta))
+    except Exception as e:
+        return jsonify(ok=False,stock_id=sid,error=type(e).__name__,detail=str(e)),500
+
 @app.get("/status")
 def status():
     return jsonify(
