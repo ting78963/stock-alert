@@ -175,6 +175,22 @@ def audit_p1_flex_6207():
     except Exception as e:
         return jsonify(ok=False,error=type(e).__name__,detail=str(e)),500
 
+@app.get("/audit/flex-preview-all")
+def audit_flex_preview_all():
+    """Fixed visual-only preview payload for P1/A/B/C. Never sends LINE."""
+    samples=[
+        ("6207","雷科","P1","09:28:00"),
+        ("3714","富采","A","10:28:00"),
+        ("3665","貿聯-KY","B","10:02:00"),
+        ("3231","緯創","C","09:45:00"),
+    ]
+    cards=[]
+    for sid,name,cls,t in samples:
+        event={"stock_id":sid,"stock_name":name,"signal_class":cls,
+               "recognition_time":t,"live_known_time":t}
+        cards.append(abc_buy_flex(event,name))
+    return jsonify(ok=True,test_only=True,cards=cards)
+
 @app.get("/status")
 def status():
     return jsonify(
