@@ -8,7 +8,7 @@ from flask import Flask, jsonify
 from group_limit_up import monitor_loop as group_limit_up_monitor_loop
 from b_runner import monitor_loop as b_monitor_loop, discover as b_discover, status as b_status
 from benchmark_3714 import run as run_3714_benchmark
-from abc_buy_flex import abc_buy_flex
+from abc_buy_flex import abc_buy_flex, indicator_help_flex
 
 app = Flask(__name__)
 TPE = ZoneInfo("Asia/Taipei")
@@ -215,6 +215,24 @@ def audit_flex_send_all():
         )
         return jsonify(ok=200<=r.status_code<300,line_status=r.status_code,
                        test_only=True,cards=["P1","A","B","C"]), (200 if 200<=r.status_code<300 else 502)
+    except Exception as e:
+        return jsonify(ok=False,error=type(e).__name__,detail=str(e)),500
+
+
+@app.get("/audit/indicator-help-flex-4d82")
+def audit_indicator_help_flex():
+    """Temporary fixed visual-only LINE test for 指標說明."""
+    if not LINE_TOKEN or not GROUP_ID:
+        return jsonify(ok=False,error="LINE_NOT_CONFIGURED"),500
+    msg=indicator_help_flex()
+    try:
+        r=requests.post(
+            "https://api.line.me/v2/bot/message/push",
+            headers={"Authorization":f"Bearer {LINE_TOKEN}","Content-Type":"application/json"},
+            json={"to":GROUP_ID,"messages":[msg]},timeout=10,
+        )
+        return jsonify(ok=200<=r.status_code<300,line_status=r.status_code,
+                       test_only=True,card="indicator_help"), (200 if 200<=r.status_code<300 else 502)
     except Exception as e:
         return jsonify(ok=False,error=type(e).__name__,detail=str(e)),500
 
