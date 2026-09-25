@@ -100,7 +100,7 @@ def abc_buy_flex(event, name=None):
             _metric("目標漲幅", p["target"]),
             _metric("常見達標", p["median_days"]),
             _metric("多數達標", p["p75_days"]),
-            _metric("15日最大延伸", p["d15_mean_mfe"]),
+            _metric("15日延伸", p["d15_mean_mfe"]),
         ]},
         {"type": "box", "layout": "vertical", "backgroundColor": C_RED_DARK,
          "cornerRadius": "lg", "paddingAll": "md", "margin": "xl", "contents": [
