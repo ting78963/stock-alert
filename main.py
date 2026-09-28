@@ -41,18 +41,6 @@ def start_background_services():
 
 start_background_services()
 
-# TEMPORARY READ-ONLY AUDIT after Fugle plan upgrade.
-def _run_fugle_capability_probe_once():
-    try:
-        import fugle_cloud_capability_probe_v1 as _probe
-        rc = _probe.main()
-        print(f"[fugle-capability-probe-once] returncode={rc}", flush=True)
-    except Exception as e:
-        print(f"[fugle-capability-probe-once] ERROR {type(e).__name__}: {e}", flush=True)
-
-threading.Thread(target=_run_fugle_capability_probe_once,
-                 name="fugle-capability-probe-once",daemon=True).start()
-
 def send_line(msg: str) -> bool:
     if not LINE_TOKEN or not GROUP_ID:
         print("[LINE DISABLED] missing LINE_TOKEN/GROUP_ID", flush=True)
