@@ -3,7 +3,7 @@
 Keeps FUGLE_API_KEY on Render. No trading, LINE, B-state, or signal mutations.
 """
 from __future__ import annotations
-import os, requests, time
+import os, requests, time, threading
 from datetime import datetime, timedelta
 from flask import Blueprint, jsonify, request
 
@@ -11,6 +11,38 @@ bp=Blueprint("fugle_web_proxy",__name__,url_prefix="/public/fugle")
 BASE="https://api.fugle.tw/marketdata/v1.0/stock"
 EXCLUDED_INDUSTRY_CODES={"02","09","14","15","16","17","18","22","32"}
 _META_CACHE={}
+# Read-through cache for website daily-history requests.
+# The web service has no persistent disk, so this cache survives only for the
+# lifetime of the Render process. Correctness never depends on the cache.
+_DAILY_CACHE={}
+_DAILY_CACHE_LOCK=threading.RLock()
+_DAILY_CACHE_TTL=30*24*60*60
+
+def _daily_cache_cleanup(now=None):
+    now=time.time() if now is None else now
+    stale=[]
+    for k,v in _DAILY_CACHE.items():
+        if now-float(v.get("last_used",0))>_DAILY_CACHE_TTL:
+            stale.append(k)
+    for k in stale:
+        _DAILY_CACHE.pop(k,None)
+
+def _daily_cache_get(key):
+    now=time.time()
+    with _DAILY_CACHE_LOCK:
+        _daily_cache_cleanup(now)
+        v=_DAILY_CACHE.get(key)
+        if v is None:
+            return None
+        v["last_used"]=now
+        # Return copies so callers cannot mutate the shared cached rows.
+        return [dict(r) for r in v["rows"]]
+
+def _daily_cache_put(key,rows):
+    now=time.time()
+    with _DAILY_CACHE_LOCK:
+        _daily_cache_cleanup(now)
+        _DAILY_CACHE[key]={"last_used":now,"rows":[dict(r) for r in rows]}
 
 ALLOWED_ORIGINS={
     "https://ting78963.github.io",
@@ -90,6 +122,16 @@ def daily(symbol):
     if start>end:
         return jsonify(ok=False,error="invalid_date_range"),400
 
+    # Exact-range read-through cache. This preserves the endpoint's response
+    # semantics while preventing repeated Strong scans from re-downloading the
+    # same historical range. A miss/failure always falls back to Fugle.
+    cache_key=(sid,start.isoformat(),end.isoformat())
+    cached=_daily_cache_get(cache_key)
+    if cached is not None:
+        print(f"[DAILY CACHE HIT] {sid} {from_s}..{to_s} rows={len(cached)}",flush=True)
+        return jsonify(ok=True,symbol=sid,data=cached)
+    print(f"[DAILY CACHE MISS] {sid} {from_s}..{to_s}",flush=True)
+
     # Fugle historical candles requires every from~to request to be < 1 year.
     # Split long website lookbacks into conservative 330-day chunks, then
     # dedupe/merge back into the exact legacy daily shape expected by the UI.
@@ -119,6 +161,7 @@ def daily(symbol):
                 continue
         cur=chunk_end+timedelta(days=1)
     rows=[by_date[k] for k in sorted(by_date)]
+    _daily_cache_put(cache_key,rows)
     return jsonify(ok=True,symbol=sid,data=rows)
 
 @bp.get("/intraday/<symbol>")
