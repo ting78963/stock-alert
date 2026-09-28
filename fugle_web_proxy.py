@@ -34,6 +34,31 @@ def cors(resp):
     resp.headers["Cache-Control"]="private, max-age=5"
     return resp
 
+def _startup_smoke_test():
+    """Temporary read-only adapter verification; remove after PASS."""
+    try:
+        s1=_get("/snapshot/quotes/TSE",{"type":"COMMONSTOCK"})
+        s2=_get("/snapshot/quotes/OTC",{"type":"COMMONSTOCK"})
+        rows=(s1.get("data") or [])+(s2.get("data") or [])
+        if not rows:
+            raise RuntimeError("empty snapshot")
+        sample=next((x for x in rows if str(x.get("symbol"))=="2330"),rows[0])
+        sid=str(sample["symbol"])
+        d=_get(f"/historical/candles/{sid}",{"from":"2026-09-01","to":"2026-09-28","timeframe":"D","fields":"open,high,low,close,volume","sort":"asc"})
+        dr=d.get("data") or []
+        if not dr:
+            raise RuntimeError("empty daily")
+        x=dr[-1]
+        mapped={"date":str(x["date"])[:10],"open":float(x["open"]),"max":float(x["high"]),
+                "min":float(x["low"]),"close":float(x["close"]),"Trading_Volume":float(x["volume"])}
+        if mapped["Trading_Volume"]<=0:
+            raise RuntimeError("bad daily volume")
+        print(f"[FUGLE WEB SMOKE PASS] snapshot_rows={len(rows)} sample={sid} daily_rows={len(dr)} fields={sorted(mapped)}",flush=True)
+    except Exception as e:
+        print(f"[FUGLE WEB SMOKE FAIL] {type(e).__name__}: {e}",flush=True)
+
+_startup_smoke_test()
+
 @bp.get("/snapshot")
 def snapshot():
     out=[];dates=set()
