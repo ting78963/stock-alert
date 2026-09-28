@@ -3,7 +3,7 @@
 Keeps FUGLE_API_KEY on Render. No trading, LINE, B-state, or signal mutations.
 """
 from __future__ import annotations
-import os, requests
+import os, requests, time
 from datetime import datetime, timedelta
 from flask import Blueprint, jsonify, request
 
@@ -23,8 +23,23 @@ def _headers():
     return {"X-API-KEY":key,"User-Agent":"stock-alert-web-proxy/1.0"}
 
 def _get(path,params=None):
-    r=requests.get(BASE+path,params=params or {},headers=_headers(),timeout=20)
-    r.raise_for_status();return r.json()
+    # Fugle may rate-limit bursty historical requests. Retry only 429 with
+    # bounded exponential backoff; all other HTTP failures keep old semantics.
+    waits=(1.0,2.0,4.0)
+    for attempt in range(len(waits)+1):
+        r=requests.get(BASE+path,params=params or {},headers=_headers(),timeout=20)
+        if r.status_code!=429:
+            r.raise_for_status()
+            return r.json()
+        if attempt>=len(waits):
+            r.raise_for_status()
+        retry_after=r.headers.get("Retry-After","").strip()
+        try:
+            delay=max(float(retry_after),waits[attempt]) if retry_after else waits[attempt]
+        except ValueError:
+            delay=waits[attempt]
+        time.sleep(delay)
+    raise RuntimeError("unreachable")
 
 @bp.after_request
 def cors(resp):
