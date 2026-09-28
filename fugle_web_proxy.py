@@ -4,6 +4,7 @@ Keeps FUGLE_API_KEY on Render. No trading, LINE, B-state, or signal mutations.
 """
 from __future__ import annotations
 import os, requests
+from datetime import datetime, timedelta
 from flask import Blueprint, jsonify, request
 
 bp=Blueprint("fugle_web_proxy",__name__,url_prefix="/public/fugle")
@@ -64,17 +65,45 @@ def ticker(symbol):
 @bp.get("/daily/<symbol>")
 def daily(symbol):
     sid=str(symbol).zfill(4)
-    params={"from":request.args.get("from",""),"to":request.args.get("to",""),
-            "timeframe":"D","fields":"open,high,low,close,volume","sort":"asc"}
-    d=_get(f"/historical/candles/{sid}",params)
-    if str(d.get("symbol") or "")!=sid:return jsonify(ok=False,error="identity_mismatch"),502
-    rows=[]
-    for r in d.get("data") or []:
+    from_s=str(request.args.get("from","")).strip()[:10]
+    to_s=str(request.args.get("to","")).strip()[:10]
+    try:
+        start=datetime.strptime(from_s,"%Y-%m-%d").date()
+        end=datetime.strptime(to_s,"%Y-%m-%d").date()
+    except ValueError:
+        return jsonify(ok=False,error="invalid_date"),400
+    if start>end:
+        return jsonify(ok=False,error="invalid_date_range"),400
+
+    # Fugle historical candles requires every from~to request to be < 1 year.
+    # Split long website lookbacks into conservative 330-day chunks, then
+    # dedupe/merge back into the exact legacy daily shape expected by the UI.
+    by_date={}
+    cur=start
+    while cur<=end:
+        chunk_end=min(cur+timedelta(days=329),end)
+        params={"from":cur.isoformat(),"to":chunk_end.isoformat(),
+                "timeframe":"D","fields":"open,high,low,close,volume","sort":"asc"}
         try:
-            rows.append({"date":str(r["date"])[:10],"open":float(r["open"]),"max":float(r["high"]),
-                         "min":float(r["low"]),"close":float(r["close"]),
-                         "Trading_Volume":float(r["volume"])})
-        except Exception:continue
+            d=_get(f"/historical/candles/{sid}",params)
+        except requests.HTTPError as e:
+            # Fugle documents 404 for a valid range containing no trading data.
+            if e.response is not None and e.response.status_code==404:
+                cur=chunk_end+timedelta(days=1)
+                continue
+            raise
+        if str(d.get("symbol") or "")!=sid:
+            return jsonify(ok=False,error="identity_mismatch"),502
+        for r in d.get("data") or []:
+            try:
+                ds=str(r["date"])[:10]
+                by_date[ds]={"date":ds,"open":float(r["open"]),"max":float(r["high"]),
+                             "min":float(r["low"]),"close":float(r["close"]),
+                             "Trading_Volume":float(r["volume"])}
+            except Exception:
+                continue
+        cur=chunk_end+timedelta(days=1)
+    rows=[by_date[k] for k in sorted(by_date)]
     return jsonify(ok=True,symbol=sid,data=rows)
 
 @bp.get("/intraday/<symbol>")
