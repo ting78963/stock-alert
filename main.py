@@ -253,3 +253,19 @@ def status():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", "10000")))
+
+# TEMP_KBAR_SMOKE_20260928
+def _temp_kbar_smoke():
+    try:
+        from fugle_web_proxy import _get
+        d=_get("/historical/candles/2330",{"from":"2026-09-25","to":"2026-09-25","timeframe":"1","fields":"open,high,low,close,volume","sort":"asc"})
+        rows=d.get("data") or []
+        sample=rows[0] if rows else {}
+        need={"open","high","low","close","volume"}
+        assert str(d.get("symbol") or "")=="2330", "identity"
+        assert rows, "empty"
+        assert need.issubset(sample.keys()), f"fields={sorted(sample.keys())}"
+        print(f"[FUGLE KBAR SMOKE PASS] symbol=2330 rows={len(rows)} fields={sorted(sample.keys())}", flush=True)
+    except Exception as e:
+        print(f"[FUGLE KBAR SMOKE FAIL] {type(e).__name__}: {e}", flush=True)
+_temp_kbar_smoke()
