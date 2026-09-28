@@ -88,3 +88,28 @@ def intraday(symbol):
                          "low":r["low"],"close":r["close"],"volume":r["volume"]})
         except Exception:continue
     return jsonify(ok=True,symbol=sid,data=rows)
+
+@bp.get("/kbar/<symbol>")
+def kbar(symbol):
+    sid=str(symbol).zfill(4)
+    date=request.args.get("date","").strip()
+    if not date:
+        return jsonify(ok=False,error="date_required"),400
+    # Same-day query uses Fugle intraday candles; past dates use historical 1-minute candles.
+    if date==__import__("datetime").datetime.now(__import__("datetime").timezone(__import__("datetime").timedelta(hours=8))).date().isoformat():
+        d=_get(f"/intraday/candles/{sid}",{"timeframe":"1","sort":"asc"})
+    else:
+        d=_get(f"/historical/candles/{sid}",{"from":date,"to":date,"timeframe":"1",
+                                             "fields":"open,high,low,close,volume","sort":"asc"})
+    if str(d.get("symbol") or "")!=sid:
+        return jsonify(ok=False,error="identity_mismatch"),502
+    rows=[]
+    for x in d.get("data") or []:
+        try:
+            ts=str(x["date"])
+            if ts[:10]!=date: continue
+            rows.append({"date":ts,"open":float(x["open"]),"max":float(x["high"]),
+                         "min":float(x["low"]),"close":float(x["close"]),
+                         "Trading_Volume":float(x["volume"])*1000.0})
+        except Exception: continue
+    return jsonify(ok=True,symbol=sid,date=date,data=rows)
