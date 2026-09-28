@@ -8,7 +8,10 @@ from flask import Blueprint, jsonify, request
 
 bp=Blueprint("fugle_web_proxy",__name__,url_prefix="/public/fugle")
 BASE="https://api.fugle.tw/marketdata/v1.0/stock"
-EXCLUDED_INDUSTRY_CODES={"02","09","14","15","16","17","18","22","32"}\n_META_CACHE={}\n\nALLOWED_ORIGINS={
+EXCLUDED_INDUSTRY_CODES={"02","09","14","15","16","17","18","22","32"}
+_META_CACHE={}
+
+ALLOWED_ORIGINS={
     "https://ting78963.github.io",
     "http://localhost","http://127.0.0.1",
 }
