@@ -196,6 +196,7 @@ def self_test():
 def main():
     ap=argparse.ArgumentParser();ap.add_argument("--self-test",action="store_true");a=ap.parse_args()
     if a.self_test:self_test();return
+    self_test()
     preflight();wait_session();STATE_ROOT.mkdir(parents=True,exist_ok=True)
     threading.Thread(target=serve,daemon=True).start()
     threading.Thread(target=shared_ws_loop,daemon=True).start()
