@@ -13,7 +13,7 @@ A=BASE/"fugle_a_scanner_v2_2.py"; BR=BASE/"fugle_b_live_runner_v2_p1_final.py"
 TPE=ZoneInfo("Asia/Taipei"); HOST="127.0.0.1"; PORT=int(os.environ.get("TREND_HANDOFF_PORT","8765"))
 LINE_SEND=os.environ.get("TREND_LINE_SEND","0").strip().lower() in {"1","true","yes","on"}
 STATE_ROOT=Path(os.environ.get("PRODUCTION_STATE_DIR",str(BASE/"_production_output")))
-_lock=threading.RLock(); _runners={}; _queues={}; _subscribed=set(); _ws_app=None
+_lock=threading.RLock(); _runners={}; _queues={}; _subscribed=set(); _ws_app=None; _ws_ready=False
 
 def now_tpe(): return datetime.now(TPE)
 def key(day,sid): return f"{day}|{str(sid).zfill(4)}"
@@ -65,11 +65,11 @@ def launch_b(payload,dry_run=False):
     return {"ok":True,"duplicate":False,"launched":True,"key":k,"shared_ws":True}
 
 def subscribe_symbol(sid):
-    global _ws_app
+    global _ws_app,_ws_ready
     with _lock:
         if sid in _subscribed:return
         app=_ws_app
-        if app is not None:
+        if app is not None and _ws_ready:
             app.send(json.dumps({"event":"subscribe","data":{"channel":"candles","symbol":sid}}))
             _subscribed.add(sid); print(f"[SHARED WS SUBSCRIBE] {sid}",flush=True)
 
@@ -80,7 +80,9 @@ def route_message(msg):
     if ev in ("error","server_error"):
         print("[SHARED WS SERVER ERROR] "+str(o)[:300],flush=True);return
     if ev=="authenticated":
+        global _ws_ready
         with _lock:
+            _ws_ready=True
             syms=sorted({k.split("|")[1] for k in _runners})
             for sid in syms:
                 _ws_app.send(json.dumps({"event":"subscribe","data":{"channel":"candles","symbol":sid}}))
@@ -116,7 +118,7 @@ def route_message(msg):
         return
 
 def shared_ws_loop():
-    global _ws_app
+    global _ws_app,_ws_ready
     import websocket
     M=runner_module(); dummy_url=M["Runner"].ws_url
     # recover the same audited WS URL without constructing a Runner
@@ -126,7 +128,7 @@ def shared_ws_loop():
     if not urls:raise RuntimeError("Cannot recover proven Fugle WS URL")
     url=urls[0]; api=os.environ["FUGLE_API_KEY"].strip(); backoff=2
     while True:
-        with _lock:_subscribed.clear()
+        with _lock:_subscribed.clear();_ws_ready=False
         def on_open(ws):ws.send(json.dumps({"event":"auth","data":{"apikey":api}}))
         def on_message(ws,msg):route_message(msg)
         def on_error(ws,e):print("[SHARED WS ERROR] "+repr(e),flush=True)
@@ -134,7 +136,7 @@ def shared_ws_loop():
         app=websocket.WebSocketApp(url,on_open=on_open,on_message=on_message,on_error=on_error,on_close=on_close)
         with _lock:_ws_app=app
         app.run_forever()
-        with _lock:_ws_app=None
+        with _lock:_ws_app=None;_ws_ready=False
         # Before resubscribe, reconcile every active B from completed REST bars.
         with _lock:rs=list(_runners.items())
         for k,r in rs:
@@ -179,7 +181,15 @@ def wait_session():
 def self_test():
     assert launch_b({"stock_id":"3714","date":"2026-09-29","discovered_at":"10:22:05"},True)["dry_run"]
     assert key("2026-09-29","2330")=="2026-09-29|2330"
+    q1=queue.Queue();q2=queue.Queue()
+    _queues["2026-09-29|3714"]=q1;_queues["2026-09-29|2330"]=q2
+    synthetic={"data":{"symbol":"3714","date":"2026-09-29T10:23:00+08:00","open":10,"high":11,"low":9,"close":10.5,"volume":100}}
+    route_message(json.dumps(synthetic))
+    assert q1.qsize()==1 and q2.qsize()==0
+    got=q1.get_nowait();assert got["stock_id"]=="3714" and got["minute"]=="10:23:00"
+    _queues.clear()
     print("[PASS] shared manager payload/dedupe key")
+    print("[PASS] synthetic candle routed to correct symbol only; no cross-stock contamination")
     print("[PASS] self-test opens NO network, sends NO LINE, creates NO runner")
     print("NO PRODUCTION SIGNAL")
 
