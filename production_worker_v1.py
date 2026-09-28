@@ -104,9 +104,18 @@ def self_test():
 def wait_for_open_session():
     while True:
         now=now_tpe()
+        # Never start A outside the cash-session window.
+        if now.time() < now.replace(hour=9,minute=0,second=0,microsecond=0).time():
+            print(f"[SESSION WAIT] {now.date().isoformat()} before 09:00; NO PRODUCTION SIGNAL; retry in 5m",flush=True)
+            time.sleep(300); continue
+        if now.time() >= now.replace(hour=13,minute=30,second=0,microsecond=0).time():
+            print(f"[SESSION CLOSED] {now.date().isoformat()} after 13:30; NO PRODUCTION SIGNAL; retry in 30m",flush=True)
+            time.sleep(1800); continue
         try:
-            if is_scheduled_open(now.date()): return
-            print(f"[SESSION CLOSED] {now.date().isoformat()} TWSE official schedule; retry in 30m",flush=True)
+            if is_scheduled_open(now.date()):
+                print(f"[SESSION OPEN] {now.date().isoformat()} TWSE official schedule + 09:00-13:30 gate",flush=True)
+                return
+            print(f"[SESSION CLOSED] {now.date().isoformat()} TWSE official schedule; NO PRODUCTION SIGNAL; retry in 30m",flush=True)
         except Exception as e:
             print(f"[SESSION AUDIT FAILED] {type(e).__name__}: {e}; NO PRODUCTION SIGNAL; retry in 5m",flush=True)
             time.sleep(300); continue

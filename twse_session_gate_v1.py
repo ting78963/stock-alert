@@ -36,16 +36,25 @@ def is_scheduled_open(day=None, rows=None):
     day=day or datetime.now(TPE).date()
     if day.weekday()>=5: return False
     rows=rows if rows is not None else fetch_schedule()
+    # TWSE official schema uses Date=ROC yyyMMdd (e.g. 1150928).
+    # Match the Date field explicitly; never infer a date by scanning arbitrary values.
     same=[]
+    parsed_dates=[]
     for row in rows:
-        vals=list(row.values()) if isinstance(row,dict) else []
-        dates=[_ymd(v) for v in vals]
-        if day in dates: same.append(row)
+        if not isinstance(row,dict):
+            continue
+        d=_ymd(row.get("Date"))
+        if d is not None:
+            parsed_dates.append(d)
+            if d==day: same.append(row)
+    if not parsed_dates:
+        raise SessionGateError("TWSE holiday schedule has no parseable Date rows")
+    # Fail closed if the returned annual schedule is for a different year.
+    if day.year not in {d.year for d in parsed_dates}:
+        raise SessionGateError(f"TWSE holiday schedule does not cover {day.year}")
     if not same:
-        # Weekday absent from official exception/holiday table => scheduled trading day.
         return True
     text=" ".join(str(v) for row in same for v in row.values())
-    # Explicit "start/resume trading" entries are open; all other dated exceptions fail closed.
     open_words=("開始交易","恢復交易","start trading","resume trading")
     return any(w.lower() in text.lower() for w in open_words)
 
