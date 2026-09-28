@@ -33,8 +33,9 @@ from datetime import datetime
 from pathlib import Path
 import numpy as np, pandas as pd
 
-HOME=Path.home(); BASE=HOME/"Desktop"/"新增資料夾"
-OUT=BASE/"_production_output"/"b_engine_v2_p1"
+HOME=Path.home(); BASE=Path(__file__).resolve().parent
+STATE_ROOT=Path(os.environ.get("PRODUCTION_STATE_DIR",str(BASE/"_production_output")))
+OUT=STATE_ROOT/"b_engine_v2_p1"
 FUGLE="https://api.fugle.tw/marketdata/v1.0/stock"; TIMEOUT=20; EPS=1e-12
 ATTACK=BASE/"run_strong_x_frozen_trend_live_auditor_v4.py"
 EARLY=BASE/"audit_strong_4day_frozen_early_abc_buy_2026_v1.py"
@@ -232,6 +233,7 @@ def main():
     try:
         at=runpy.run_path(str(ATTACK),run_name="__b_attack__")
         er=runpy.run_path(str(EARLY),run_name="__b_early__")
+        at["load_attack_engine"].__globals__["PROJECT"] = BASE
         fa,cc,fe=at["load_attack_engine"]()
         bars_df=er["bars_df"]; reconstruct=er["reconstruct_a2"]; replay=er["replay_early"]
     except BaseException as e:stop(f"Frozen implementation load failed: {e!r}")
