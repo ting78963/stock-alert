@@ -88,3 +88,23 @@ def intraday(symbol):
                          "low":r["low"],"close":r["close"],"volume":r["volume"]})
         except Exception:continue
     return jsonify(ok=True,symbol=sid,data=rows)
+
+@bp.get("/kbar/<symbol>")
+def kbar(symbol):
+    sid=str(symbol).zfill(4)
+    date=str(request.args.get("date","")).strip()[:10]
+    if not date:
+        return jsonify(ok=False,error="date_required"),400
+    params={"from":date,"to":date,"timeframe":"1","fields":"open,high,low,close,volume","sort":"asc"}
+    d=_get(f"/historical/candles/{sid}",params)
+    if str(d.get("symbol") or "")!=sid:return jsonify(ok=False,error="identity_mismatch"),502
+    rows=[]
+    for r in d.get("data") or []:
+        try:
+            ts=str(r.get("date") or r.get("time") or "")
+            if ts[:10]!=date:continue
+            rows.append({"date":ts,"stock_id":sid,"open":float(r["open"]),"max":float(r["high"]),
+                         "min":float(r["low"]),"close":float(r["close"]),
+                         "Trading_Volume":float(r["volume"])})
+        except Exception:continue
+    return jsonify(ok=True,symbol=sid,date=date,data=rows)
