@@ -258,7 +258,7 @@ if __name__ == "__main__":
 def _temp_kbar_smoke():
     try:
         from fugle_web_proxy import _get
-        d=_get("/historical/candles/2330",{"from":"2026-09-25","to":"2026-09-25","timeframe":"1","fields":"open,high,low,close,volume","sort":"asc"})
+        d=_get("/historical/candles/2330",{"from":"2026-09-24","to":"2026-09-24","timeframe":"1","fields":"open,high,low,close,volume","sort":"asc"})
         rows=d.get("data") or []
         sample=rows[0] if rows else {}
         need={"open","high","low","close","volume"}
