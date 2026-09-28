@@ -4,8 +4,8 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import requests
-from flask import Flask, jsonify
-from group_limit_up import monitor_loop as group_limit_up_monitor_loop
+from flask import Flask, jsonify, request
+from group_limit_up import monitor_loop as group_limit_up_monitor_loop, GROUPS_DISPLAY
 from b_runner import monitor_loop as b_monitor_loop, discover as b_discover, status as b_status
 from benchmark_3714 import run as run_3714_benchmark
 from abc_buy_flex import abc_buy_flex, indicator_help_flex
@@ -63,6 +63,87 @@ def root():
 @app.get("/ping")
 def ping():
     return "pong", 200
+
+@app.post("/webhook")
+def webhook():
+    """LINE group text commands. Restores the legacy group-list command and
+    adds the new indicator-help Flex card without touching trading logic."""
+    body = request.get_json(silent=True)
+    if not body:
+        return "OK", 200
+    for event in body.get("events", []):
+        if event.get("type") != "message":
+            continue
+        message = event.get("message", {})
+        if message.get("type") != "text":
+            continue
+        incoming = message.get("text", "")
+        reply_token = event.get("replyToken", "")
+        if not reply_token:
+            continue
+
+        reply_message = None
+        if "指標說明" in incoming:
+            reply_message = indicator_help_flex()
+        elif "族群" in incoming:
+            reply_message = {
+                "type": "text",
+                "text": "📊 族群清單：\nhttps://stock-alert-91j1.onrender.com/groups",
+            }
+
+        if reply_message is not None and LINE_TOKEN:
+            try:
+                r = requests.post(
+                    "https://api.line.me/v2/bot/message/reply",
+                    headers={
+                        "Authorization": f"Bearer {LINE_TOKEN}",
+                        "Content-Type": "application/json",
+                    },
+                    json={"replyToken": reply_token, "messages": [reply_message]},
+                    timeout=10,
+                )
+                print(f"LINE webhook reply: {r.status_code}", flush=True)
+            except Exception as e:
+                print(f"LINE webhook reply error: {type(e).__name__}: {e}", flush=True)
+    return "OK", 200
+
+@app.get("/groups")
+def groups_page():
+    """Restored legacy group-list page, backed by the live notifier's list."""
+    sections = {
+        "半導體": ["IC設計","IC通路商","矽晶圓","成熟製程代工","半導體設備","先進封測","探針封測","ABF載板","記憶體"],
+        "AI / 伺服器": ["AI伺服器","IPC邊緣AI","散熱","電源供應","BBU備援電池"],
+        "通訊 / 衛星": ["光通訊","低軌衛星","連接線"],
+        "被動 / 功率元件": ["被動元件","石英元件","功率元件","導線架"],
+        "基板 / 材料": ["PCB高階","PCB玻纖布","玻璃基板"],
+        "其他": ["機器人","廠務工程","重電","光學鏡頭","LED"],
+    }
+    html = """<!DOCTYPE html><html lang="zh-TW"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>族群清單｜台股漲停通知</title>
+<style>*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,sans-serif;background:#f5f5f0;color:#1a1a1a;padding:16px}
+h1{font-size:22px;font-weight:600;margin-bottom:4px}
+p{font-size:13px;color:#888;margin-bottom:20px}
+.st{font-size:11px;font-weight:600;color:#888;letter-spacing:1px;text-transform:uppercase;margin-bottom:10px}
+.g{background:#fff;border-radius:12px;padding:14px 16px;margin-bottom:8px;border:1px solid #ebebeb}
+.gn{font-size:14px;font-weight:600;margin-bottom:10px;display:flex;justify-content:space-between}
+.gc{font-size:11px;color:#aaa;background:#f5f5f0;padding:2px 8px;border-radius:20px}
+.tags{display:flex;flex-wrap:wrap;gap:7px}
+.tag{background:#f8f8f6;border:1px solid #e8e8e4;border-radius:8px;padding:7px 13px;font-size:14px}
+.code{color:#e8192c;font-size:12px;margin-left:4px}</style></head><body>
+<h1>🚀 族群清單</h1><p>台股漲停通知 @541etrau</p>"""
+    for sec, group_names in sections.items():
+        html += f'<div class="st" style="margin-bottom:10px">{sec}</div>'
+        for group_name in group_names:
+            if group_name in GROUPS_DISPLAY:
+                stocks = GROUPS_DISPLAY[group_name]
+                html += f'<div class="g"><div class="gn">{group_name}<span class="gc">{len(stocks)}支</span></div><div class="tags">'
+                for stock_name, code in stocks:
+                    html += f'<span class="tag">{stock_name}<span class="code">{code}</span></span>'
+                html += '</div></div>'
+    html += '</body></html>'
+    return html
 
 
 @app.post("/internal/discover/<symbol>")
