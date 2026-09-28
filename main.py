@@ -10,7 +10,9 @@ from b_runner import monitor_loop as b_monitor_loop, discover as b_discover, sta
 from benchmark_3714 import run as run_3714_benchmark
 from abc_buy_flex import abc_buy_flex, indicator_help_flex
 
-app = Flask(__name__)\nfrom fugle_web_proxy import bp as fugle_web_proxy_bp\napp.register_blueprint(fugle_web_proxy_bp)
+app = Flask(__name__)
+from fugle_web_proxy import bp as fugle_web_proxy_bp
+app.register_blueprint(fugle_web_proxy_bp)
 TPE = ZoneInfo("Asia/Taipei")
 LINE_TOKEN = os.environ.get("LINE_TOKEN", "").strip()
 GROUP_ID = os.environ.get("GROUP_ID", "").strip()
