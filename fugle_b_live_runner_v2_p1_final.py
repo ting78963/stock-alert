@@ -27,15 +27,16 @@ startup ~1-5 sec; then requested --minutes.
 Main bottleneck: Fugle network / live WS event availability.
 """
 from __future__ import annotations
-import argparse, json, runpy, time, threading, re, subprocess, sys
+import argparse, json, os, runpy, time, threading, re, subprocess, sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 import numpy as np, pandas as pd
 
-HOME=Path.home(); BASE=HOME/"Desktop"/"新增資料夾"
+HOME=Path.home(); BASE=Path(__file__).resolve().parent
 CORE=BASE/"fugle_b_engine_v2_p1.py"; ADAPTER=BASE/"fugle_b_data_adapter_v1.py"; NOTIFIER=BASE/"line_signal_notifier_v2.py"
-OUT=BASE/"_production_output"/"b_live_runner_v2_p1"
+STATE_ROOT=Path(os.environ.get("PRODUCTION_STATE_DIR",str(BASE/"_production_output")))
+OUT=STATE_ROOT/"b_live_runner_v2_p1"
 TPE=ZoneInfo("Asia/Taipei"); EPS=1e-12
 
 def banner(s): print("\n"+"="*154+"\n"+s+"\n"+"="*154)
@@ -71,6 +72,7 @@ class Runner:
         try:
             at=runpy.run_path(str(A),run_name="__live_v3_attack__")
             er=runpy.run_path(str(E),run_name="__live_v3_early__")
+            at["load_attack_engine"].__globals__["PROJECT"] = BASE
             self.fa,self.cc,self.fe=at["load_attack_engine"]()
             self.bars_df=er["bars_df"]; self.reconstruct=er["reconstruct_a2"]; self.replay=er["replay_early"]
         except BaseException as e:stop(f"Frozen implementation load failed: {e!r}")
