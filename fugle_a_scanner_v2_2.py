@@ -585,6 +585,7 @@ class Scanner:
     def scan_once(self) -> List[Dict[str, Any]]:
         started = time.monotonic()
         snaps = self.adapter.snapshot()
+        print(f"[A DIAG] snapshot_done rows={len(snaps)}", flush=True)
         if not snaps:
             raise AuditStop("empty Fugle Snapshot")
 
@@ -606,10 +607,12 @@ class Scanner:
             and float(s.get("total_amount") or 0) >= 50_000_000
             and float(s.get("total_volume") or 0) >= 4_000
         ]
+        print(f"[A DIAG] first_gate_done candidates={len(candidates)}", flush=True)
 
         selected: List[Dict[str, Any]] = []
-        for s in candidates:
+        for idx, s in enumerate(candidates, 1):
             symbol = s["stock_id"]
+            print(f"[A DIAG] candidate_start {idx}/{len(candidates)} symbol={symbol}", flush=True)
             try:
                 meta = self.adapter.ticker(symbol)
                 if not self.selector.meta_ok(meta):
@@ -618,6 +621,7 @@ class Scanner:
                 hit = self.selector.select_one(s, meta, bars)
                 if hit:
                     selected.append(hit)
+                print(f"[A DIAG] candidate_done {idx}/{len(candidates)} symbol={symbol} selected={bool(hit)}", flush=True)
             except AuditStop:
                 raise
             except Exception as e:
