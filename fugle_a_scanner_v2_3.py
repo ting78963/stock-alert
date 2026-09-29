@@ -811,7 +811,8 @@ def run_self_test() -> None:
 
     print("[PASS] code exclusion")
     print("[PASS] industry / ESB exclusion")
-    print("[PASS] old 50m / 4000 / raw VR5 gates removed")\n    print("[PASS] Fugle Estimated VR5 1.4999 BLOCK / 1.5000 PASS")
+    print("[PASS] old 50m / 4000 / raw VR5 gates removed")
+    print("[PASS] Fugle Estimated VR5 1.4999 BLOCK / 1.5000 PASS")
     print("[PASS] NO_VCP >=3% + MA20")
     print("[PASS] NO_VCP MA20 coverage: 19 days BLOCK / 20 days PASS")
     print("[PASS] self-test completed")
@@ -854,7 +855,8 @@ def main() -> int:
     print(f"interval       = {args.interval:g}s")
     print(f"bridge         = {args.bridge_url or 'OFF / DRY RUN'}")
     print("market         = TSE + OTC | COMMONSTOCK")
-    print("production     = A DISCOVERY ONLY | B DOES P1/A/B/C")\n    print("volume gate    = Fugle Estimated VR5 >= 1.5 FIXED")
+    print("production     = A DISCOVERY ONLY | B DOES P1/A/B/C")
+    print("volume gate    = Fugle Estimated VR5 >= 1.5 FIXED")
     print(f"output         = {OUTDIR}")
     print()
 
