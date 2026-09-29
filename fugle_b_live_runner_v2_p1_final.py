@@ -34,7 +34,7 @@ from zoneinfo import ZoneInfo
 import numpy as np, pandas as pd
 
 HOME=Path.home(); BASE=Path(__file__).resolve().parent
-CORE=BASE/"fugle_b_engine_v2_p1.py"; ADAPTER=BASE/"fugle_b_data_adapter_v1.py"; NOTIFIER=BASE/"line_signal_notifier_v2.py"
+CORE=BASE/"fugle_b_engine_v2_p1.py"; ADAPTER=BASE/"fugle_b_data_adapter_v1.py"; NOTIFIER=BASE/"line_signal_notifier_v3.py"
 STATE_ROOT=Path(os.environ.get("PRODUCTION_STATE_DIR",str(BASE/"_production_output")))
 OUT=STATE_ROOT/"b_live_runner_v2_p1"
 TPE=ZoneInfo("Asia/Taipei"); EPS=1e-12
