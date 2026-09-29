@@ -18,16 +18,13 @@ Fugle Snapshot -> 原 index(4).html 強勢選股核心 -> 第一次發現 -> Bri
    AUDIT FAILED -> STOP -> NO PRODUCTION SIGNAL
 7) 所有輸出只寫到 _production_output/fugle_a_scanner_v2。
 
-v2.3 正式 A 核心：
+原網站核心（index(4).html）：
 - 上漲
-- 原 VCP 有訊號，或無 VCP 時漲幅 >= 3% 且 price >= MA20
-- Estimated VR5 >= 1.5（固定，不掃 threshold）
-  Estimated VR5 = (盤中累積量 / F10(t)) / 前5完整交易日日均量
-  F10(t) = 該股前10個完整交易日同分鐘完成全天量比例的平均，至少5日有效
-- 舊 50,000,000 / 4,000張 / raw VR5>=1.5 不再是 handoff gate
-- EVG 不作 gate
-- VCP 有訊號：直接進量比確認
-- 無 VCP：漲幅 >= 3% 且 price >= MA20 才進量比確認
+- 累計成交額 >= 50,000,000
+- 累計成交量 >= 4,000 張
+- VR5 >= 1.5（前 5 個完整交易日日均量）
+- VCP 有訊號：直接入選
+- 無 VCP：漲幅 >= 3% 且 price >= MA20 才入選
 - VCP breakout track：pivot、量能 1.4x、10 交易日追蹤、0.997 跌破失效
 
 Fugle v1.0 mapping：
@@ -64,15 +61,13 @@ OUTDIR = Path(__file__).resolve().parent / "_production_output" / "fugle_a_scann
 STATE_FILE = OUTDIR / "state.json"
 TRACK_FILE = OUTDIR / "vcp_breakout_track_v2.json"
 CACHE_FILE = OUTDIR / "cache.json"
-F10_CACHE_FILE = OUTDIR / "estimated_vr5_f10_cache_v1.json"
-FINMIND_URL = "https://api.finmindtrade.com/api/v4/data"
-ESTIMATED_VR5_MIN = 1.5
 
 # 對應原網站 excludedKeywords：
 # 食品工業、造紙工業、建材營造、航運、觀光餐旅、金融保險、
 # 貿易百貨、文化創意、生技醫療
 EXCLUDED_INDUSTRY_CODES = {"02", "09", "14", "15", "16", "17", "18", "22", "32"}
 
+ESTIMATED_VR5_MIN = 1.5
 SCAN_INTERVAL_DEFAULT = 5.0
 OPEN_HM = (9, 0)
 CLOSE_HM = (13, 30)
@@ -116,7 +111,7 @@ def append_event(obj: Dict[str, Any]) -> None:
 
 
 def http_json(url: str, api_key: Optional[str] = None, timeout: int = 15) -> Dict[str, Any]:
-    headers = {"User-Agent": "fugle-a-scanner-v2.2/1.0"}
+    headers = {"User-Agent": "fugle-a-scanner-v2.3/1.0"}
     if api_key:
         headers["X-API-KEY"] = api_key
     req = urllib.request.Request(url, headers=headers)
@@ -273,6 +268,75 @@ class FugleAdapter:
             raise AuditStop(f"{symbol} causal history audit failed")
         self.daily_cache[symbol] = (cache_key, bars)
         return bars
+
+    def estimated_vr5_parts(self, symbol: str, snapshot_date: str, now_dt: datetime) -> Tuple[float, float, int]:
+        """Fugle-only F10(t) + prior5 average, all from historical 1m volume."""
+        cache_key = f"estvr5|{symbol}|{snapshot_date}"
+        if not hasattr(self, "_estvr5_cache"):
+            self._estvr5_cache = {}
+        days = self._estvr5_cache.get(cache_key)
+        if days is None:
+            bars = self.daily_history(symbol, snapshot_date)
+            hist_dates = [b.date for b in bars[-10:]]
+            if len(hist_dates) < 5:
+                raise AuditStop(f"{symbol} Estimated VR5 history <5 sessions")
+            days = []
+            for ds in hist_dates:
+                q = urllib.parse.urlencode({
+                    "timeframe": "1", "from": ds, "to": ds,
+                    "fields": "open,high,low,close,volume,average", "sort": "asc",
+                })
+                o = http_json(f"{BASE}/historical/candles/{urllib.parse.quote(symbol)}?{q}", self.key)
+                if str(o.get("symbol") or "") != symbol or str(o.get("timeframe") or "") != "1":
+                    raise AuditStop(f"{symbol} Fugle 1m identity failed: {ds}")
+                rows = o.get("data")
+                if not isinstance(rows, list) or not rows:
+                    raise AuditStop(f"{symbol} Fugle 1m empty: {ds}")
+                full = 0.0
+                pts = []
+                seen = set()
+                for x in rows:
+                    raw_dt = str(x.get("date") or "")
+                    if len(raw_dt) < 16:
+                        continue
+                    row_ds = raw_dt[:10]
+                    if row_ds != ds:
+                        raise AuditStop(f"{symbol} Fugle 1m date leakage: {row_ds} != {ds}")
+                    tm = raw_dt[11:19]
+                    if tm in seen:
+                        raise AuditStop(f"{symbol} Fugle 1m duplicate minute: {ds} {tm}")
+                    seen.add(tm)
+                    v = float(x.get("volume") or 0.0)
+                    if v < 0:
+                        raise AuditStop(f"{symbol} Fugle 1m negative volume: {ds} {tm}")
+                    full += v
+                    pts.append((tm, full))
+                if full > 0 and pts:
+                    days.append({"date": ds, "full": full, "pts": pts})
+            if len(days) < 5:
+                raise AuditStop(f"{symbol} Estimated VR5 valid Fugle sessions <5")
+            self._estvr5_cache[cache_key] = days
+
+        cutoff = now_dt.strftime("%H:%M:00")
+        fractions = []
+        fulls = []
+        for d in days:
+            full = float(d["full"])
+            cum = 0.0
+            for tm, running in d["pts"]:
+                if tm <= cutoff:
+                    cum = float(running)
+                else:
+                    break
+            fractions.append(cum / full)
+            fulls.append(full)
+        if len(fractions) < 5:
+            raise AuditStop(f"{symbol} Estimated VR5 F10 valid days <5")
+        f10 = sum(fractions) / len(fractions)
+        avg5 = sum(fulls[-5:]) / len(fulls[-5:])
+        if not math.isfinite(f10) or f10 <= 0 or avg5 <= 0:
+            raise AuditStop(f"{symbol} invalid Estimated VR5 F10/avg5")
+        return f10, avg5, len(fractions)
 
 
 class StrongSelector:
@@ -465,8 +529,6 @@ class StrongSelector:
         meta: Dict[str, Any],
         bars: List[DailyBar],
         inject_snapshot_today: bool = True,
-        estimated_vr5: Optional[float] = None,
-        f10: Optional[float] = None,
     ) -> Optional[Dict[str, Any]]:
         symbol = stock["stock_id"]
 
@@ -476,14 +538,13 @@ class StrongSelector:
             return None
         if float(stock.get("change_rate") or 0) <= 0:
             return None
-        # v2.3: 50m / 4000張 / raw VR5 are no longer handoff gates.
         if len(bars) < 5:
             return None
 
-        last5 = [b.volume_zhang for b in bars[-5:]]
-        avg5 = sum(last5) / len(last5) if last5 else 0
         today_vol = float(stock.get("total_volume") or 0)
-        raw_vol_ratio = today_vol / avg5 if avg5 > 0 else 0
+        vol_ratio = float(stock.get("_estimated_vr5") or 0.0)
+        if vol_ratio < ESTIMATED_VR5_MIN:
+            return None
 
         closes = [b.close for b in bars]
         vols = [b.volume_zhang for b in bars]
@@ -515,20 +576,13 @@ class StrongSelector:
             "code": symbol,
             "name": stock.get("name") or symbol,
             "todayVol": today_vol,
-            "volRatio": round(float(estimated_vr5), 2) if estimated_vr5 is not None else None,
-            "rawVolRatio": round(raw_vol_ratio, 2),
-            "estimatedVr5": round(float(estimated_vr5), 4) if estimated_vr5 is not None else None,
-            "f10": round(float(f10), 6) if f10 is not None else None,
+            "volRatio": round(vol_ratio, 2),
             "chgPct": chg,
             "price": price,
             "vcpInfo": vcp_info,
         }
 
         if vcp_info:
-            if estimated_vr5 is None or not math.isfinite(float(estimated_vr5)):
-                return None
-            if float(estimated_vr5) < ESTIMATED_VR5_MIN:
-                return None
             result["source"] = "VCP"
             return result
 
@@ -543,134 +597,16 @@ class StrongSelector:
         ma20 = sum(last20) / len(last20) if last20 else 0
         above_ma20 = ma20 > 0 and price >= ma20
         if chg >= 3 and above_ma20:
-            if estimated_vr5 is None or not math.isfinite(float(estimated_vr5)):
-                return None
-            if float(estimated_vr5) < ESTIMATED_VR5_MIN:
-                return None
             result["source"] = "NO_VCP"
             result["ma20"] = round(ma20, 2)
             return result
         return None
 
 
-class EstimatedVR5Estimator:
-    """Stock-specific causal F10(t) estimator. FinMind is historical-only; failures fail closed per stock."""
-    def __init__(self):
-        self.token = os.getenv("FINMIND_TOKEN", "").strip()
-        self.cache = load_json(F10_CACHE_FILE, {"profiles": {}})
-        if not isinstance(self.cache, dict) or not isinstance(self.cache.get("profiles"), dict):
-            self.cache = {"profiles": {}}
-
-    def _request(self, dataset: str, symbol: str, start_date: str, end_date: Optional[str] = None) -> List[Dict[str, Any]]:
-        if not self.token:
-            raise AuditStop("FINMIND_TOKEN missing: Estimated VR5 cannot be computed")
-        q = {"dataset": dataset, "data_id": symbol, "start_date": start_date, "token": self.token}
-        if end_date and dataset != "TaiwanStockPriceTick":
-            q["end_date"] = end_date
-        url = FINMIND_URL + "?" + urllib.parse.urlencode(q)
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        try:
-            with urllib.request.urlopen(req, timeout=35) as r:
-                obj = json.loads(r.read().decode("utf-8", errors="replace"))
-        except Exception as e:
-            raise RuntimeError(f"FinMind {dataset} failed for {symbol}: {type(e).__name__}: {e}") from e
-        if obj.get("status") not in (None, 200):
-            raise RuntimeError(f"FinMind {dataset} status={obj.get('status')} msg={obj.get('msg')}")
-        rows = obj.get("data") or []
-        if not isinstance(rows, list):
-            raise RuntimeError(f"FinMind {dataset} malformed data")
-        return rows
-
-    @staticmethod
-    def _sec(x: Any) -> Optional[int]:
-        m = re.search(r"(\d\d):(\d\d):(\d\d)", str(x))
-        if not m:
-            return None
-        h, mi, s = map(int, m.groups())
-        return h * 3600 + mi * 60 + s
-
-    def _build_profile(self, symbol: str, target_date: str) -> Dict[str, Any]:
-        dt = date.fromisoformat(target_date)
-        daily = self._request(
-            "TaiwanStockPrice", symbol,
-            (dt - timedelta(days=80)).isoformat(), dt.isoformat()
-        )
-        hist = []
-        for r in daily:
-            ds = str(r.get("date") or "")[:10]
-            if not ds or ds >= target_date:
-                continue
-            try:
-                full = float(r.get("Trading_Volume") or 0) / 1000.0
-            except Exception:
-                continue
-            if full > 0:
-                hist.append((ds, full))
-        hist.sort(reverse=True)
-        hist = hist[:10]
-        if len(hist) < 5:
-            raise RuntimeError(f"{symbol}: <5 prior complete daily sessions")
-
-        days = []
-        for ds, full in hist:
-            ticks = self._request("TaiwanStockPriceTick", symbol, ds)
-            pts = []
-            cum = 0.0
-            for r in ticks:
-                sec = self._sec(r.get("Time", r.get("time", "")))
-                if sec is None:
-                    continue
-                try:
-                    v = max(0.0, float(r.get("volume") or 0))
-                except Exception:
-                    continue
-                cum += v
-                pts.append((sec, cum))
-            if pts:
-                days.append({"date": ds, "full": full, "pts": pts})
-        if len(days) < 5:
-            raise RuntimeError(f"{symbol}: F10 historical tick coverage <5 days")
-
-        p = {"target_date": target_date, "days": days}
-        self.cache["profiles"][symbol] = p
-        save_json_atomic(F10_CACHE_FILE, self.cache)
-        return p
-
-    def compute(self, symbol: str, target_date: str, now_dt: datetime,
-                today_vol: float, avg5_zhang: float) -> Tuple[float, float, int]:
-        p = self.cache["profiles"].get(symbol)
-        if not p or p.get("target_date") != target_date:
-            p = self._build_profile(symbol, target_date)
-
-        cutoff = now_dt.hour * 3600 + now_dt.minute * 60  # completed/current minute boundary, no future data
-        fractions = []
-        for d in p.get("days", []):
-            full = float(d.get("full") or 0)
-            if full <= 0:
-                continue
-            cv = 0.0
-            for sec, cum in d.get("pts", []):
-                if int(sec) <= cutoff:
-                    cv = float(cum)
-                else:
-                    break
-            fractions.append(cv / full)
-
-        if len(fractions) < 5:
-            raise RuntimeError(f"{symbol}: F10 valid days <5")
-        f10 = sum(fractions) / len(fractions)
-        if not math.isfinite(f10) or f10 <= 0 or avg5_zhang <= 0:
-            raise RuntimeError(f"{symbol}: invalid F10/avg5")
-        projected = today_vol / f10
-        est = projected / avg5_zhang
-        return est, f10, len(fractions)
-
-
 class Scanner:
     def __init__(self, adapter: FugleAdapter, bridge_url: Optional[str]):
         self.adapter = adapter
         self.selector = StrongSelector()
-        self.estimator = EstimatedVR5Estimator()
         self.bridge_url = bridge_url
         self.state = load_json(STATE_FILE, {"discovered": {}})
         if not isinstance(self.state.get("discovered"), dict):
@@ -686,6 +622,26 @@ class Scanner:
         for old in keys[:-10]:
             self.state["discovered"].pop(old, None)
         save_json_atomic(STATE_FILE, self.state)
+
+    def handoff_hit(self, hit: Dict[str, Any], snap_date: str) -> bool:
+        symbol = hit["code"]
+        if self.already_sent(snap_date, symbol):
+            return False
+        payload = {
+            "stock_id": symbol,
+            "date": snap_date,
+            "discovered_at": now_tw().strftime("%H:%M:%S"),
+            "source": hit["source"],
+            "name": hit["name"],
+            "vol_ratio": hit["volRatio"],
+            "change_pct": hit["chgPct"],
+        }
+        # Only a completed per-symbol audit may reach here. Dedupe is written
+        # strictly after a successful bridge handoff (or explicit dry-run).
+        self.bridge_send(payload)
+        self.mark_sent(snap_date, symbol, payload)
+        append_event({"ts": iso_now(), "type": "discovery", **payload})
+        return True
 
     def bridge_send(self, payload: Dict[str, Any]) -> None:
         if not self.bridge_url:
@@ -713,6 +669,7 @@ class Scanner:
     def scan_once(self) -> List[Dict[str, Any]]:
         started = time.monotonic()
         snaps = self.adapter.snapshot()
+        print(f"[A DIAG] snapshot_done rows={len(snaps)}", flush=True)
         if not snaps:
             raise AuditStop("empty Fugle Snapshot")
 
@@ -726,75 +683,51 @@ class Scanner:
         if snap_date != today:
             raise AuditStop(f"stale Snapshot: snapshot={snap_date}, today={today}")
 
-        # v2.3 mother: old 50m / 4000張 are removed from the handoff path.
-        # Only cheap identity + positive-change screening happens before meta/daily/VCP.
+        # 先用不需要額外 API 的條件縮小候選；產業排除稍後做。
         candidates = [
             s for s in snaps
             if self.selector.basic_code_ok(s["stock_id"])
             and float(s.get("change_rate") or 0) > 0
         ]
+        print(f"[A DIAG] first_gate_done candidates={len(candidates)}", flush=True)
 
         selected: List[Dict[str, Any]] = []
-        for s in candidates:
+        for idx, s in enumerate(candidates, 1):
             symbol = s["stock_id"]
 
-            # Once B owns this stock/day, do not spend quota re-auditing it.
+            # Same stock/day is already owned by B after a successful handoff.
+            # Do not spend Fugle quota re-auditing it every scan.
             if self.already_sent(snap_date, symbol):
                 continue
 
+            print(f"[A DIAG] candidate_start {idx}/{len(candidates)} symbol={symbol}", flush=True)
             try:
                 meta = self.adapter.ticker(symbol)
                 if not self.selector.meta_ok(meta):
                     continue
                 bars = self.adapter.daily_history(symbol, snap_date)
-
-                # First evaluate the ORIGINAL structural stock screen exactly once.
-                # +inf bypasses only the new volume gate so FinMind/F10 is called
-                # only for stocks that already satisfy VCP or NO_VCP(3%+MA20).
-                hit = self.selector.select_one(
-                    s, meta, bars,
-                    estimated_vr5=float("inf"),
-                    f10=None,
-                )
-                if not hit:
-                    continue
-
-                last5 = [b.volume_zhang for b in bars[-5:]]
-                avg5 = sum(last5) / len(last5) if last5 else 0.0
-                today_vol = float(s.get("total_volume") or 0)
-                est, f10, fdays = self.estimator.compute(
-                    symbol, snap_date, now_tw(), today_vol, avg5
-                )
-                if est < ESTIMATED_VR5_MIN:
-                    continue
-
-                hit["volRatio"] = round(est, 2)
-                hit["estimatedVr5"] = round(est, 4)
-                hit["f10"] = round(f10, 6)
-                hit["f10Days"] = int(fdays)
-                selected.append(hit)
-
-                # Preserve v2.2 production semantics: per-symbol immediate handoff.
-                discovered_at = now_tw().strftime("%H:%M:%S")
-                payload = {
-                    "stock_id": symbol,
-                    "date": snap_date,
-                    "discovered_at": discovered_at,
-                    "source": hit["source"],
-                    "name": hit["name"],
-                    "vol_ratio": hit["volRatio"],
-                    "estimated_vr5": hit.get("estimatedVr5"),
-                    "f10": hit.get("f10"),
-                    "change_pct": hit["chgPct"],
-                }
-                self.bridge_send(payload)
-                self.mark_sent(snap_date, symbol, payload)
-                append_event({"ts": iso_now(), "type": "discovery", **payload})
-                print(
-                    f"[A HANDOFF] symbol={symbol} source={hit['source']} "
-                    f"EstimatedVR5={hit['estimatedVr5']:.4f}",
-                    flush=True,
-                )
+                f10, avg5_1m, fdays = self.adapter.estimated_vr5_parts(symbol, snap_date, now_tw())
+                today_vol = float(s.get("total_volume") or 0.0)
+                est_vr5 = (today_vol / f10) / avg5_1m
+                s_for_select = dict(s)
+                s_for_select["_estimated_vr5"] = est_vr5
+                hit = self.selector.select_one(s_for_select, meta, bars)
+                if hit:
+                    hit["estimatedVr5"] = round(est_vr5, 4)
+                    hit["f10"] = round(f10, 6)
+                    hit["f10Days"] = int(fdays)
+                if hit:
+                    selected.append(hit)
+                    # Production handoff is per-symbol and immediate: once this
+                    # symbol's complete A audit passes, B starts immediately.
+                    # A later API failure on another symbol cannot erase it.
+                    handed = self.handoff_hit(hit, snap_date)
+                    print(
+                        f"[A HANDOFF] symbol={symbol} handed={handed} "
+                        f"source={hit['source']}",
+                        flush=True,
+                    )
+                print(f"[A DIAG] candidate_done {idx}/{len(candidates)} symbol={symbol} selected={bool(hit)}", flush=True)
             except AuditStop:
                 raise
             except Exception as e:
@@ -810,7 +743,8 @@ class Scanner:
         print(
             f"[SCAN] {iso_now()} snapshot={len(snaps)} "
             f"first_gate={len(candidates)} selected={len(selected)} "
-            f"elapsed={elapsed:.2f}s"
+            f"elapsed={elapsed:.2f}s",
+            flush=True,
         )
         return selected
 
@@ -818,7 +752,7 @@ class Scanner:
 def run_self_test() -> None:
     # 純邏輯測試，不打 Fugle、不打 Bridge、不讀寫 production track。
     print("=" * 88)
-    print("A SCANNER V2.3 | SELF TEST")
+    print("A SCANNER V2.2 | SELF TEST")
     print("=" * 88)
 
     assert StrongSelector.basic_code_ok("3714")
@@ -841,41 +775,43 @@ def run_self_test() -> None:
         "stock_id": "3714", "name": "TEST",
         "change_rate": 3.2, "total_amount": 60_000_000,
         "total_volume": 6000, "close": 103.2, "date": "2026-03-20",
+        "_estimated_vr5": 1.50,
     }
     meta = {"market": "TSE", "securityType": "01", "industry": "26"}
-    hit = s.select_one(stock, meta, bars, inject_snapshot_today=False, estimated_vr5=1.50, f10=0.50)
+    hit = s.select_one(stock, meta, bars, inject_snapshot_today=False)
     s.track = old_track
     assert hit is not None and hit["source"] == "NO_VCP", hit
     assert hit["volRatio"] == 1.5, hit
-    assert hit["rawVolRatio"] == 6.0, hit
 
     stock2 = dict(stock)
     stock2["change_rate"] = 2.99
-    hit2 = s.select_one(stock2, meta, bars, inject_snapshot_today=False, estimated_vr5=1.50, f10=0.50)
+    hit2 = s.select_one(stock2, meta, bars, inject_snapshot_today=False)
     assert hit2 is None
 
     stock3 = dict(stock)
     stock3["total_volume"] = 3999
-    assert s.select_one(stock3, meta, bars, inject_snapshot_today=False, estimated_vr5=1.50, f10=0.50) is not None
+    assert s.select_one(stock3, meta, bars, inject_snapshot_today=False) is not None
+
+    stock149 = dict(stock)
+    stock149["_estimated_vr5"] = 1.4999
+    assert s.select_one(stock149, meta, bars, inject_snapshot_today=False) is None
+
+    stock150 = dict(stock)
+    stock150["_estimated_vr5"] = 1.5000
+    assert s.select_one(stock150, meta, bars, inject_snapshot_today=False) is not None
 
     # v2.1: NO_VCP MA20 coverage boundary.
     # 19 個完整歷史交易日不得把 MA19 當 MA20；20 日才可進 NO_VCP。
     short19 = bars[-19:]
-    hit19 = s.select_one(stock, meta, short19, inject_snapshot_today=False, estimated_vr5=1.50, f10=0.50)
+    hit19 = s.select_one(stock, meta, short19, inject_snapshot_today=False)
     assert hit19 is None, hit19
     exact20 = bars[-20:]
-    hit20 = s.select_one(stock, meta, exact20, inject_snapshot_today=False, estimated_vr5=1.50, f10=0.50)
+    hit20 = s.select_one(stock, meta, exact20, inject_snapshot_today=False)
     assert hit20 is not None and hit20["source"] == "NO_VCP", hit20
-
-    hit149 = s.select_one(stock, meta, bars, inject_snapshot_today=False, estimated_vr5=1.4999, f10=0.50)
-    assert hit149 is None, hit149
-    hit150 = s.select_one(stock, meta, bars, inject_snapshot_today=False, estimated_vr5=1.5000, f10=0.50)
-    assert hit150 is not None, hit150
 
     print("[PASS] code exclusion")
     print("[PASS] industry / ESB exclusion")
-    print("[PASS] old 50m / 4000 / raw VR5 gates removed")
-    print("[PASS] fixed Estimated VR5 boundary: 1.4999 BLOCK / 1.5000 PASS")
+    print("[PASS] old 50m / 4000 / raw VR5 gates removed")\n    print("[PASS] Fugle Estimated VR5 1.4999 BLOCK / 1.5000 PASS")
     print("[PASS] NO_VCP >=3% + MA20")
     print("[PASS] NO_VCP MA20 coverage: 19 days BLOCK / 20 days PASS")
     print("[PASS] self-test completed")
@@ -883,7 +819,7 @@ def run_self_test() -> None:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Fugle A Scanner v2.3")
+    ap = argparse.ArgumentParser(description="Fugle A Scanner v2")
     ap.add_argument("--once", action="store_true", help="只掃一次（本機測試）")
     ap.add_argument("--self-test", action="store_true", help="只跑 deterministic logic tests")
     ap.add_argument("--interval", type=float, default=SCAN_INTERVAL_DEFAULT,
@@ -918,10 +854,7 @@ def main() -> int:
     print(f"interval       = {args.interval:g}s")
     print(f"bridge         = {args.bridge_url or 'OFF / DRY RUN'}")
     print("market         = TSE + OTC | COMMONSTOCK")
-    print("production     = A DISCOVERY ONLY | B DOES P1/A/B/C")
-    print("volume gate    = Estimated VR5 >= 1.5 FIXED")
-    print("old gates      = 50m / 4000 / raw VR5 REMOVED")
-    print("EVG            = NOT A GATE")
+    print("production     = A DISCOVERY ONLY | B DOES P1/A/B/C")\n    print("volume gate    = Fugle Estimated VR5 >= 1.5 FIXED")
     print(f"output         = {OUTDIR}")
     print()
 
