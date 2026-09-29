@@ -56,8 +56,9 @@ def completed_cutoff(now=None):
     return z.strftime("%H:%M:00")
 
 class Runner:
-    def __init__(self,sid,date,disc,watch,line_send=False):
+    def __init__(self,sid,date,disc,watch,line_send=False,stock_name=""):
         self.sid=str(sid).zfill(4); self.date=date; self.disc=nt(disc); self.watch=float(watch); self.line_send=bool(line_send)
+        self.stock_name=str(stock_name or "").strip()
         self.rows={}; self.last_state=None; self.last_p1_status=None; self.lock=threading.Lock()
         self.ws_messages=self.ws_candles=self.ws_new=self.ws_changed=0
         self.reconnects=self.server_errors=0; self.rest_reconciles=0
@@ -161,6 +162,7 @@ class Runner:
             if ma(through)+EPS>=ma(recog) and not self.signal_emitted:
                 e={"schema":"b_signal_event_v1","date":self.date,"stock_id":self.sid,
                    "signal_class":typ,"discovered_at":self.disc,"recognition_time":recog,
+                    "stock_name":self.stock_name,
                    "live_known_time":live,"signal_emitted_at_feed_through":nt(through),
                    "a2_end":a.get("a2_end"),"a2_vr":float(a["a2_vr"]),
                    "early_high_pct":float(a["early_high_pct"]),
@@ -192,6 +194,7 @@ class Runner:
         if ma(through)+EPS<ma(recog) or self.p1_signal_emitted:return
         e={"schema":"b_signal_event_v2","date":self.date,"stock_id":self.sid,
            "signal_class":"P1","discovered_at":self.disc,
+            "stock_name":self.stock_name,
            "a1_time":p.get("a1_time"),"p1_time":p.get("p1_time"),
            "post_p1_entry_time":p.get("post_p1_entry_time"),
            "post_p1_entry_open":p.get("post_p1_entry_open"),
