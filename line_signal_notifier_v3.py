@@ -62,7 +62,10 @@ def load_event(path):
         times=("discovered_at","recognition_time","live_known_time","a1_time","p1_time","post_p1_entry_time")
     else:stop(f"Invalid signal class: {cls}")
     if not all(valid_time(e[k]) for k in times):stop("Invalid causal time format.")
-    if e.get("line_sent") is True:stop("This event is already marked line_sent=true (persistent dedupe).")
+    # Normal dedupe is line_sent. A one-time v2->v3 presentation migration may
+    # intentionally resend an already-delivered event as the approved Flex card.
+    if e.get("line_sent") is True and not getattr(load_event,"allow_flex_migration",False):
+        stop("This event is already marked line_sent=true (persistent dedupe).")
     return e
 def stock_display(e):
     sid=str(e["stock_id"]);name=str(e.get("stock_name") or e.get("name") or e.get("stockName") or "").strip();return (name if name else sid,sid)
@@ -85,7 +88,9 @@ def build_flex(e):
     ]
     return {"type":"flex","altText":f"BUY SIGNAL｜{name} {sid}｜{cls} {spec['title']}｜立即買進"[:400],"contents":{"type":"bubble","size":"mega","body":{"type":"box","layout":"vertical","paddingAll":"xl","contents":contents}}}
 def retry_key(e):
-    raw=f"{e['date']}|{e['stock_id']}|{e['signal_class']}|{e['live_known_time']}";return str(uuid.uuid5(uuid.NAMESPACE_URL,"b-signal:"+raw))
+    raw=f"{e['date']}|{e['stock_id']}|{e['signal_class']}|{e['live_known_time']}"
+    ns="b-signal-flex-v3-migration:" if getattr(retry_key,"flex_migration",False) else "b-signal:"
+    return str(uuid.uuid5(uuid.NAMESPACE_URL,ns+raw))
 def credentials():
     token=(os.getenv("LINE_CHANNEL_ACCESS_TOKEN","").strip() or os.getenv("LINE_TOKEN","").strip());to=(os.getenv("LINE_TO_ID","").strip() or os.getenv("GROUP_ID","").strip())
     if not token:stop("LINE token is not set (LINE_CHANNEL_ACCESS_TOKEN or LINE_TOKEN).")
@@ -101,14 +106,24 @@ def send(e,flex):
     if status!=200:stop(f"Unexpected LINE status {status}: {payload[:500]}")
     return status
 def main():
-    ap=argparse.ArgumentParser();ap.add_argument("event");ap.add_argument("--send",action="store_true");ap.add_argument("--preview-json",action="store_true");ap.add_argument("--stock-name",default="");a=ap.parse_args()
+    ap=argparse.ArgumentParser();ap.add_argument("event");ap.add_argument("--send",action="store_true");ap.add_argument("--preview-json",action="store_true");ap.add_argument("--stock-name",default="");ap.add_argument("--flex-migration",action="store_true");a=ap.parse_args()
     path=Path(a.event)
     if not path.is_file():stop(f"Event not found: {path}")
+    load_event.allow_flex_migration=bool(a.flex_migration)
+    retry_key.flex_migration=bool(a.flex_migration)
     e=load_event(path)
     if a.stock_name.strip():e["stock_name"]=a.stock_name.strip()
     flex=build_flex(e);spec=CARD[e["signal_class"]];name,sid=stock_display(e)
     print("="*110);print("LINE SIGNAL NOTIFIER v3 | A/B/C/P1 FLEX");print("="*110);print("Mode:","REAL SEND" if a.send else "DRY RUN");print("Event:",path);print("Stock:",f"{name} {sid}");print("Signal:",f"{e['signal_class']} | {spec['title']}");print("Recognition:",e["recognition_time"]);print("Retry key:",retry_key(e))
     if a.preview_json:print(json.dumps(flex,ensure_ascii=False,indent=2))
     if not a.send:print("\nDRY RUN PASS -> NO LINE SEND");return
-    status=send(e,flex);e["line_sent"]=True;e["line_sent_at_utc"]=datetime.now(timezone.utc).isoformat(timespec="seconds");e["line_retry_key"]=retry_key(e);atomic_json(path,e);print(f"\nLINE FLEX SEND PASS | HTTP {status}");print("Event atomically updated: line_sent=true")
+    status=send(e,flex)
+    e["line_sent"]=True
+    e["line_sent_at_utc"]=datetime.now(timezone.utc).isoformat(timespec="seconds")
+    e["line_retry_key"]=retry_key(e)
+    e["flex_v3_sent"]=True
+    e["flex_v3_sent_at_utc"]=e["line_sent_at_utc"]
+    atomic_json(path,e)
+    print(f"\nLINE FLEX SEND PASS | HTTP {status}")
+    print("Event atomically updated: line_sent=true, flex_v3_sent=true")
 if __name__=="__main__":main()
