@@ -88,7 +88,8 @@ def build_flex(e):
     ]
     return {"type":"flex","altText":f"BUY SIGNAL｜{name} {sid}｜{cls} {spec['title']}｜立即買進"[:400],"contents":{"type":"bubble","size":"mega","body":{"type":"box","layout":"vertical","paddingAll":"xl","contents":contents}}}
 def retry_key(e):
-    raw=f"{e['date']}|{e['stock_id']}|{e['signal_class']}|{e['live_known_time']}"
+    # Stable signal identity: late discovery/replay must not create a new LINE retry key.
+    raw=f"{e['date']}|{e['stock_id']}|{e['signal_class']}|{e['recognition_time']}"
     ns="b-signal-flex-v3-migration:" if getattr(retry_key,"flex_migration",False) else "b-signal:"
     return str(uuid.uuid5(uuid.NAMESPACE_URL,ns+raw))
 def credentials():

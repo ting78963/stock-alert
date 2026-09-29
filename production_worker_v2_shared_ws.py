@@ -13,7 +13,7 @@ A=BASE/"fugle_a_scanner_v2_2.py"; BR=BASE/"fugle_b_live_runner_v2_p1_final.py"
 TPE=ZoneInfo("Asia/Taipei"); HOST="127.0.0.1"; PORT=int(os.environ.get("TREND_HANDOFF_PORT","8765"))
 LINE_SEND=os.environ.get("TREND_LINE_SEND","0").strip().lower() in {"1","true","yes","on"}
 STATE_ROOT=Path(os.environ.get("PRODUCTION_STATE_DIR",str(BASE/"_production_output")))
-_lock=threading.RLock(); _runners={}; _queues={}; _subscribed=set(); _ws_app=None; _ws_ready=False
+_lock=threading.RLock(); _runners={}; _queues={}; _launching=set(); _subscribed=set(); _ws_app=None; _ws_ready=False
 
 def now_tpe(): return datetime.now(TPE)
 def key(day,sid): return f"{day}|{str(sid).zfill(4)}"
@@ -52,17 +52,25 @@ def launch_b(payload,dry_run=False):
         if not payload.get(x): raise ValueError("missing: "+x)
     sid=str(payload["stock_id"]).zfill(4); day=str(payload["date"])[:10]; disc=str(payload["discovered_at"]); stock_name=str(payload.get("name") or payload.get("stock_name") or "").strip(); k=key(day,sid)
     with _lock:
-        if k in _runners:return {"ok":True,"duplicate":True,"launched":False,"key":k}
+        if k in _runners or k in _launching:
+            return {"ok":True,"duplicate":True,"launched":False,"key":k}
+        if not dry_run:
+            _launching.add(k)
     if dry_run:return {"ok":True,"duplicate":False,"launched":False,"dry_run":True,"key":k}
-    M=runner_module(); R=M["Runner"]
-    r=R(sid,day,disc,0,line_send=LINE_SEND,stock_name=stock_name)
-    r.rest_reconcile("startup")
-    q=queue.Queue(maxsize=2000)
-    with _lock:_runners[k]=r;_queues[k]=q
-    threading.Thread(target=worker_loop,args=(k,r,q),daemon=True).start()
-    subscribe_symbol(sid)
-    print(f"[B START] {k} shared-WS LINE={'ON' if LINE_SEND else 'DRY'}",flush=True)
-    return {"ok":True,"duplicate":False,"launched":True,"key":k,"shared_ws":True}
+    try:
+        M=runner_module(); R=M["Runner"]
+        r=R(sid,day,disc,0,line_send=LINE_SEND,stock_name=stock_name)
+        r.rest_reconcile("startup")
+        q=queue.Queue(maxsize=2000)
+        with _lock:
+            _runners[k]=r;_queues[k]=q;_launching.discard(k)
+        threading.Thread(target=worker_loop,args=(k,r,q),daemon=True).start()
+        subscribe_symbol(sid)
+        print(f"[B START] {k} shared-WS LINE={'ON' if LINE_SEND else 'DRY'}",flush=True)
+        return {"ok":True,"duplicate":False,"launched":True,"key":k,"shared_ws":True}
+    except BaseException:
+        with _lock:_launching.discard(k)
+        raise
 
 def subscribe_symbol(sid):
     global _ws_app,_ws_ready

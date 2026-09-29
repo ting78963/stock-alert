@@ -22,15 +22,10 @@ _b_thread = None
 
 def start_background_services():
     global _group_limit_up_thread, _b_thread
-    if _group_limit_up_thread is None or not _group_limit_up_thread.is_alive():
-        _group_limit_up_thread = threading.Thread(
-            target=group_limit_up_monitor_loop,
-            args=(LINE_TOKEN, GROUP_ID),
-            name="group-limit-up-monitor",
-            daemon=True,
-        )
-        _group_limit_up_thread.start()
-        print("group limit-up notifier started", flush=True)
+    # Legacy group limit-up LINE sender is intentionally disabled.
+    # GROUPS_DISPLAY and /groups remain available; only automatic limit-up pushes stop.
+    if _group_limit_up_thread is None:
+        print("group limit-up notifier disabled", flush=True)
     if _b_thread is None or not _b_thread.is_alive():
         _b_thread = threading.Thread(
             target=b_monitor_loop,
@@ -83,28 +78,49 @@ def webhook():
             continue
 
         reply_message = None
+        command = None
         if "指標說明" in incoming:
+            command = "indicator_help"
             reply_message = indicator_help_flex()
         elif "族群" in incoming:
+            command = "groups"
             reply_message = {
                 "type": "text",
                 "text": "📊 族群清單：\nhttps://stock-alert-91j1.onrender.com/groups",
             }
 
         if reply_message is not None and LINE_TOKEN:
-            try:
-                r = requests.post(
-                    "https://api.line.me/v2/bot/message/reply",
-                    headers={
-                        "Authorization": f"Bearer {LINE_TOKEN}",
-                        "Content-Type": "application/json",
-                    },
-                    json={"replyToken": reply_token, "messages": [reply_message]},
-                    timeout=10,
-                )
-                print(f"LINE webhook reply: {r.status_code}", flush=True)
-            except Exception as e:
-                print(f"LINE webhook reply error: {type(e).__name__}: {e}", flush=True)
+            print(f"[LINE COMMAND] {command}", flush=True)
+            replied = False
+            if reply_token:
+                try:
+                    r = requests.post(
+                        "https://api.line.me/v2/bot/message/reply",
+                        headers={
+                            "Authorization": f"Bearer {LINE_TOKEN}",
+                            "Content-Type": "application/json",
+                        },
+                        json={"replyToken": reply_token, "messages": [reply_message]},
+                        timeout=10,
+                    )
+                    replied = 200 <= r.status_code < 300
+                    print(f"LINE webhook reply: {r.status_code}", flush=True)
+                except Exception as e:
+                    print(f"LINE webhook reply error: {type(e).__name__}: {e}", flush=True)
+            if not replied and GROUP_ID:
+                try:
+                    r = requests.post(
+                        "https://api.line.me/v2/bot/message/push",
+                        headers={
+                            "Authorization": f"Bearer {LINE_TOKEN}",
+                            "Content-Type": "application/json",
+                        },
+                        json={"to": GROUP_ID, "messages": [reply_message]},
+                        timeout=10,
+                    )
+                    print(f"LINE webhook push fallback: {r.status_code}", flush=True)
+                except Exception as e:
+                    print(f"LINE webhook push fallback error: {type(e).__name__}: {e}", flush=True)
     return "OK", 200
 
 @app.get("/groups")
@@ -327,7 +343,7 @@ def status():
         fugle_key_configured=bool(os.environ.get("FUGLE_API_KEY", "").strip()),
         line_configured=bool(LINE_TOKEN and GROUP_ID),
         legacy_trading_strategy="removed",
-        group_limit_up_notifier="enabled",
+        group_limit_up_notifier="disabled",
         b_engine=b_status(),
         scanner_a="blocked_until_fugle_snapshot_permission",
     )
