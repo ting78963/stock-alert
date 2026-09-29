@@ -68,6 +68,9 @@ CACHE_FILE = OUTDIR / "cache.json"
 EXCLUDED_INDUSTRY_CODES = {"02", "09", "14", "15", "16", "17", "18", "22", "32"}
 
 ESTIMATED_VR5_MIN = 1.5
+RAW_VR5_MIN = 1.5
+AMOUNT_TRIGGER = 50_000_000
+VOLUME_TRIGGER = 4_000
 SCAN_INTERVAL_DEFAULT = 5.0
 OPEN_HM = (9, 0)
 CLOSE_HM = (13, 30)
@@ -542,9 +545,8 @@ class StrongSelector:
             return None
 
         today_vol = float(stock.get("total_volume") or 0)
-        vol_ratio = float(stock.get("_estimated_vr5") or 0.0)
-        if vol_ratio < ESTIMATED_VR5_MIN:
-            return None
+        # Volume eligibility is owned by Scanner's persistent daily watchlist.
+        vol_ratio = float(stock.get("_volume_display_ratio") or 0.0)
 
         closes = [b.close for b in bars]
         vols = [b.volume_zhang for b in bars]
@@ -608,12 +610,43 @@ class Scanner:
         self.adapter = adapter
         self.selector = StrongSelector()
         self.bridge_url = bridge_url
-        self.state = load_json(STATE_FILE, {"discovered": {}})
+        self.state = load_json(STATE_FILE, {"discovered": {}, "volume_armed": {}})
+        if not isinstance(self.state, dict):
+            self.state = {}
         if not isinstance(self.state.get("discovered"), dict):
-            self.state = {"discovered": {}}
+            self.state["discovered"] = {}
+        if not isinstance(self.state.get("volume_armed"), dict):
+            self.state["volume_armed"] = {}
 
     def already_sent(self, d: str, symbol: str) -> bool:
         return symbol in self.state["discovered"].get(d, {})
+
+    def armed_info(self, d: str, symbol: str) -> Optional[Dict[str, Any]]:
+        x = self.state["volume_armed"].get(d, {}).get(symbol)
+        return x if isinstance(x, dict) else None
+
+    def arm_volume(self, d: str, symbol: str, reasons: List[str],
+                   raw_vr5: float, est_vr5: Optional[float]) -> Dict[str, Any]:
+        existing = self.armed_info(d, symbol)
+        if existing:
+            return existing
+        info = {
+            "armed_at": now_tw().strftime("%H:%M:%S"),
+            "reasons": list(reasons),
+            "raw_vr5": round(raw_vr5, 4),
+            "estimated_vr5": round(est_vr5, 4) if est_vr5 is not None else None,
+        }
+        self.state["volume_armed"].setdefault(d, {})[symbol] = info
+        keys = sorted(self.state["volume_armed"].keys())
+        for old in keys[:-10]:
+            self.state["volume_armed"].pop(old, None)
+        save_json_atomic(STATE_FILE, self.state)
+        append_event({"ts": iso_now(), "type": "volume_armed",
+                      "symbol": symbol, "date": d, **info})
+        print(f"[A ARM] symbol={symbol} reasons={','.join(reasons)} "
+              f"rawVR5={raw_vr5:.3f} estVR5={est_vr5 if est_vr5 is not None else 'NA'}",
+              flush=True)
+        return info
 
     def mark_sent(self, d: str, symbol: str, payload: Dict[str, Any]) -> None:
         self.state["discovered"].setdefault(d, {})[symbol] = payload
@@ -706,16 +739,58 @@ class Scanner:
                 if not self.selector.meta_ok(meta):
                     continue
                 bars = self.adapter.daily_history(symbol, snap_date)
-                f10, avg5_1m, fdays = self.adapter.estimated_vr5_parts(symbol, snap_date, now_tw())
                 today_vol = float(s.get("total_volume") or 0.0)
-                est_vr5 = (today_vol / f10) / avg5_1m
+                today_amount = float(s.get("total_amount") or 0.0)
+
+                # ANY-1 volume trigger arms a persistent same-day watch.
+                # It never hands off by itself: original VCP / 3%+MA20 still decides A PASS.
+                armed = self.armed_info(snap_date, symbol)
+                est_vr5: Optional[float] = None
+                prior5 = [b.volume_zhang for b in bars[-5:] if b.volume_zhang >= 0]
+                avg5_daily = sum(prior5) / len(prior5) if len(prior5) == 5 else 0.0
+                raw_vr5 = today_vol / avg5_daily if avg5_daily > 0 else 0.0
+
+                if not armed:
+                    reasons: List[str] = []
+                    if today_amount >= AMOUNT_TRIGGER:
+                        reasons.append("AMOUNT_50M")
+                    if today_vol >= VOLUME_TRIGGER:
+                        reasons.append("VOLUME_4000")
+                    if raw_vr5 >= RAW_VR5_MIN:
+                        reasons.append("RAW_VR5_1P5")
+
+                    # Estimated VR5 is only needed if the cheaper three triggers
+                    # have not already armed this stock.
+                    if not reasons:
+                        f10, avg5_1m, _fdays = self.adapter.estimated_vr5_parts(
+                            symbol, snap_date, now_tw()
+                        )
+                        est_vr5 = (today_vol / f10) / avg5_1m
+                        if est_vr5 >= ESTIMATED_VR5_MIN:
+                            reasons.append("EST_VR5_1P5")
+
+                    if reasons:
+                        armed = self.arm_volume(
+                            snap_date, symbol, reasons, raw_vr5, est_vr5
+                        )
+
+                if not armed:
+                    print(f"[A DIAG] candidate_done {idx}/{len(candidates)} "
+                          f"symbol={symbol} selected=False armed=False", flush=True)
+                    continue
+
                 s_for_select = dict(s)
-                s_for_select["_estimated_vr5"] = est_vr5
+                armed_est = armed.get("estimated_vr5")
+                s_for_select["_volume_display_ratio"] = (
+                    float(armed_est) if armed_est is not None else raw_vr5
+                )
                 hit = self.selector.select_one(s_for_select, meta, bars)
                 if hit:
-                    hit["estimatedVr5"] = round(est_vr5, 4)
-                    hit["f10"] = round(f10, 6)
-                    hit["f10Days"] = int(fdays)
+                    hit["rawVr5"] = round(raw_vr5, 4)
+                    hit["volumeTriggers"] = armed.get("reasons", [])
+                    hit["volumeArmedAt"] = armed.get("armed_at")
+                    if armed_est is not None:
+                        hit["estimatedVr5"] = float(armed_est)
                 if hit:
                     selected.append(hit)
                     # Production handoff is per-symbol and immediate: once this
@@ -850,13 +925,14 @@ def main() -> int:
         return 2
 
     print("=" * 88)
-    print("FUGLE A SCANNER V2.3 | AUTO STRONG-STOCK DISCOVERY")
+    print("FUGLE A SCANNER V2.3 | PERSISTENT ANY-1 VOLUME WATCH")
     print("=" * 88)
     print(f"interval       = {args.interval:g}s")
     print(f"bridge         = {args.bridge_url or 'OFF / DRY RUN'}")
     print("market         = TSE + OTC | COMMONSTOCK")
     print("production     = A DISCOVERY ONLY | B DOES P1/A/B/C")
-    print("volume gate    = Fugle Estimated VR5 >= 1.5 FIXED")
+    print("volume trigger = ANY-1: amount>=50m OR volume>=4000 OR rawVR5>=1.5 OR EstimatedVR5>=1.5")
+    print("watch semantics = once armed, keep checking VCP / 3%+MA20 all day until B handoff")
     print(f"output         = {OUTDIR}")
     print()
 
