@@ -248,10 +248,12 @@ class Runner:
         today=now_tpe().strftime("%Y-%m-%d")
         if label=="startup":
             if self.date==today:
-                # B did not know this stock before discovery. Do not replay beyond
-                # discovery at startup, even if REST already exposes a forming/current bar.
+                # Causal startup boundary: never consume the currently-forming
+                # minute, and never replay beyond the actual discovery timestamp.
+                completed=completed_cutoff()
+                cut=self.disc if ma(self.disc)<=ma(completed) else completed
+            else:
                 cut=self.disc
-            else: cut=self.disc
             rows=[r for r in rows if nt(r["minute"])<=cut]
         elif self.date==today:
             # Reconnect may use only guaranteed completed bars.
