@@ -45,6 +45,31 @@ def banner(s): print("\n"+"="*142+"\n"+s+"\n"+"="*142)
 def stop(s):
     banner("AUDIT FAILED -> STOP -> NO PRODUCTION SIGNAL")
     print(s); raise SystemExit(2)
+def _open_json(req, context, attempts=5):
+    """HTTP transport: retry only rate-limit responses; all other failures fail closed."""
+    for attempt in range(attempts):
+        try:
+            with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+                return json.loads(r.read().decode())
+        except urllib.error.HTTPError as e:
+            body=e.read().decode(errors="replace")[:300]
+            if e.code != 429 or attempt >= attempts-1:
+                stop(f"Fugle HTTP {e.code} | {context} | {body}")
+            retry_after=(e.headers.get("Retry-After") or "").strip()
+            try:
+                delay=max(1.0, float(retry_after))
+            except Exception:
+                delay=min(5.0*(2**attempt), 30.0)
+            print(
+                f"[FUGLE 429 BACKOFF] {context} attempt={attempt+1}/{attempts} "
+                f"sleep={delay:g}s",
+                flush=True,
+            )
+            time.sleep(delay)
+        except Exception as e:
+            stop(f"Fugle request failed | {context} | {type(e).__name__}: {e}")
+    stop(f"Fugle request retry exhausted | {context}")
+
 def sha(p):
     h=hashlib.sha256()
     with p.open("rb") as f:
@@ -85,9 +110,7 @@ def fetch(key,sid,date):
     q=urllib.parse.urlencode({"timeframe":"1","from":date,"to":date,"fields":"open,high,low,close,volume,average","sort":"asc"})
     u=f"{FUGLE}/historical/candles/{sid}?{q}"
     req=urllib.request.Request(u,headers={"X-API-KEY":key,"Accept":"application/json"})
-    try:
-        with urllib.request.urlopen(req,timeout=TIMEOUT) as r:o=json.loads(r.read().decode())
-    except urllib.error.HTTPError as e:stop(f"Fugle HTTP {e.code} | {date} | "+e.read().decode(errors="replace")[:300])
+    o=_open_json(req,f"minute {sid} {date}")
     if str(o.get("symbol"))!=sid or str(o.get("timeframe"))!="1" or not o.get("data"):stop(f"Fugle identity/coverage failed: {date}")
     return o
 def adapt(o,date,sid):
@@ -193,10 +216,7 @@ def fetch_prev(key,sid,date):
                               "fields":"open,high,low,close,volume","sort":"asc"})
     u=f"{FUGLE}/historical/candles/{sid}?{q}"
     req=urllib.request.Request(u,headers={"X-API-KEY":key,"Accept":"application/json"})
-    try:
-        with urllib.request.urlopen(req,timeout=TIMEOUT) as r:o=json.loads(r.read().decode())
-    except urllib.error.HTTPError as e:
-        stop(f"Fugle daily-calendar HTTP {e.code}: "+e.read().decode(errors="replace")[:300])
+    o=_open_json(req,f"daily-calendar {sid} {date}")
     dates=[]
     for b in o.get("data",[]):
         ds=pd.to_datetime(b["date"]).strftime("%Y-%m-%d")
