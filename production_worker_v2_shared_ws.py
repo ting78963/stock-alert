@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 from twse_session_gate_v1 import is_scheduled_open
 
 BASE=Path(__file__).resolve().parent
-A=BASE/"fugle_a_scanner_v2_2.py"; BR=BASE/"fugle_b_live_runner_v2_p1_final.py"
+A=BASE/"fugle_a_scanner_v2_3.py"; BR=BASE/"fugle_b_live_runner_v2_p1_final.py"
 TPE=ZoneInfo("Asia/Taipei"); HOST="127.0.0.1"; PORT=int(os.environ.get("TREND_HANDOFF_PORT","8765"))
 LINE_SEND=os.environ.get("TREND_LINE_SEND","0").strip().lower() in {"1","true","yes","on"}
 STATE_ROOT=Path(os.environ.get("PRODUCTION_STATE_DIR",str(BASE/"_production_output")))
