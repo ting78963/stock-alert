@@ -161,7 +161,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if self.path!="/discovery":return self.sendj(404,{"ok":False})
         try:n=int(self.headers.get("Content-Length","0"));self.sendj(200,launch_b(json.loads(self.rfile.read(n))))
-        except Exception as e:self.sendj(400,{"ok":False,"error":f"{type(e).__name__}: {e}"})
+        except BaseException as e:
+            print(f"[BRIDGE FAIL CLOSED] {type(e).__name__}: {e}",flush=True)
+            self.sendj(400,{"ok":False,"error":f"{type(e).__name__}: {e}"})
 
 def serve():ThreadingHTTPServer((HOST,PORT),Handler).serve_forever()
 
