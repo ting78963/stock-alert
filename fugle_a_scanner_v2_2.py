@@ -559,6 +559,26 @@ class Scanner:
             self.state["discovered"].pop(old, None)
         save_json_atomic(STATE_FILE, self.state)
 
+    def handoff_hit(self, hit: Dict[str, Any], snap_date: str) -> bool:
+        symbol = hit["code"]
+        if self.already_sent(snap_date, symbol):
+            return False
+        payload = {
+            "stock_id": symbol,
+            "date": snap_date,
+            "discovered_at": now_tw().strftime("%H:%M:%S"),
+            "source": hit["source"],
+            "name": hit["name"],
+            "vol_ratio": hit["volRatio"],
+            "change_pct": hit["chgPct"],
+        }
+        # Only a completed per-symbol audit may reach here. Dedupe is written
+        # strictly after a successful bridge handoff (or explicit dry-run).
+        self.bridge_send(payload)
+        self.mark_sent(snap_date, symbol, payload)
+        append_event({"ts": iso_now(), "type": "discovery", **payload})
+        return True
+
     def bridge_send(self, payload: Dict[str, Any]) -> None:
         if not self.bridge_url:
             print(f"[DISCOVERY][DRY] {payload['stock_id']} {payload['date']} "
@@ -612,6 +632,12 @@ class Scanner:
         selected: List[Dict[str, Any]] = []
         for idx, s in enumerate(candidates, 1):
             symbol = s["stock_id"]
+
+            # Same stock/day is already owned by B after a successful handoff.
+            # Do not spend Fugle quota re-auditing it every scan.
+            if self.already_sent(snap_date, symbol):
+                continue
+
             print(f"[A DIAG] candidate_start {idx}/{len(candidates)} symbol={symbol}", flush=True)
             try:
                 meta = self.adapter.ticker(symbol)
@@ -621,6 +647,15 @@ class Scanner:
                 hit = self.selector.select_one(s, meta, bars)
                 if hit:
                     selected.append(hit)
+                    # Production handoff is per-symbol and immediate: once this
+                    # symbol's complete A audit passes, B starts immediately.
+                    # A later API failure on another symbol cannot erase it.
+                    handed = self.handoff_hit(hit, snap_date)
+                    print(
+                        f"[A HANDOFF] symbol={symbol} handed={handed} "
+                        f"source={hit['source']}",
+                        flush=True,
+                    )
                 print(f"[A DIAG] candidate_done {idx}/{len(candidates)} symbol={symbol} selected={bool(hit)}", flush=True)
             except AuditStop:
                 raise
@@ -632,27 +667,6 @@ class Scanner:
                 })
 
         selected.sort(key=lambda x: x["volRatio"], reverse=True)
-
-        for hit in selected:
-            symbol = hit["code"]
-            if self.already_sent(snap_date, symbol):
-                continue
-
-            discovered_at = now_tw().strftime("%H:%M:%S")
-            payload = {
-                "stock_id": symbol,
-                "date": snap_date,
-                "discovered_at": discovered_at,
-                "source": hit["source"],
-                "name": hit["name"],
-                "vol_ratio": hit["volRatio"],
-                "change_pct": hit["chgPct"],
-            }
-
-            # 只有 handoff 成功（或明確 dry-run）才 dedupe。
-            self.bridge_send(payload)
-            self.mark_sent(snap_date, symbol, payload)
-            append_event({"ts": iso_now(), "type": "discovery", **payload})
 
         elapsed = time.monotonic() - started
         print(
