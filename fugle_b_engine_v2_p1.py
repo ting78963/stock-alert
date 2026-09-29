@@ -31,6 +31,7 @@ import argparse, hashlib, json, os, re, runpy, sys, time
 import urllib.error, urllib.parse, urllib.request
 from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 import numpy as np, pandas as pd
 
 HOME=Path.home(); BASE=Path(__file__).resolve().parent
@@ -107,10 +108,19 @@ def find_key():
             if m:return m.group(1).strip(),str(p)
     stop("Fugle API key not found.")
 def fetch(key,sid,date):
-    q=urllib.parse.urlencode({"timeframe":"1","from":date,"to":date,"fields":"open,high,low,close,volume,average","sort":"asc"})
-    u=f"{FUGLE}/historical/candles/{sid}?{q}"
+    today=datetime.now(ZoneInfo("Asia/Taipei")).strftime("%Y-%m-%d")
+    if date==today:
+        # Fugle's live/current-session minute backfill is the intraday endpoint.
+        # historical/candles for the current session returns 404 during market hours.
+        q=urllib.parse.urlencode({"timeframe":"1","sort":"asc"})
+        u=f"{FUGLE}/intraday/candles/{sid}?{q}"
+        context=f"intraday-minute {sid} {date}"
+    else:
+        q=urllib.parse.urlencode({"timeframe":"1","from":date,"to":date,"fields":"open,high,low,close,volume,average","sort":"asc"})
+        u=f"{FUGLE}/historical/candles/{sid}?{q}"
+        context=f"historical-minute {sid} {date}"
     req=urllib.request.Request(u,headers={"X-API-KEY":key,"Accept":"application/json"})
-    o=_open_json(req,f"minute {sid} {date}")
+    o=_open_json(req,context)
     if str(o.get("symbol"))!=sid or str(o.get("timeframe"))!="1" or not o.get("data"):stop(f"Fugle identity/coverage failed: {date}")
     return o
 def adapt(o,date,sid):
