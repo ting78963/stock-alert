@@ -654,7 +654,8 @@ class Scanner:
         print(
             f"[SCAN] {iso_now()} snapshot={len(snaps)} "
             f"first_gate={len(candidates)} selected={len(selected)} "
-            f"elapsed={elapsed:.2f}s"
+            f"elapsed={elapsed:.2f}s",
+            flush=True,
         )
         return selected
 
