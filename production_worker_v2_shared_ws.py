@@ -50,12 +50,12 @@ def worker_loop(k,r,q):
 def launch_b(payload,dry_run=False):
     for x in ("stock_id","date","discovered_at"):
         if not payload.get(x): raise ValueError("missing: "+x)
-    sid=str(payload["stock_id"]).zfill(4); day=str(payload["date"])[:10]; disc=str(payload["discovered_at"]); k=key(day,sid)
+    sid=str(payload["stock_id"]).zfill(4); day=str(payload["date"])[:10]; disc=str(payload["discovered_at"]); stock_name=str(payload.get("name") or payload.get("stock_name") or "").strip(); k=key(day,sid)
     with _lock:
         if k in _runners:return {"ok":True,"duplicate":True,"launched":False,"key":k}
     if dry_run:return {"ok":True,"duplicate":False,"launched":False,"dry_run":True,"key":k}
     M=runner_module(); R=M["Runner"]
-    r=R(sid,day,disc,0,line_send=LINE_SEND)
+    r=R(sid,day,disc,0,line_send=LINE_SEND,stock_name=stock_name)
     r.rest_reconcile("startup")
     q=queue.Queue(maxsize=2000)
     with _lock:_runners[k]=r;_queues[k]=q
