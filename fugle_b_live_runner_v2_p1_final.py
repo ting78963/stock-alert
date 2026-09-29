@@ -154,7 +154,11 @@ class Runner:
         if st=="SIGNAL":
             recog=nt(early["early_time"])
             live=self.disc if ma(self.disc)>ma(recog) else recog
-            if ma(through)+EPS>=ma(live) and not self.signal_emitted:
+            # Recovery semantics: completed replay may prove that recognition
+            # happened before discovery/restart. Emit immediately once the
+            # recognition minute is contained in causal completed data; do not
+            # wait for a new post-recovery minute merely to deliver the alert.
+            if ma(through)+EPS>=ma(recog) and not self.signal_emitted:
                 e={"schema":"b_signal_event_v1","date":self.date,"stock_id":self.sid,
                    "signal_class":typ,"discovered_at":self.disc,"recognition_time":recog,
                    "live_known_time":live,"signal_emitted_at_feed_through":nt(through),
@@ -183,7 +187,9 @@ class Runner:
         if ps!="P1_FRONTIER":return
         recog=nt(p["frontier_time"])
         live=self.disc if ma(self.disc)>ma(recog) else recog
-        if ma(through)+EPS<ma(live) or self.p1_signal_emitted:return
+        # Same recovery rule as ABC: an already-established P1/Frontier is
+        # delivered immediately when completed replay proves it.
+        if ma(through)+EPS<ma(recog) or self.p1_signal_emitted:return
         e={"schema":"b_signal_event_v2","date":self.date,"stock_id":self.sid,
            "signal_class":"P1","discovered_at":self.disc,
            "a1_time":p.get("a1_time"),"p1_time":p.get("p1_time"),
@@ -263,6 +269,11 @@ class Runner:
         if not self.rows:stop(f"REST {label}: no canonical rows")
         through=max(self.rows)
         print(f"[REST {label}] input={len(rows)} add={a} changed={c} exact_dup={d} canonical={len(self.rows)} through={through}")
+        if label=="startup":
+            # Crash/restart recovery: event identity is already persistent.
+            # Retry delivery only when LINE has not previously succeeded.
+            self._notify_if_recognized(self.sig,"ABC")
+            self._notify_if_recognized(self.p1sig,"P1")
         self.evaluate(through,label)
 
     def ws_url(self):
