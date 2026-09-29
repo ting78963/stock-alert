@@ -160,10 +160,21 @@ class Handler(BaseHTTPRequestHandler):
         b=json.dumps(o,ensure_ascii=False).encode();self.send_response(n);self.send_header("Content-Type","application/json");self.send_header("Content-Length",str(len(b)));self.end_headers();self.wfile.write(b)
     def do_POST(self):
         if self.path!="/discovery":return self.sendj(404,{"ok":False})
-        try:n=int(self.headers.get("Content-Length","0"));self.sendj(200,launch_b(json.loads(self.rfile.read(n))))
+        # Keep launch failure separate from response-socket failure. Once
+        # launch_b() returns, B has already been created/subscribed; a caller
+        # disconnect while writing HTTP 200 must not be mislabeled fail-closed.
+        try:
+            n=int(self.headers.get("Content-Length","0"))
+            result=launch_b(json.loads(self.rfile.read(n)))
         except BaseException as e:
             print(f"[BRIDGE FAIL CLOSED] {type(e).__name__}: {e}",flush=True)
-            self.sendj(400,{"ok":False,"error":f"{type(e).__name__}: {e}"})
+            try:self.sendj(400,{"ok":False,"error":f"{type(e).__name__}: {e}"})
+            except (BrokenPipeError,ConnectionResetError):
+                print("[BRIDGE RESPONSE DROPPED] caller disconnected after launch failure",flush=True)
+            return
+        try:self.sendj(200,result)
+        except (BrokenPipeError,ConnectionResetError) as e:
+            print(f"[BRIDGE RESPONSE DROPPED] B launch already succeeded: {type(e).__name__}: {e}",flush=True)
 
 def serve():ThreadingHTTPServer((HOST,PORT),Handler).serve_forever()
 
