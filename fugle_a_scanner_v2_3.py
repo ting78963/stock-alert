@@ -850,7 +850,7 @@ def run_self_test() -> None:
         "stock_id": "3714", "name": "TEST",
         "change_rate": 3.2, "total_amount": 60_000_000,
         "total_volume": 6000, "close": 103.2, "date": "2026-03-20",
-        "_estimated_vr5": 1.50,
+        "_volume_display_ratio": 1.50,
     }
     meta = {"market": "TSE", "securityType": "01", "industry": "26"}
     hit = s.select_one(stock, meta, bars, inject_snapshot_today=False)
@@ -867,14 +867,8 @@ def run_self_test() -> None:
     stock3["total_volume"] = 3999
     assert s.select_one(stock3, meta, bars, inject_snapshot_today=False) is not None
 
-    stock149 = dict(stock)
-    stock149["_estimated_vr5"] = 1.4999
-    assert s.select_one(stock149, meta, bars, inject_snapshot_today=False) is None
-
-    stock150 = dict(stock)
-    stock150["_estimated_vr5"] = 1.5000
-    assert s.select_one(stock150, meta, bars, inject_snapshot_today=False) is not None
-
+    # Volume gating now belongs to Scanner's persistent ANY-1 watchlist,
+    # not StrongSelector. Structural selector remains unchanged after arming.
     # v2.1: NO_VCP MA20 coverage boundary.
     # 19 個完整歷史交易日不得把 MA19 當 MA20；20 日才可進 NO_VCP。
     short19 = bars[-19:]
@@ -886,8 +880,8 @@ def run_self_test() -> None:
 
     print("[PASS] code exclusion")
     print("[PASS] industry / ESB exclusion")
-    print("[PASS] old 50m / 4000 / raw VR5 gates removed")
-    print("[PASS] Fugle Estimated VR5 1.4999 BLOCK / 1.5000 PASS")
+    print("[PASS] volume gate moved to persistent Scanner ANY-1 watchlist")
+    print("[PASS] triggers: 50m OR 4000 OR raw VR5 1.5 OR Estimated VR5 1.5")
     print("[PASS] NO_VCP >=3% + MA20")
     print("[PASS] NO_VCP MA20 coverage: 19 days BLOCK / 20 days PASS")
     print("[PASS] self-test completed")
