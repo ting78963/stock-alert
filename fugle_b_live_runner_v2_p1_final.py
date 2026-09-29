@@ -88,6 +88,20 @@ class Runner:
         self.state=self.dir/"runner_state.json"
         self.signal_emitted=self.sig.exists()
         self.p1_signal_emitted=self.p1sig.exists()
+        # Presentation metadata recovery only: A already knows the TW stock name.
+        # Backfill it into persisted events without changing recognition identity.
+        if self.stock_name:
+            for ep in (self.sig,self.p1sig):
+                if ep.exists():
+                    try:
+                        eo=json.loads(ep.read_text(encoding="utf-8"))
+                        if not str(eo.get("stock_name") or "").strip():
+                            eo["stock_name"]=self.stock_name
+                            tmp=ep.with_suffix(ep.suffix+".tmp")
+                            tmp.write_text(json.dumps(eo,ensure_ascii=False,indent=2),encoding="utf-8")
+                            tmp.replace(ep)
+                    except Exception as ex:
+                        stop(f"Cannot backfill stock_name into {ep.name}: {ex!r}")
         self.load_canonical()
 
     def load_canonical(self):
