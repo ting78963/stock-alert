@@ -221,14 +221,19 @@ class Runner:
     def _notify_if_recognized(self,path,label):
         if not path.exists():return
         e=json.loads(path.read_text(encoding="utf-8"))
-        if e.get("line_sent") is True:return
         if not NOTIFIER.is_file():
             print(f"[{label} LINE SKIPPED] notifier missing: {NOTIFIER}")
             return
+        # Normal delivery uses line_sent as persistent dedupe. Events already
+        # delivered by legacy v2 are resent exactly once as approved Flex v3.
+        migration=(e.get("line_sent") is True and e.get("flex_v3_sent") is not True)
+        if e.get("line_sent") is True and not migration:return
         cmd=[sys.executable,str(NOTIFIER),str(path)]
         if self.line_send:cmd.append("--send")
+        if migration:cmd.append("--flex-migration")
         mode="REAL SEND" if self.line_send else "DRY RUN"
-        print(f"[{label} LINE {mode}] recognition confirmed -> notifier")
+        action="FLEX V3 MIGRATION RESEND" if migration else f"LINE {mode}"
+        print(f"[{label} {action}] recognition confirmed -> notifier v3")
         cp=subprocess.run(cmd,check=False)
         if cp.returncode!=0:
             print(f"[{label} LINE FAILED] notifier exit={cp.returncode}; recognition/execution unchanged.")
