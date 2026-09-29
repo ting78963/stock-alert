@@ -103,8 +103,8 @@ def retry_key(e):
     return str(uuid.uuid5(uuid.NAMESPACE_URL,"b-signal:"+raw))
 
 def send(e,text):
-    token=os.getenv("LINE_CHANNEL_ACCESS_TOKEN","").strip()
-    to=os.getenv("LINE_TO_ID","").strip()
+    token=(os.getenv("LINE_CHANNEL_ACCESS_TOKEN","") or os.getenv("LINE_TOKEN","")).strip()
+    to=(os.getenv("LINE_TO_ID","") or os.getenv("GROUP_ID","")).strip()
     if not token:stop("LINE_CHANNEL_ACCESS_TOKEN is not set.")
     if not to:stop("LINE_TO_ID is not set.")
     body=json.dumps({"to":to,"messages":[{"type":"text","text":text}],
