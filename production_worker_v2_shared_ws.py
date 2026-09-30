@@ -7,6 +7,7 @@ from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 from pathlib import Path
 from zoneinfo import ZoneInfo
 from twse_session_gate_v1 import is_scheduled_open
+from group_limit_up import monitor_loop as group_limit_up_monitor_loop
 
 BASE=Path(__file__).resolve().parent
 A=BASE/"fugle_a_scanner_v2_3.py"; BR=BASE/"fugle_b_live_runner_v2_p1_final.py"
@@ -222,7 +223,7 @@ def main():
     threading.Thread(target=serve,daemon=True).start()
     threading.Thread(target=shared_ws_loop,daemon=True).start()
     threading.Thread(target=clock_loop,daemon=True).start()
-    bridge=f"http://{HOST}:{PORT}/discovery"
+    threading.Thread(\n        target=group_limit_up_monitor_loop,\n        args=(os.environ.get("LINE_TOKEN", "").strip(), os.environ.get("GROUP_ID", "").strip()),\n        name="group-limit-up-monitor",\n        daemon=True,\n    ).start()\n    print("[GROUP LIMIT-UP] monitor started | source=TWSE MIS",flush=True)\n    bridge=f"http://{HOST}:{PORT}/discovery"
     print("="*92);print("TREND PRODUCTION WORKER v2 | ONE SHARED WS | A=5s | P1/A/B/C | LINE="+("ON" if LINE_SEND else "DRY"));print("="*92)
     import subprocess
     while True:
