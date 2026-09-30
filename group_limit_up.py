@@ -166,15 +166,23 @@ def _fetch(codes):
     for i in range(0,len(codes),25):
         batch=codes[i:i+25]
         ex_ch="|".join([f"tse_{x}.tw|otc_{x}.tw" for x in batch])
-        try:
-            r=requests.get(f"https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch={ex_ch}&json=1&delay=0",timeout=10)
-            r.raise_for_status()
-            for item in r.json().get("msgArray",[]):
-                code=item.get("c",""); z=item.get("z","-"); y=item.get("y","-")
-                if code and z not in ("-","") and y not in ("-","") and float(y)>0:
-                    pct=round((float(z)-float(y))/float(y)*100,2)
-                    out[code]={"name":item.get("n","") or STOCK_TO_NAME.get(code,code),"pct":pct,"is_limit_up":pct>=9.5}
-        except Exception as e: print(f"group-limit-up TWSE error: {e}",flush=True)
+        for attempt in range(1,4):
+            try:
+                r=requests.get(
+                    f"https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch={ex_ch}&json=1&delay=0",
+                    timeout=10,
+                )
+                r.raise_for_status()
+                for item in r.json().get("msgArray",[]):
+                    code=item.get("c",""); z=item.get("z","-"); y=item.get("y","-")
+                    if code and z not in ("-","") and y not in ("-","") and float(y)>0:
+                        pct=round((float(z)-float(y))/float(y)*100,2)
+                        out[code]={"name":item.get("n","") or STOCK_TO_NAME.get(code,code),"pct":pct,"is_limit_up":pct>=9.5}
+                break
+            except Exception as e:
+                print(f"group-limit-up TWSE error attempt={attempt}/3: {e}",flush=True)
+                if attempt<3:
+                    time.sleep(1.0)
         time.sleep(.2)
     return out
 
