@@ -614,13 +614,15 @@ class Scanner:
         self.adapter = adapter
         self.selector = StrongSelector()
         self.bridge_url = bridge_url
-        self.state = load_json(STATE_FILE, {"discovered": {}, "volume_armed": {}})
+        self.state = load_json(STATE_FILE, {"discovered": {}, "volume_armed": {}, "queue_waiting": {}})
         if not isinstance(self.state, dict):
             self.state = {}
         if not isinstance(self.state.get("discovered"), dict):
             self.state["discovered"] = {}
         if not isinstance(self.state.get("volume_armed"), dict):
             self.state["volume_armed"] = {}
+        if not isinstance(self.state.get("queue_waiting"), dict):
+            self.state["queue_waiting"] = {}
 
     def already_sent(self, d: str, symbol: str) -> bool:
         return symbol in self.state["discovered"].get(d, {})
@@ -651,6 +653,19 @@ class Scanner:
               f"rawVR5={raw_vr5:.3f} estVR5={est_vr5 if est_vr5 is not None else 'NA'}",
               flush=True)
         return info
+
+    def queue_entered_at(self, d: str, symbol: str) -> str:
+        """Persistent FIFO timestamp: first time the stock became liquidity-eligible today."""
+        dayq = self.state["queue_waiting"].setdefault(d, {})
+        info = dayq.get(symbol)
+        if isinstance(info, dict) and info.get("entered_at"):
+            return str(info["entered_at"])
+        entered = now_tw().isoformat(timespec="microseconds")
+        dayq[symbol] = {"entered_at": entered}
+        for old in sorted(self.state["queue_waiting"].keys())[:-10]:
+            self.state["queue_waiting"].pop(old, None)
+        save_json_atomic(STATE_FILE, self.state)
+        return entered
 
     def mark_sent(self, d: str, symbol: str, payload: Dict[str, Any]) -> None:
         self.state["discovered"].setdefault(d, {})[symbol] = payload
@@ -713,17 +728,18 @@ class Scanner:
         return REGULAR_VOLUME_MIN
 
     @staticmethod
-    def queue_priority(raw_vr5: float, today_vol: float) -> Tuple[int, float]:
-        # Lower rank runs first. SPECIAL is a priority only, never an anomaly gate.
+    def queue_priority(raw_vr5: float, today_vol: float) -> int:
+        # Lower rank runs first. Priority is recomputed from the latest snapshot,
+        # so WAITING stocks can dynamically upgrade. FIFO is handled separately.
         if raw_vr5 >= RAW_VR5_MIN:
-            return (0, -today_vol)
+            return 0
         if today_vol >= 5000:
-            return (1, -today_vol)
+            return 1
         if today_vol >= 4000:
-            return (2, -today_vol)
+            return 2
         if today_vol >= 3000:
-            return (3, -today_vol)
-        return (4, -today_vol)
+            return 3
+        return 4
 
     def scan_once(self) -> List[Dict[str, Any]]:
         started = time.monotonic()
@@ -773,18 +789,23 @@ class Scanner:
                     raise AuditStop(f"{symbol} invalid prior5 daily average volume")
                 today_vol = float(s.get("total_volume") or 0.0)
                 raw_vr5 = today_vol / avg5_daily
-                prepared.append((self.queue_priority(raw_vr5, today_vol), s, meta, bars, raw_vr5))
+                priority = self.queue_priority(raw_vr5, today_vol)
+                entered_at = self.queue_entered_at(snap_date, symbol)
+                prepared.append((priority, entered_at, s, meta, bars, raw_vr5))
             except AuditStop:
                 raise
             except Exception as e:
                 append_event({"ts": iso_now(), "type": "candidate_error",
                               "symbol": symbol, "error": f"{type(e).__name__}: {e}"})
 
-        prepared.sort(key=lambda x: x[0])
+        # SPECIAL > Q1 > Q2 > Q3 > Q4; same tier is persistent FIFO.
+        # A stock's tier is recomputed every scan, so a waiting stock can upgrade.
+        # The currently executing symbol is never preempted.
+        prepared.sort(key=lambda x: (x[0], x[1]))
         selected: List[Dict[str, Any]] = []
 
         # Phase 2: one waiting queue; running work is non-preemptive.
-        for idx, (priority, s, meta, bars, raw_vr5) in enumerate(prepared, 1):
+        for idx, (priority, entered_at, s, meta, bars, raw_vr5) in enumerate(prepared, 1):
             symbol = s["stock_id"]
             today_vol = float(s.get("total_volume") or 0.0)
             try:
@@ -815,11 +836,11 @@ class Scanner:
                                       "symbol": symbol, "date": snap_date,
                                       "estimated_vr5": round(est_vr5, 4),
                                       "evg_pct": round(evg_pct, 4),
-                                      "priority": "SPECIAL" if priority[0] == 0 else f"Q{priority[0]}"})
+                                      "priority": "SPECIAL" if priority == 0 else f"Q{priority}"})
 
                 if not armed:
                     print(f"[A DIAG] candidate_done {idx}/{len(prepared)} symbol={symbol} "
-                          f"priority={'SPECIAL' if priority[0]==0 else 'Q'+str(priority[0])} anomaly=False", flush=True)
+                          f"priority={'SPECIAL' if priority==0 else 'Q'+str(priority)} anomaly=False", flush=True)
                     continue
 
                 s_for_select = dict(s)
@@ -832,7 +853,7 @@ class Scanner:
                     hit["volumeArmedAt"] = armed.get("armed_at")
                     hit["estimatedVr5"] = armed.get("estimated_vr5")
                     hit["evgPct"] = armed.get("evg_pct")
-                    hit["queuePriority"] = "SPECIAL" if priority[0] == 0 else f"Q{priority[0]}"
+                    hit["queuePriority"] = "SPECIAL" if priority == 0 else f"Q{priority}"
                     selected.append(hit)
                     handed = self.handoff_hit(hit, snap_date)
                     print(f"[A HANDOFF] symbol={symbol} handed={handed} source={hit['source']} "
@@ -848,7 +869,8 @@ class Scanner:
 
         elapsed = time.monotonic() - started
         print(f"[SCAN] {iso_now()} snapshot={len(snaps)} first_gate={len(candidates)} "
-              f"prepared={len(prepared)} selected={len(selected)} elapsed={elapsed:.2f}s", flush=True)
+              f"prepared={len(prepared)} selected={len(selected)} elapsed={elapsed:.2f}s "
+              f"queue=SPECIAL>Q1>Q2>Q3>Q4 same-tier=FIFO", flush=True)
         return selected
 
 
@@ -910,6 +932,12 @@ def run_self_test() -> None:
     print("[PASS] industry / ESB exclusion")
     print("[PASS] liquidity: 09:01-09:09 >=4000; 09:10+ >=2000")
     print("[PASS] anomaly: EstimatedVR5>=1.5 OR EVG>=+50%; rawVR5>=1.5 SPECIAL only")
+    assert Scanner.queue_priority(1.5, 2000) == 0
+    assert Scanner.queue_priority(1.49, 5000) == 1
+    assert Scanner.queue_priority(1.49, 4000) == 2
+    assert Scanner.queue_priority(1.49, 3000) == 3
+    assert Scanner.queue_priority(1.49, 2000) == 4
+    print("[PASS] queue: SPECIAL > Q1 > Q2 > Q3 > Q4; same-tier persistent FIFO; dynamic upgrade")
     print("[PASS] NO_VCP >=3% + MA20")
     print("[PASS] NO_VCP MA20 coverage: 19 days BLOCK / 20 days PASS")
     print("[PASS] self-test completed")
