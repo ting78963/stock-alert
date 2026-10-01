@@ -70,6 +70,7 @@ EXCLUDED_INDUSTRY_CODES = {"02", "09", "14", "15", "16", "17", "18", "22", "32"}
 
 ESTIMATED_VR5_MIN = 1.5
 EVG_MIN_PCT = 50.0
+HISTORY_429_BACKOFF_SEC = 60.0
 RAW_VR5_MIN = 1.5          # SPECIAL priority only; never a handoff gate
 EARLY_VOLUME_MIN = 4_000   # 09:01-09:09
 REGULAR_VOLUME_MIN = 2_000 # 09:10+
@@ -190,6 +191,7 @@ class FugleAdapter:
         self.history_cache: Dict[str, Any] = load_json(HISTORY_CACHE_FILE, {})
         if not isinstance(self.history_cache, dict):
             self.history_cache = {}
+        self.history_backoff_until = 0.0
 
     def snapshot(self) -> List[Dict[str, Any]]:
         # COMMONSTOCK 直接排除 ETF / 特別股；TSE + OTC。
@@ -225,6 +227,20 @@ class FugleAdapter:
             raise AuditStop(f"Snapshot TSE/OTC date mismatch: {sorted(envelope_dates)}")
         return out
 
+    def historical_json(self, url: str) -> Dict[str, Any]:
+        # A 429 on historical endpoints must not abort the whole scan or be retried
+        # every 5 seconds. Cached symbols continue; uncached symbols wait.
+        if time.monotonic() < self.history_backoff_until:
+            raise RuntimeError("HISTORY_BACKOFF")
+        try:
+            return http_json(url, self.key)
+        except AuditStop as e:
+            if "Fugle HTTP 429" in str(e):
+                self.history_backoff_until = time.monotonic() + HISTORY_429_BACKOFF_SEC
+                print(f"[A HISTORY BACKOFF] Fugle 429 -> pause uncached historical requests {HISTORY_429_BACKOFF_SEC:.0f}s; cached candidates continue", flush=True)
+                raise RuntimeError("HISTORY_BACKOFF") from e
+            raise
+
     def ticker(self, symbol: str) -> Dict[str, Any]:
         if symbol in self.meta_cache:
             return self.meta_cache[symbol]
@@ -255,9 +271,8 @@ class FugleAdapter:
             "fields": "close,volume",
             "sort": "asc",
         })
-        d = http_json(
-            f"{BASE}/historical/candles/{urllib.parse.quote(symbol)}?{params}",
-            self.key,
+        d = self.historical_json(
+            f"{BASE}/historical/candles/{urllib.parse.quote(symbol)}?{params}"
         )
         if str(d.get("symbol") or "") != symbol:
             raise AuditStop(f"history identity mismatch: requested={symbol}, got={d.get('symbol')}")
@@ -310,7 +325,7 @@ class FugleAdapter:
                     "timeframe": "1", "from": ds, "to": ds,
                     "fields": "open,high,low,close,volume,average", "sort": "asc",
                 })
-                o = http_json(f"{BASE}/historical/candles/{urllib.parse.quote(symbol)}?{q}", self.key)
+                o = self.historical_json(f"{BASE}/historical/candles/{urllib.parse.quote(symbol)}?{q}")
                 if str(o.get("symbol") or "") != symbol or str(o.get("timeframe") or "") != "1":
                     raise AuditStop(f"{symbol} Fugle 1m identity failed: {ds}")
                 rows = o.get("data")
