@@ -215,6 +215,27 @@ def wait_session():
         except Exception as e:print(f"[SESSION AUDIT FAILED] {e}; NO PRODUCTION SIGNAL",flush=True)
         time.sleep(300)
 
+def f10_maintenance_loop():
+    """Build permanent F10 store on startup; then roll it once after each trading day."""
+    import subprocess
+    script=BASE/"f10_baseline_store_v1.py"
+    last_day=None
+    first=True
+    while True:
+        n=now_tpe()
+        should=first or (n.hour>=14 and n.minute>=30 and last_day!=n.date().isoformat())
+        if should:
+            mode="init" if first else "update"
+            print(f"[F10 MAINT] start mode={mode}",flush=True)
+            try:
+                rc=subprocess.call([sys.executable,str(script),"--mode",mode,"--pause","0.15"],cwd=str(BASE),env=os.environ.copy())
+                print(f"[F10 MAINT] done mode={mode} rc={rc}",flush=True)
+                if not first and rc==0:last_day=n.date().isoformat()
+            except BaseException as e:
+                print(f"[F10 MAINT FAIL] {type(e).__name__}: {e}",flush=True)
+            first=False
+        time.sleep(60)
+
 def self_test():
     assert launch_b({"stock_id":"3714","date":"2026-09-29","discovered_at":"10:22:05"},True)["dry_run"]
     assert key("2026-09-29","2330")=="2026-09-29|2330"
@@ -234,7 +255,7 @@ def main():
     ap=argparse.ArgumentParser();ap.add_argument("--self-test",action="store_true");a=ap.parse_args()
     if a.self_test:self_test();return
     self_test()
-    preflight();wait_session();STATE_ROOT.mkdir(parents=True,exist_ok=True)
+    preflight();STATE_ROOT.mkdir(parents=True,exist_ok=True);threading.Thread(target=f10_maintenance_loop,name="f10-maint",daemon=True).start();wait_session()
     threading.Thread(target=serve,daemon=True).start()
     threading.Thread(target=shared_ws_loop,daemon=True).start()
     threading.Thread(target=clock_loop,daemon=True).start()
