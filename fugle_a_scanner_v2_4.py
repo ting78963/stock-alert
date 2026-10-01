@@ -61,6 +61,7 @@ OUTDIR = Path(__file__).resolve().parent / "_production_output" / "fugle_a_scann
 STATE_FILE = OUTDIR / "state.json"
 TRACK_FILE = OUTDIR / "vcp_breakout_track_v2.json"
 CACHE_FILE = OUTDIR / "cache.json"
+HISTORY_CACHE_FILE = OUTDIR / "a_history_cache_v2_4.json"
 
 # 對應原網站 excludedKeywords：
 # 食品工業、造紙工業、建材營造、航運、觀光餐旅、金融保險、
@@ -183,6 +184,12 @@ class FugleAdapter:
         self.key = key
         self.meta_cache: Dict[str, Dict[str, Any]] = {}
         self.daily_cache: Dict[str, Tuple[str, List[DailyBar]]] = {}
+        # Historical D/1m baselines are immutable for a target trading day.
+        # Persist them on Render disk so a restart/scan does not refetch 10x 1m
+        # sessions per candidate and trip Fugle's HTTP rate limit.
+        self.history_cache: Dict[str, Any] = load_json(HISTORY_CACHE_FILE, {})
+        if not isinstance(self.history_cache, dict):
+            self.history_cache = {}
 
     def snapshot(self) -> List[Dict[str, Any]]:
         # COMMONSTOCK 直接排除 ETF / 特別股；TSE + OTC。
@@ -232,6 +239,12 @@ class FugleAdapter:
         cache_key = f"{symbol}|{snapshot_date}"
         if symbol in self.daily_cache and self.daily_cache[symbol][0] == cache_key:
             return self.daily_cache[symbol][1]
+        persisted = self.history_cache.get("daily|" + cache_key)
+        if isinstance(persisted, list) and persisted:
+            bars = [DailyBar(str(x["date"]), float(x["close"]), float(x["volume_zhang"])) for x in persisted]
+            if not any(b.date >= snapshot_date for b in bars):
+                self.daily_cache[symbol] = (cache_key, bars)
+                return bars
 
         to_d = date.fromisoformat(snapshot_date) - timedelta(days=1)
         from_d = to_d - timedelta(days=170)  # 約 5.5 月，足夠 >=60 交易日
@@ -271,14 +284,21 @@ class FugleAdapter:
         if any(b.date >= snapshot_date for b in bars):
             raise AuditStop(f"{symbol} causal history audit failed")
         self.daily_cache[symbol] = (cache_key, bars)
+        self.history_cache["daily|" + cache_key] = [{"date":b.date,"close":b.close,"volume_zhang":b.volume_zhang} for b in bars]
+        save_json_atomic(HISTORY_CACHE_FILE, self.history_cache)
         return bars
 
-    def estimated_vr5_parts(self, symbol: str, snapshot_date: str, now_dt: datetime) -> Tuple[float, float, int]:
+    def estimated_vr5_parts(self, symbol: str, snapshot_date: str, now_dt: datetime) -> Tuple[float, float, float, int]:
         """Fugle-only F10(t) + prior5 average, all from historical 1m volume."""
         cache_key = f"estvr5|{symbol}|{snapshot_date}"
         if not hasattr(self, "_estvr5_cache"):
             self._estvr5_cache = {}
         days = self._estvr5_cache.get(cache_key)
+        if days is None:
+            persisted = self.history_cache.get(cache_key)
+            if isinstance(persisted, list) and len(persisted) >= 5:
+                days = persisted
+                self._estvr5_cache[cache_key] = days
         if days is None:
             bars = self.daily_history(symbol, snapshot_date)
             hist_dates = [b.date for b in bars[-10:]]
@@ -320,6 +340,8 @@ class FugleAdapter:
             if len(days) < 5:
                 raise AuditStop(f"{symbol} Estimated VR5 valid Fugle sessions <5")
             self._estvr5_cache[cache_key] = days
+            self.history_cache[cache_key] = days
+            save_json_atomic(HISTORY_CACHE_FILE, self.history_cache)
 
         cutoff = now_dt.strftime("%H:%M:00")
         fractions = []
