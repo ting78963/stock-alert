@@ -72,7 +72,7 @@ def trim(c,symbol):
 def build(mode,pause):
     c=db(); seed_members(c); key=api_key(); today=datetime.now(TZ).date(); to=(today-timedelta(days=1)).isoformat()
     syms=[r[0] for r in c.execute("SELECT symbol FROM member ORDER BY symbol")]
-    ok=skip=fail=429s=0
+    ok=skip=fail=http429s=0
     for i,s in enumerate(syms,1):
         have=[r[0] for r in c.execute("SELECT day FROM f10_day WHERE symbol=? ORDER BY day",(s,)).fetchall()]
         if mode=="init" and len(have)>=10:
@@ -91,7 +91,7 @@ def build(mode,pause):
                 ok+=1; print(f"[F10] {i}/{len(syms)} {s} sessions={n} range={fr}..{to}",flush=True); break
             except urllib.error.HTTPError as e:
                 if e.code==429 and tries<8:
-                    tries+=1;429s+=1;wait=min(5*tries,30);print(f"[F10 429] {s} wait={wait}s try={tries}",flush=True);time.sleep(wait);continue
+                    tries+=1;http429s+=1;wait=min(5*tries,30);print(f"[F10 429] {s} wait={wait}s try={tries}",flush=True);time.sleep(wait);continue
                 fail+=1;print(f"[F10 FAIL] {s} HTTP {e.code}",flush=True);break
             except Exception as e:
                 fail+=1;print(f"[F10 FAIL] {s} {type(e).__name__}: {e}",flush=True);break
@@ -99,7 +99,7 @@ def build(mode,pause):
     complete=c.execute("SELECT COUNT(*) FROM (SELECT symbol FROM f10_day GROUP BY symbol HAVING COUNT(*)>=5)").fetchone()[0]
     total=c.execute("SELECT COUNT(*) FROM member").fetchone()[0]
     c.execute("INSERT OR REPLACE INTO meta(k,v) VALUES('last_run',?)",(datetime.now(TZ).isoformat(timespec="seconds"),));c.commit()
-    print(f"[F10 DONE] members={total} complete_ge5={complete} ok={ok} skip={skip} fail={fail} http429={429s} db={DB}",flush=True)
+    print(f"[F10 DONE] members={total} complete_ge5={complete} ok={ok} skip={skip} fail={fail} http429={http429s} db={DB}",flush=True)
     return 0 if complete==total and fail==0 else 2
 
 def audit():
