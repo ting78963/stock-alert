@@ -219,20 +219,24 @@ def f10_maintenance_loop():
     """Build permanent F10 store on startup; then roll it once after each trading day."""
     import subprocess
     script=BASE/"f10_baseline_store_v1.py"
-    last_day=None
+    last_attempt_day=None
     first=True
     while True:
         n=now_tpe()
-        should=first or (n.hour>=14 and n.minute>=30 and last_day!=n.date().isoformat())
+        after_close=(n.hour,n.minute)>=(14,30)
+        should=first or (after_close and last_attempt_day!=n.date().isoformat())
         if should:
-            mode="init" if first else "update"
+            # After close, always roll the store so today's completed session is added.
+            mode="update" if after_close else "init"
             print(f"[F10 MAINT] start mode={mode}",flush=True)
             try:
                 rc=subprocess.call([sys.executable,str(script),"--mode",mode,"--pause","0.15"],cwd=str(BASE),env=os.environ.copy())
                 print(f"[F10 MAINT] done mode={mode} rc={rc}",flush=True)
-                if not first and rc==0:last_day=n.date().isoformat()
             except BaseException as e:
                 print(f"[F10 MAINT FAIL] {type(e).__name__}: {e}",flush=True)
+            if after_close:
+                # One scheduled attempt per day even if an exceptional symbol fails.
+                last_attempt_day=n.date().isoformat()
             first=False
         time.sleep(60)
 
