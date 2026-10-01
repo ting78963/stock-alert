@@ -62,6 +62,7 @@ STATE_FILE = OUTDIR / "state.json"
 TRACK_FILE = OUTDIR / "vcp_breakout_track_v2.json"
 CACHE_FILE = OUTDIR / "cache.json"
 HISTORY_CACHE_FILE = OUTDIR / "a_history_cache_v2_4.json"
+SHADOW_AUDIT_ROOT = Path("/var/data/stock-alert/a_queue_shadow_audit") if Path("/var/data").exists() else (OUTDIR / "a_queue_shadow_audit")
 
 # 對應原網站 excludedKeywords：
 # 食品工業、造紙工業、建材營造、航運、觀光餐旅、金融保險、
@@ -114,6 +115,16 @@ def append_event(obj: Dict[str, Any]) -> None:
     p = OUTDIR / "events.jsonl"
     with p.open("a", encoding="utf-8") as f:
         f.write(json.dumps(obj, ensure_ascii=False) + "\n")
+
+
+def append_queue_shadow(d: str, obj: Dict[str, Any]) -> None:
+    """Outcome-blind shadow audit only. Never controls production ordering."""
+    daydir = SHADOW_AUDIT_ROOT / d
+    daydir.mkdir(parents=True, exist_ok=True)
+    p = daydir / "queue_shadow_audit.jsonl"
+    row = {"ts": now_tw().isoformat(timespec="microseconds"), **obj}
+    with p.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
 def http_json(url: str, api_key: Optional[str] = None, timeout: int = 15) -> Dict[str, Any]:
@@ -828,6 +839,22 @@ class Scanner:
                 raw_vr5 = today_vol / avg5_daily
                 priority = self.queue_priority(raw_vr5, today_vol)
                 entered_at = self.queue_entered_at(snap_date, symbol)
+                qinfo = self.state["queue_waiting"].setdefault(snap_date, {}).setdefault(symbol, {"entered_at": entered_at})
+                prev_priority = qinfo.get("shadow_last_priority")
+                if prev_priority is None:
+                    append_queue_shadow(snap_date, {
+                        "type": "QUEUE_ENTER", "symbol": symbol,
+                        "today_vol": today_vol, "raw_vr5": round(raw_vr5, 6),
+                        "priority": priority, "queue_entered_at": entered_at,
+                    })
+                elif int(prev_priority) != int(priority):
+                    append_queue_shadow(snap_date, {
+                        "type": "TIER_UPGRADE" if int(priority) < int(prev_priority) else "TIER_CHANGE",
+                        "symbol": symbol, "from_priority": int(prev_priority), "to_priority": int(priority),
+                        "today_vol": today_vol, "raw_vr5": round(raw_vr5, 6),
+                        "queue_entered_at": entered_at,
+                    })
+                qinfo["shadow_last_priority"] = int(priority)
                 prepared.append((priority, entered_at, s, meta, bars, raw_vr5))
             except AuditStop:
                 raise
@@ -835,9 +862,31 @@ class Scanner:
                 append_event({"ts": iso_now(), "type": "candidate_error",
                               "symbol": symbol, "error": f"{type(e).__name__}: {e}"})
 
-        # SPECIAL > Q1 > Q2 > Q3 > Q4; same tier is persistent FIFO.
-        # A stock's tier is recomputed every scan, so a waiting stock can upgrade.
-        # The currently executing symbol is never preempted.
+        # SHADOW ONLY: compare current production FIFO against same-tier latest-volume ordering.
+        # IMPORTANT: candidate_volume_order is NEVER used for execution.
+        control_order = sorted(prepared, key=lambda x: (x[0], x[1]))
+        candidate_volume_order = sorted(
+            prepared,
+            key=lambda x: (x[0], -float(x[2].get("total_volume") or 0.0), x[1]),
+        )
+        control_rank = {x[2]["stock_id"]: i for i, x in enumerate(control_order, 1)}
+        candidate_rank = {x[2]["stock_id"]: i for i, x in enumerate(candidate_volume_order, 1)}
+        scan_id = now_tw().isoformat(timespec="microseconds")
+        for x in control_order:
+            p, entered_at, s0, _meta0, _bars0, raw0 = x
+            sym0 = s0["stock_id"]
+            cr = control_rank[sym0]
+            vr = candidate_rank[sym0]
+            append_queue_shadow(snap_date, {
+                "type": "QUEUE_COMPARE", "scan_id": scan_id, "symbol": sym0,
+                "today_vol": float(s0.get("total_volume") or 0.0),
+                "raw_vr5": round(float(raw0), 6), "priority": int(p),
+                "queue_entered_at": entered_at,
+                "control_fifo_rank": cr, "candidate_volume_rank": vr,
+                "rank_delta": cr - vr,
+            })
+
+        # PRODUCTION CONTROL UNCHANGED: SPECIAL > Q1 > Q2 > Q3 > Q4; same-tier persistent FIFO.
         prepared.sort(key=lambda x: (x[0], x[1]))
         selected: List[Dict[str, Any]] = []
 
@@ -845,6 +894,13 @@ class Scanner:
         for idx, (priority, entered_at, s, meta, bars, raw_vr5) in enumerate(prepared, 1):
             symbol = s["stock_id"]
             today_vol = float(s.get("total_volume") or 0.0)
+            append_queue_shadow(snap_date, {
+                "type": "PROCESS_START", "scan_id": scan_id, "symbol": symbol,
+                "today_vol": today_vol, "raw_vr5": round(float(raw_vr5), 6),
+                "priority": int(priority), "queue_entered_at": entered_at,
+                "control_fifo_rank": control_rank.get(symbol),
+                "candidate_volume_rank": candidate_rank.get(symbol),
+            })
             try:
                 armed = self.armed_info(snap_date, symbol)
                 est_vr5 = None
@@ -1021,6 +1077,7 @@ def main() -> int:
     print("anomaly        = EstimatedVR5>=1.5 OR EVG>=+50%")
     print("liquidity      = 09:01-09:09 >=4000 | 09:10+ >=2000 | rawVR5>=1.5 SPECIAL priority")
     print(f"output         = {OUTDIR}")
+    print(f"queue shadow   = {SHADOW_AUDIT_ROOT} | AUDIT ONLY | production FIFO unchanged")
     print()
 
     if args.once:
