@@ -73,9 +73,6 @@ def webhook():
         if message.get("type") != "text":
             continue
         incoming = message.get("text", "")
-        source = event.get("source", {})
-        if source.get("type") == "group" and source.get("groupId"):
-            print("[LINE GROUP] groupId=" + source["groupId"], flush=True)
         reply_token = event.get("replyToken", "")
         if not reply_token:
             continue
