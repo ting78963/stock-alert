@@ -70,7 +70,7 @@ def trim(c,symbol):
     for ds in days[10:]: c.execute("DELETE FROM f10_day WHERE symbol=? AND day=?",(symbol,ds))
 
 def build(mode,pause):
-    c=db(); seed_members(c); key=api_key(); today=datetime.now(TZ).date(); to=(today-timedelta(days=1)).isoformat()
+    c=db(); seed_members(c); key=api_key(); now=datetime.now(TZ); today=now.date(); to=(today if (now.hour,now.minute)>=(14,30) else today-timedelta(days=1)).isoformat()
     syms=[r[0] for r in c.execute("SELECT symbol FROM member ORDER BY symbol")]
     ok=skip=fail=http429s=0
     for i,s in enumerate(syms,1):
