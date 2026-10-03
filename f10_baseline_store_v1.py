@@ -6,6 +6,7 @@ from collections import defaultdict
 from datetime import date,datetime,timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
+from twse_session_gate_v1 import is_scheduled_open
 
 TZ=ZoneInfo("Asia/Taipei")
 BASE="https://api.fugle.tw/marketdata/v1.0/stock"
@@ -70,7 +71,15 @@ def trim(c,symbol):
     for ds in days[10:]: c.execute("DELETE FROM f10_day WHERE symbol=? AND day=?",(symbol,ds))
 
 def build(mode,pause):
-    c=db(); seed_members(c); key=api_key(); now=datetime.now(TZ); today=now.date(); to=(today if (now.hour,now.minute)>=(14,30) else today-timedelta(days=1)).isoformat()
+    now=datetime.now(TZ); today=now.date()
+    try:
+        if not is_scheduled_open(today):
+            print(f"[F10 SKIP] {today.isoformat()} TWSE non-trading day; no Fugle requests",flush=True)
+            return 0
+    except Exception as e:
+        print(f"[F10 SESSION AUDIT FAILED] {type(e).__name__}: {e}; no Fugle requests",flush=True)
+        return 2
+    c=db(); seed_members(c); key=api_key(); to=(today if (now.hour,now.minute)>=(14,30) else today-timedelta(days=1)).isoformat()
     syms=[r[0] for r in c.execute("SELECT symbol FROM member ORDER BY symbol")]
     ok=skip=fail=http429s=0
     for i,s in enumerate(syms,1):
