@@ -15,10 +15,11 @@ TPE=ZoneInfo("Asia/Taipei"); HOST="127.0.0.1"; PORT=int(os.environ.get("TREND_HA
 LINE_SEND=os.environ.get("TREND_LINE_SEND","0").strip().lower() in {"1","true","yes","on"}
 STATE_ROOT=Path(os.environ.get("PRODUCTION_STATE_DIR",str(BASE/"_production_output")))
 _lock=threading.RLock(); _runners={}; _queues={}; _launching=set(); _subscribed=set(); _ws_app=None; _ws_ready=False
-_last_ws_minute={}; _last_overflow_log={}
+_last_ws_minute={}; _last_ws_fingerprint={}; _last_overflow_log={}
 
 def now_tpe(): return datetime.now(TPE)
 def key(day,sid): return f"{day}|{str(sid).zfill(4)}"
+def ws_fingerprint(row): return (row["minute"],row["open"],row["high"],row["low"],row["close"],row["volume"])
 
 def preflight():
     need=[A,BR,BASE/"fugle_b_engine_v2_p1.py",BASE/"fugle_b_data_adapter_v1.py",
@@ -44,7 +45,9 @@ def worker_loop(k,r,q):
                 if r.first_ws_candle is None:r.first_ws_candle=item["minute"]
                 r.last_ws_candle=item["minute"]
                 r.evaluate_completed("shared_websocket_completed_minute")
-            with _lock:_last_ws_minute[k]=item["minute"]
+            with _lock:
+                _last_ws_minute[k]=item["minute"]
+                _last_ws_fingerprint[k]=ws_fingerprint(item)
         except BaseException as e:
             print(f"[B FAIL CLOSED] {k} {type(e).__name__}: {e}; runner disabled",flush=True)
             with _lock:_runners.pop(k,None);_queues.pop(k,None)
@@ -124,9 +127,10 @@ def route_message(msg):
         if q is None:return
         row={"date":day,"stock_id":sid,"minute":minute,"open":x["open"],"high":x["high"],"low":x["low"],"close":x["close"],"volume":x["volume"]}
         # Coalesce repeated Fugle revisions of the same stock+minute. B consumes
-        # completed-minute state; retaining every intra-minute revision floods the queue.
+        # completed-minute state; exact duplicates can be dropped, but a changed
+        # same-minute OHLCV revision must reach Runner.merge() for reconciliation.
         with _lock:
-            if _last_ws_minute.get(k) == minute:return
+            if _last_ws_minute.get(k)==minute and _last_ws_fingerprint.get(k)==ws_fingerprint(row):return
         with q.mutex:
             for i in range(len(q.queue)-1,-1,-1):
                 z=q.queue[i]
