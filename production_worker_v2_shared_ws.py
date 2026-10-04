@@ -173,6 +173,37 @@ def shared_ws_loop():
             except BaseException as e:print(f"[B RECONCILE FAIL CLOSED] {k}: {e}",flush=True)
         time.sleep(backoff);backoff=min(backoff*2,30)
 
+
+def phase1_profile_summary_loop():
+    """AUDIT ONLY: print aggregate RAM counters once per 60s."""
+    while True:
+        time.sleep(60)
+        with _lock:
+            rs=list(_runners.items())
+        agg={
+            "runners":len(rs),
+            "completed_calls":0,
+            "origin_clock":0,
+            "origin_ws":0,
+            "origin_other":0,
+            "eval_new_completed":0,
+            "eval_causal_dirty":0,
+            "skip_same_through_clean":0,
+            "forced_rest_startup":0,
+            "forced_rest_reconnect":0,
+            "forced_rest_other":0,
+        }
+        for _,r in rs:
+            with r.lock:
+                p=dict(getattr(r,"_phase1_prof",{}))
+            for k in agg:
+                if k!="runners":
+                    agg[k]+=int(p.get(k,0) or 0)
+        calls=agg["completed_calls"]
+        skips=agg["skip_same_through_clean"]
+        agg["skip_rate_pct"]=round(100.0*skips/calls,2) if calls else 0.0
+        print("[PHASE1 B PROF] "+json.dumps(agg,ensure_ascii=False,sort_keys=True),flush=True)
+
 def clock_loop():
     while True:
         with _lock:rs=list(_runners.items())
@@ -267,6 +298,7 @@ def main():
     threading.Thread(target=serve,daemon=True).start()
     threading.Thread(target=shared_ws_loop,daemon=True).start()
     threading.Thread(target=clock_loop,daemon=True).start()
+    threading.Thread(target=phase1_profile_summary_loop,name="phase1-b-prof",daemon=True).start()
     threading.Thread(
         target=group_limit_up_monitor_loop,
         args=(os.environ.get("LINE_TOKEN", "").strip(), os.environ.get("GROUP_ID", "").strip()),

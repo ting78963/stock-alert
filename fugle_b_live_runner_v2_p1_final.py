@@ -62,6 +62,19 @@ class Runner:
         # PHASE 1 causal completed-minute dedupe: RAM-only scheduling state.
         self._dirty_minutes=set()
         self._last_completed_through=None
+        # PHASE 1 audit-only RAM profiler. No per-call disk I/O.
+        self._phase1_prof={
+            "completed_calls":0,
+            "origin_clock":0,
+            "origin_ws":0,
+            "origin_other":0,
+            "eval_new_completed":0,
+            "eval_causal_dirty":0,
+            "skip_same_through_clean":0,
+            "forced_rest_startup":0,
+            "forced_rest_reconnect":0,
+            "forced_rest_other":0,
+        }
         self.rows={}; self.last_state=None; self.last_p1_status=None; self.lock=threading.Lock()
         self.ws_messages=self.ws_candles=self.ws_new=self.ws_changed=0
         self.reconnects=self.server_errors=0; self.rest_reconciles=0
@@ -302,6 +315,12 @@ class Runner:
             # Retry delivery only when LINE has not previously succeeded.
             self._notify_if_recognized(self.sig,"ABC")
             self._notify_if_recognized(self.p1sig,"P1")
+        if label=="startup":
+            self._phase1_prof["forced_rest_startup"]+=1
+        elif label=="reconnect":
+            self._phase1_prof["forced_rest_reconnect"]+=1
+        else:
+            self._phase1_prof["forced_rest_other"]+=1
         self.evaluate(through,label)
         self._mark_evaluated_through(through)
 
@@ -349,13 +368,29 @@ class Runner:
         self._dirty_minutes={k for k in self._dirty_minutes if k>through}
 
     def evaluate_completed(self,origin):
+        p=self._phase1_prof
+        p["completed_calls"]+=1
+        if origin=="shared_clock_completed_minute":
+            p["origin_clock"]+=1
+        elif origin=="shared_websocket_completed_minute":
+            p["origin_ws"]+=1
+        else:
+            p["origin_other"]+=1
+
         cut=completed_cutoff()
         eligible=[k for k in self.rows if k<=cut]
         if not eligible:return
         through=max(eligible)
         causal_dirty=any(k<=through for k in self._dirty_minutes)
         if through==self._last_completed_through and not causal_dirty:
+            p["skip_same_through_clean"]+=1
             return
+
+        if through!=self._last_completed_through:
+            p["eval_new_completed"]+=1
+        elif causal_dirty:
+            p["eval_causal_dirty"]+=1
+
         # Only successful evaluation may advance/clean scheduler state.
         self.evaluate(through,origin)
         self._mark_evaluated_through(through)
