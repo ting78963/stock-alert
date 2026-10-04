@@ -199,8 +199,9 @@ class FugleAdapter:
         self.f11_metadata_store: Dict[str, Any] = load_json(F11_METADATA_CACHE_FILE, {})
         if not isinstance(self.f11_metadata_store, dict):
             self.f11_metadata_store = {}
-        self.f11_metadata_cache: Dict[str, Any] = {}
-        self.f11_metadata_trade_date: Optional[str] = None
+        symbols = self.f11_metadata_store.get("symbols")
+        # Backward compatible with v2.1: reuse the symbol map across trading days.
+        self.f11_metadata_cache: Dict[str, Any] = symbols if isinstance(symbols, dict) else {}
         self.daily_cache: Dict[str, Tuple[str, List[DailyBar]]] = {}
         # Historical D/1m baselines are immutable for a target trading day.
         # Persist them on Render disk so a restart/scan does not refetch 10x 1m
@@ -258,24 +259,7 @@ class FugleAdapter:
                 raise RuntimeError("HISTORY_BACKOFF") from e
             raise
 
-    def set_snapshot_date(self, snapshot_date: str) -> None:
-        snapshot_date = str(snapshot_date or "")
-        if not snapshot_date:
-            raise AuditStop("empty snapshot_date for F11 metadata")
-        if self.f11_metadata_trade_date == snapshot_date:
-            return
-        self.meta_cache = {}
-        self.f11_metadata_trade_date = snapshot_date
-        store_date = str(self.f11_metadata_store.get("trade_date") or "")
-        symbols = self.f11_metadata_store.get("symbols")
-        if store_date == snapshot_date and isinstance(symbols, dict):
-            self.f11_metadata_cache = symbols
-        else:
-            self.f11_metadata_cache = {}
-
     def ticker(self, symbol: str) -> Dict[str, Any]:
-        if self.f11_metadata_trade_date is None:
-            raise AuditStop("F11 metadata trade date not initialized")
         if symbol in self.meta_cache:
             return self.meta_cache[symbol]
 
@@ -290,7 +274,7 @@ class FugleAdapter:
 
         self.meta_cache[symbol] = d
         self.f11_metadata_cache[symbol] = d
-        self.f11_metadata_store = {"trade_date": self.f11_metadata_trade_date, "symbols": self.f11_metadata_cache}
+        self.f11_metadata_store = {"symbols": self.f11_metadata_cache}
         F11_METADATA_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
         tmp = F11_METADATA_CACHE_FILE.with_suffix(F11_METADATA_CACHE_FILE.suffix + ".tmp")
         tmp.write_text(json.dumps(self.f11_metadata_store, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -841,7 +825,6 @@ class Scanner:
         if snap_date != now_dt.date().isoformat():
             raise AuditStop(f"stale Snapshot: snapshot={snap_date}, today={now_dt.date().isoformat()}")
 
-        self.adapter.set_snapshot_date(snap_date)
 
         vol_min = self.liquidity_minimum(now_dt)
         if vol_min is None:
