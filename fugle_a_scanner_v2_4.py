@@ -62,6 +62,7 @@ STATE_FILE = OUTDIR / "state.json"
 TRACK_FILE = OUTDIR / "vcp_breakout_track_v2.json"
 CACHE_FILE = OUTDIR / "cache.json"
 HISTORY_CACHE_FILE = OUTDIR / "a_history_cache_v2_4.json"
+F11_METADATA_CACHE_FILE = Path("/var/data/stock-alert/a_f11_metadata_v1.json") if Path("/var/data").exists() else (OUTDIR / "a_f11_metadata_v1.json")
 SHADOW_AUDIT_ROOT = Path("/var/data/stock-alert/a_queue_shadow_audit") if Path("/var/data").exists() else (OUTDIR / "a_queue_shadow_audit")
 
 # 對應原網站 excludedKeywords：
@@ -195,6 +196,11 @@ class FugleAdapter:
     def __init__(self, key: str):
         self.key = key
         self.meta_cache: Dict[str, Dict[str, Any]] = {}
+        self.f11_metadata_store: Dict[str, Any] = load_json(F11_METADATA_CACHE_FILE, {})
+        if not isinstance(self.f11_metadata_store, dict):
+            self.f11_metadata_store = {}
+        self.f11_metadata_cache: Dict[str, Any] = {}
+        self.f11_metadata_trade_date: Optional[str] = None
         self.daily_cache: Dict[str, Tuple[str, List[DailyBar]]] = {}
         # Historical D/1m baselines are immutable for a target trading day.
         # Persist them on Render disk so a restart/scan does not refetch 10x 1m
@@ -252,13 +258,43 @@ class FugleAdapter:
                 raise RuntimeError("HISTORY_BACKOFF") from e
             raise
 
+    def set_snapshot_date(self, snapshot_date: str) -> None:
+        snapshot_date = str(snapshot_date or "")
+        if not snapshot_date:
+            raise AuditStop("empty snapshot_date for F11 metadata")
+        if self.f11_metadata_trade_date == snapshot_date:
+            return
+        self.meta_cache = {}
+        self.f11_metadata_trade_date = snapshot_date
+        store_date = str(self.f11_metadata_store.get("trade_date") or "")
+        symbols = self.f11_metadata_store.get("symbols")
+        if store_date == snapshot_date and isinstance(symbols, dict):
+            self.f11_metadata_cache = symbols
+        else:
+            self.f11_metadata_cache = {}
+
     def ticker(self, symbol: str) -> Dict[str, Any]:
+        if self.f11_metadata_trade_date is None:
+            raise AuditStop("F11 metadata trade date not initialized")
         if symbol in self.meta_cache:
             return self.meta_cache[symbol]
+
+        persisted = self.f11_metadata_cache.get(symbol)
+        if isinstance(persisted, dict) and str(persisted.get("symbol") or "") == symbol:
+            self.meta_cache[symbol] = persisted
+            return persisted
+
         d = http_json(f"{BASE}/intraday/ticker/{urllib.parse.quote(symbol)}", self.key)
         if str(d.get("symbol") or "") != symbol:
             raise AuditStop(f"ticker identity mismatch: requested={symbol}, got={d.get('symbol')}")
+
         self.meta_cache[symbol] = d
+        self.f11_metadata_cache[symbol] = d
+        self.f11_metadata_store = {"trade_date": self.f11_metadata_trade_date, "symbols": self.f11_metadata_cache}
+        F11_METADATA_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = F11_METADATA_CACHE_FILE.with_suffix(F11_METADATA_CACHE_FILE.suffix + ".tmp")
+        tmp.write_text(json.dumps(self.f11_metadata_store, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.replace(F11_METADATA_CACHE_FILE)
         return d
 
     def daily_history(self, symbol: str, snapshot_date: str) -> List[DailyBar]:
@@ -804,6 +840,8 @@ class Scanner:
 
         if snap_date != now_dt.date().isoformat():
             raise AuditStop(f"stale Snapshot: snapshot={snap_date}, today={now_dt.date().isoformat()}")
+
+        self.adapter.set_snapshot_date(snap_date)
 
         vol_min = self.liquidity_minimum(now_dt)
         if vol_min is None:
