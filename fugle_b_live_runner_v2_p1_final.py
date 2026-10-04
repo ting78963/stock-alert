@@ -197,7 +197,7 @@ class Runner:
                 print(json.dumps(e,ensure_ascii=False,indent=2))
                 self._notify_if_recognized(self.sig,"ABC")
         self.evaluate_p1(d,through,origin)
-        self.fill_execution(through)
+        self.fill_execution(through,d)
         self.persist(through,st,typ,origin)
 
     def evaluate_p1(self,d,through,origin):
@@ -230,11 +230,10 @@ class Runner:
         print(json.dumps(e,ensure_ascii=False,indent=2))
         self._notify_if_recognized(self.p1sig,"P1")
 
-    def _fill_one_execution(self,path,label,through):
+    def _fill_one_execution(self,path,label,through,d):
         if not path.exists():return
         e=json.loads(path.read_text(encoding="utf-8"))
         if e.get("execution_time"):return
-        d=self.df(through)
         z=d[d.minute_abs>ma(e["live_known_time"])+EPS].sort_values("minute_abs",kind="stable")
         if z.empty:return
         r=z.iloc[0]; e["execution_time"]=str(r.time_str); e["execution_open"]=float(r.open)
@@ -261,11 +260,11 @@ class Runner:
         if cp.returncode!=0:
             print(f"[{label} LINE FAILED] notifier exit={cp.returncode}; recognition/execution unchanged.")
 
-    def fill_execution(self,through):
+    def fill_execution(self,through,d):
         # Research ledger only: after recognition, persist the first observed
         # completed minute OPEN strictly after live_known_time.
-        self._fill_one_execution(self.sig,"ABC",through)
-        self._fill_one_execution(self.p1sig,"P1",through)
+        self._fill_one_execution(self.sig,"ABC",through,d)
+        self._fill_one_execution(self.p1sig,"P1",through,d)
 
     def persist(self,through,st,typ,origin):
         x={"date":self.date,"stock_id":self.sid,"through":nt(through),"state":st,"abc":typ,
