@@ -436,28 +436,81 @@ class FugleAdapter:
             save_json_atomic(HISTORY_CACHE_FILE, self.history_cache)
 
         cutoff = now_dt.strftime("%H:%M:00")
-        fractions = []
-        fulls = []
-        for d in days:
-            full = float(d["full"])
-            cum = 0.0
-            for tm, running in d["pts"]:
-                if tm <= cutoff:
-                    cum = float(running)
-                else:
-                    break
-            fractions.append(cum / full)
-            fulls.append(full)
-        if len(fractions) < 5:
-            raise AuditStop(f"{symbol} Estimated VR5 F10 valid days <5")
-        f10 = sum(fractions) / len(fractions)
-        avg5 = sum(fulls[-5:]) / len(fulls[-5:])
+
+        # Historical 1m days are fixed for this snapshot_date. Build each cutoff
+        # result once, then reuse it on every 5-second A scan.
+        if not hasattr(self, "_estvr5_curve_cache"):
+            self._estvr5_curve_cache = {}
+        curve_state = self._estvr5_curve_cache.get(cache_key)
+
+        if curve_state is None:
+            fulls = [float(d["full"]) for d in days]
+            if len(fulls) < 5:
+                raise AuditStop(f"{symbol} Estimated VR5 F10 valid days <5")
+
+            avg5 = sum(fulls[-5:]) / len(fulls[-5:])
+            prev1 = fulls[-1]
+            if avg5 <= 0:
+                raise AuditStop(f"{symbol} invalid Estimated VR5 F10/avg5")
+            if prev1 <= 0:
+                raise AuditStop(f"{symbol} invalid EVG previous-session volume")
+
+            # Preserve OLD semantics exactly: each answer is the last running
+            # cumulative volume whose historical timestamp is <= cutoff.
+            cutoffs = sorted({
+                str(tm)
+                for d in days
+                for tm, _running in d["pts"]
+            })
+            curve = {}
+            positions = [0] * len(days)
+            cumulatives = [0.0] * len(days)
+
+            for curve_cutoff in cutoffs:
+                fractions = []
+                for i, d in enumerate(days):
+                    pts = d["pts"]
+                    pos = positions[i]
+                    cum = cumulatives[i]
+                    while pos < len(pts) and str(pts[pos][0]) <= curve_cutoff:
+                        cum = float(pts[pos][1])
+                        pos += 1
+                    positions[i] = pos
+                    cumulatives[i] = cum
+                    fractions.append(cum / fulls[i])
+                curve[curve_cutoff] = sum(fractions) / len(fractions)
+
+            curve_state = {
+                "curve": curve,
+                "cutoffs": cutoffs,
+                "avg5": avg5,
+                "prev1": prev1,
+                "n": len(fulls),
+            }
+            self._estvr5_curve_cache[cache_key] = curve_state
+
+        cutoffs = curve_state["cutoffs"]
+        curve = curve_state["curve"]
+
+        # Match OLD <= cutoff behavior even when historical timestamps are not
+        # exactly standard minute labels.
+        lo, hi = 0, len(cutoffs)
+        while lo < hi:
+            mid = (lo + hi) // 2
+            if cutoffs[mid] <= cutoff:
+                lo = mid + 1
+            else:
+                hi = mid
+        f10 = 0.0 if lo == 0 else float(curve[cutoffs[lo - 1]])
+        avg5 = float(curve_state["avg5"])
+        prev1 = float(curve_state["prev1"])
+        n = int(curve_state["n"])
+
         if not math.isfinite(f10) or f10 <= 0 or avg5 <= 0:
             raise AuditStop(f"{symbol} invalid Estimated VR5 F10/avg5")
-        prev1 = fulls[-1]
         if prev1 <= 0:
             raise AuditStop(f"{symbol} invalid EVG previous-session volume")
-        return f10, avg5, prev1, len(fractions)
+        return f10, avg5, prev1, n
 
 
 class StrongSelector:
