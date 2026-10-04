@@ -59,6 +59,9 @@ class Runner:
     def __init__(self,sid,date,disc,watch,line_send=False,stock_name=""):
         self.sid=str(sid).zfill(4); self.date=date; self.disc=nt(disc); self.watch=float(watch); self.line_send=bool(line_send)
         self.stock_name=str(stock_name or "").strip()
+        # PHASE 1 causal completed-minute dedupe: RAM-only scheduling state.
+        self._dirty_minutes=set()
+        self._last_completed_through=None
         self.rows={}; self.last_state=None; self.last_p1_status=None; self.lock=threading.Lock()
         self.ws_messages=self.ws_candles=self.ws_new=self.ws_changed=0
         self.reconnects=self.server_errors=0; self.rest_reconciles=0
@@ -140,9 +143,12 @@ class Runner:
                "open":float(r["open"]),"high":float(r["high"]),"low":float(r["low"]),
                "close":float(r["close"]),"volume":float(r["volume"])}
             old=self.rows.get(t)
-            if old is None:self.rows[t]=z;add+=1
-            elif all(abs(float(old[k])-float(z[k]))<=EPS for k in ("open","high","low","close","volume")):dup+=1
-            else:self.rows[t]=z;chg+=1
+            if old is None:
+                self.rows[t]=z;add+=1;self._dirty_minutes.add(t)
+            elif all(abs(float(old[k])-float(z[k]))<=EPS for k in ("open","high","low","close","volume")):
+                dup+=1
+            else:
+                self.rows[t]=z;chg+=1;self._dirty_minutes.add(t)
         if source=="ws":
             self.ws_new+=add; self.ws_changed+=chg
         self.audit_canonical("merge-"+source); self.save_canonical()
@@ -297,6 +303,7 @@ class Runner:
             self._notify_if_recognized(self.sig,"ABC")
             self._notify_if_recognized(self.p1sig,"P1")
         self.evaluate(through,label)
+        self._mark_evaluated_through(through)
 
     def ws_url(self):
         txt=ADAPTER.read_text(encoding="utf-8",errors="ignore")
@@ -335,11 +342,23 @@ class Runner:
                     "open":x["open"],"high":x["high"],"low":x["low"],"close":x["close"],"volume":x["volume"]}
         return None
 
+    def _mark_evaluated_through(self,through):
+        through=nt(through)
+        self._last_completed_through=through
+        # Future/forming dirty minutes remain dirty until causally completed.
+        self._dirty_minutes={k for k in self._dirty_minutes if k>through}
+
     def evaluate_completed(self,origin):
         cut=completed_cutoff()
         eligible=[k for k in self.rows if k<=cut]
         if not eligible:return
-        self.evaluate(max(eligible),origin)
+        through=max(eligible)
+        causal_dirty=any(k<=through for k in self._dirty_minutes)
+        if through==self._last_completed_through and not causal_dirty:
+            return
+        # Only successful evaluation may advance/clean scheduler state.
+        self.evaluate(through,origin)
+        self._mark_evaluated_through(through)
 
     def run_ws(self):
         try:import websocket
