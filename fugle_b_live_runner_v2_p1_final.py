@@ -27,7 +27,7 @@ startup ~1-5 sec; then requested --minutes.
 Main bottleneck: Fugle network / live WS event availability.
 """
 from __future__ import annotations
-import argparse, json, os, runpy, time, threading, re, subprocess, sys
+import argparse, json, os, runpy, time, threading, re, subprocess, sys, copy
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -80,6 +80,19 @@ class Runner:
             self.fa,self.cc,self.fe=at["load_attack_engine"]()
             self.bars_df=er["bars_df"]; self.reconstruct=er["reconstruct_a2"]; self.replay=er["replay_early"]
         except BaseException as e:stop(f"Frozen implementation load failed: {e!r}")
+        F13=BASE/"f13_incremental_state.py"
+        if not F13.exists():stop(f"Missing certified F13 state module: {F13}")
+        try:
+            self.f13mod=runpy.run_path(str(F13),run_name="__f13_incremental_state__")
+            builder=self.fa.__globals__.get("_build_attack_record")
+            if builder is None:stop("Cannot bind certified Attack record builder.")
+            self.f13mod["bind_attack_builder"](builder)
+            import types as _types
+            _early_ns=_types.SimpleNamespace(**er)
+            self.f13mod["EarlyState"].__init__.__globals__["earlymod"]=_early_ns
+            self.f13mod["EarlyState"].advance.__globals__["earlymod"]=_early_ns
+        except BaseException as e:stop(f"Cannot load/bind certified F13 state: {e!r}")
+        self._f13_reset()
         self.key,self.key_source=self.m["find_key"]()
         self.pdate,self.pc,self.pv=self.m["fetch_prev"](self.key,self.sid,self.date)
         if self.pc<=0 or self.pv<=0:stop("Invalid prior context.")
@@ -89,6 +102,7 @@ class Runner:
         self.sig=self.dir/"signal_event.json"
         self.p1sig=self.dir/"p1_signal_event.json"
         self.state=self.dir/"runner_state.json"
+        self.f13state=self.dir/"f13_checkpoint_v1.json"
         self.signal_emitted=self.sig.exists()
         self.p1_signal_emitted=self.p1sig.exists()
         # Presentation metadata recovery only: A already knows the TW stock name.
@@ -106,6 +120,7 @@ class Runner:
                     except Exception as ex:
                         stop(f"Cannot backfill stock_name into {ep.name}: {ex!r}")
         self.load_canonical()
+        self._f13_load_checkpoint()
 
     def load_canonical(self):
         if not self.canon.exists():return
@@ -170,16 +185,116 @@ class Runner:
         if through:vals=[r for r in vals if nt(r["minute"])<=nt(through)]
         return self.bars_df(vals,self.date,self.sid) if vals else pd.DataFrame()
 
-    def evaluate(self,through,origin):
-        d=self.df(through)
+
+    def _f13_reset(self):
+        self._f13_attack=None
+        self._f13_p1=None
+        self._f13_early=None
+        self._f13_a2_identity=None
+        self._f13_last=None
+
+    def _f13_sync(self,d):
         if d.empty:return
-        a=self.reconstruct(d,self.pc,self.pv,self.fa,self.cc,self.fe)
-        typ="NO_BUY"; early=None; st="TRACKING"
+        through=str(d.iloc[-1]["time_str"])
+        dirty=getattr(self,"_dirty_minutes",set())
+        if self._f13_last is not None and any(nt(x)<=nt(self._f13_last) for x in dirty):
+            self._f13_reset()
+        if through<="09:10:00":return
+        d0910=d[d["time_str"]<="09:10:00"].copy()
+        if d0910.empty:return
+        key=float(pd.to_numeric(d0910["high"],errors="coerce").max())
+        if self._f13_attack is None:
+            self._f13_attack=self.f13mod["FastAttackState"](key=key,prev_close=float(d0910.iloc[-1]["close"]))
+        elif abs(float(self._f13_attack.key)-key)>1e-12:
+            self._f13_reset()
+            self._f13_attack=self.f13mod["FastAttackState"](key=key,prev_close=float(d0910.iloc[-1]["close"]))
+        if self._f13_p1 is None:
+            self._f13_p1=self.f13mod["FastP1State"]()
+            self._f13_p1.initialize_after_0910(d0910)
+        alast=self._f13_attack.last_minute or "09:10:00"
+        for _,r in d[(d["time_str"]>alast)&(d["time_str"]<=through)].iterrows(): self._f13_attack.step(r)
+        plast=self._f13_p1.last_minute or "09:10:00"
+        for _,r in d[(d["time_str"]>plast)&(d["time_str"]<=through)].iterrows(): self._f13_p1.step(r)
+        self._f13_last=through
+
+    def _f13_project(self,d):
+        if d.empty:return None,None,None
+        through=str(d.iloc[-1]["time_str"])
+        if through<="09:10:00":
+            return self.reconstruct(d,self.pc,self.pv,self.fa,self.cc,self.fe),self.m["p1_replay"](d),None
+        self._f13_sync(d)
+        snap=self._f13_attack.snapshot_attacks(); fkey=float(self._f13_attack.key)
+        def fast_find(_df,_key,_created,search_end="13:30:00"):
+            if abs(float(_key)-fkey)>1e-12: stop(f"F13 Attack key mismatch {_key} != {fkey}")
+            return copy.deepcopy(snap)
+        a=self.reconstruct(d,self.pc,self.pv,fast_find,self.cc,self.fe)
+        p=self._f13_p1.result()
+        early=None
         if int(a.get("attack_count",0))>=2 and bool(a.get("a2_upward")):
             typ=self.m["abc"](float(a.get("a2_vr",np.nan)),float(a.get("early_high_pct",np.nan)))
             if typ!="NO_BUY":
-                early=self.replay(d,a["a2_end"])
-                if early.get("early_status")=="EARLY":st="SIGNAL"
+                a2=nt(a.get("a2_end")); aid=(a2,round(float(a.get("a2_vr",np.nan)),12),round(float(a.get("early_high_pct",np.nan)),12),typ)
+                if self._f13_a2_identity!=aid:
+                    self._f13_early=self.f13mod["EarlyState"](ma(a2)); self._f13_a2_identity=aid
+                self._f13_early.advance(d,float(d.iloc[-1]["minute_abs"]))
+                er=self._f13_early.result()
+                if er.get("status")=="EARLY":
+                    early=self.replay(d,a2)
+                else:
+                    early={"early_status":"NO_EARLY","early_time":None}
+        return a,p,early
+
+
+    def _f13_checkpoint_payload(self):
+        import dataclasses as _dc
+        return {
+            "schema":"f13_checkpoint_v1","date":self.date,"stock_id":self.sid,
+            "through":self._f13_last,
+            "attack":None if self._f13_attack is None else _dc.asdict(self._f13_attack),
+            "p1":None if self._f13_p1 is None else _dc.asdict(self._f13_p1),
+            "early":None if self._f13_early is None else copy.deepcopy(self._f13_early.__dict__),
+            "a2_identity":None if self._f13_a2_identity is None else list(self._f13_a2_identity),
+            "f13_last":self._f13_last,
+        }
+
+    def _f13_save_checkpoint(self):
+        x=self._f13_checkpoint_payload()
+        tmp=self.f13state.with_suffix(self.f13state.suffix+".tmp")
+        tmp.write_text(json.dumps(x,ensure_ascii=False,sort_keys=True,indent=2),encoding="utf-8")
+        tmp.replace(self.f13state)
+
+    def _f13_load_checkpoint(self):
+        if not self.f13state.exists():return False
+        try:x=json.loads(self.f13state.read_text(encoding="utf-8"))
+        except Exception as e:
+            print(f"[F13 CHECKPOINT] unreadable -> safe rebuild: {e!r}");return False
+        if x.get("schema")!="f13_checkpoint_v1" or x.get("date")!=self.date or str(x.get("stock_id"))!=self.sid:
+            print("[F13 CHECKPOINT] identity mismatch -> safe rebuild");return False
+        last=x.get("f13_last")
+        if last is not None and nt(last) not in self.rows:
+            print("[F13 CHECKPOINT] through not in canonical -> safe rebuild");return False
+        try:
+            A=self.f13mod["FastAttackState"];P=self.f13mod["FastP1State"];E=self.f13mod["EarlyState"]
+            self._f13_attack=None if x.get("attack") is None else A(**x["attack"])
+            self._f13_p1=None if x.get("p1") is None else P(**x["p1"])
+            if x.get("early") is None:self._f13_early=None
+            else:
+                z=E.__new__(E);z.__dict__.update(x["early"]);self._f13_early=z
+            self._f13_a2_identity=None if x.get("a2_identity") is None else tuple(x["a2_identity"])
+            self._f13_last=last
+            print(f"[F13 CHECKPOINT] restored through={last}");return True
+        except Exception as e:
+            print(f"[F13 CHECKPOINT] restore failed -> safe rebuild: {e!r}")
+            self._f13_reset();return False
+
+    def evaluate(self,through,origin):
+        d=self.df(through)
+        if d.empty:return
+        a,p,early=self._f13_project(d)
+        typ="NO_BUY"; st="TRACKING"
+        if int(a.get("attack_count",0))>=2 and bool(a.get("a2_upward")):
+            typ=self.m["abc"](float(a.get("a2_vr",np.nan)),float(a.get("early_high_pct",np.nan)))
+            if typ!="NO_BUY" and early is not None and early.get("early_status")=="EARLY":st="SIGNAL"
         if st!=self.last_state:
             print(f"[STATE] through={nt(through)} | {self.last_state or 'INIT'} -> {st} | ABC={typ}")
             self.last_state=st
@@ -207,12 +322,13 @@ class Runner:
                 banner("NEW SIGNAL EVENT | persistent stock/date dedupe")
                 print(json.dumps(e,ensure_ascii=False,indent=2))
                 self._notify_if_recognized(self.sig,"ABC")
-        self.evaluate_p1(d,through,origin)
+        self.evaluate_p1(d,through,origin,p)
         self.fill_execution(through,d)
+        self._f13_save_checkpoint()
         self.persist(through,st,typ,origin)
 
-    def evaluate_p1(self,d,through,origin):
-        p=self.m["p1_replay"](d)
+    def evaluate_p1(self,d,through,origin,p=None):
+        if p is None:p=self.m["p1_replay"](d)
         ps=p.get("status")
         if ps!=self.last_p1_status:
             print(f"[P1 STATE] through={nt(through)} | {self.last_p1_status or 'INIT'} -> {ps} | A1={p.get('a1_time')} | P1={p.get('p1_time')} | Frontier={p.get('frontier_time')} | reason={p.get('reason')}")
