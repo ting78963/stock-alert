@@ -123,6 +123,11 @@ class Runner:
                 f.write(json.dumps(self.rows[k],ensure_ascii=False)+"\n")
         tmp.replace(self.canon)
 
+    def append_canonical(self,minutes):
+        with self.canon.open("a",encoding="utf-8") as f:
+            for k in sorted(minutes):
+                f.write(json.dumps(self.rows[k],ensure_ascii=False)+"\n")
+
     def audit_canonical(self,label):
         ks=sorted(self.rows)
         if len(ks)!=len(set(ks)):stop(f"{label}: duplicate canonical minute")
@@ -137,6 +142,8 @@ class Runner:
 
     def merge(self,rows,source):
         add=chg=dup=0
+        prior_max=max(self.rows) if self.rows else None
+        added_times=[]
         for r in rows:
             t=nt(r["minute"])
             z={"date":self.date,"stock_id":self.sid,"minute":t,
@@ -144,14 +151,18 @@ class Runner:
                "close":float(r["close"]),"volume":float(r["volume"])}
             old=self.rows.get(t)
             if old is None:
-                self.rows[t]=z;add+=1;self._dirty_minutes.add(t)
+                self.rows[t]=z;add+=1;added_times.append(t);self._dirty_minutes.add(t)
             elif all(abs(float(old[k])-float(z[k]))<=EPS for k in ("open","high","low","close","volume")):
                 dup+=1
             else:
                 self.rows[t]=z;chg+=1;self._dirty_minutes.add(t)
         if source=="ws":
             self.ws_new+=add; self.ws_changed+=chg
-        self.audit_canonical("merge-"+source); self.save_canonical()
+        self.audit_canonical("merge-"+source)
+        if chg or any(prior_max is not None and t<=prior_max for t in added_times):
+            self.save_canonical()
+        elif added_times:
+            self.append_canonical(added_times)
         return add,chg,dup
 
     def df(self,through=None):
