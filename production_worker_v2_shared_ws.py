@@ -16,8 +16,66 @@ LINE_SEND=os.environ.get("TREND_LINE_SEND","0").strip().lower() in {"1","true","
 STATE_ROOT=Path(os.environ.get("PRODUCTION_STATE_DIR",str(BASE/"_production_output")))
 _lock=threading.RLock(); _runners={}; _queues={}; _launching=set(); _subscribed=set(); _ws_app=None; _ws_ready=False
 _last_ws_minute={}; _last_ws_fingerprint={}; _last_overflow_log={}
+_f14_done=set(); _f14_day=None; _f14_path=None
 
 def now_tpe(): return datetime.now(TPE)
+
+def _atomic_json(path,obj):
+    tmp=path.with_suffix(path.suffix+".tmp")
+    tmp.write_text(json.dumps(obj,ensure_ascii=False,sort_keys=True,indent=2),encoding="utf-8")
+    tmp.replace(path)
+
+def f14_bootstrap(day):
+    global _f14_day,_f14_path
+    day=str(day)[:10];root=STATE_ROOT/"f14_done";root.mkdir(parents=True,exist_ok=True)
+    path=root/f"{day}.json";done=set()
+    if path.exists():
+        x=json.loads(path.read_text(encoding="utf-8"))
+        if x.get("schema")!="f14_done_v1" or x.get("date")!=day:raise RuntimeError("F14 registry identity/schema mismatch")
+        done={key(day,s) for s in x.get("stock_ids",[])}
+    bday=STATE_ROOT/"b_live_runner_v2_p1"/day
+    if bday.is_dir():
+        for sd in bday.iterdir():
+            if not sd.is_dir():continue
+            sid=sd.name.zfill(4)
+            for fn in ("signal_event.json","p1_signal_event.json"):
+                ep=sd/fn
+                if not ep.is_file():continue
+                try:e=json.loads(ep.read_text(encoding="utf-8"))
+                except Exception as ex:
+                    raise RuntimeError(f"F14 authoritative event unreadable: {ep}: {ex!r}") from ex
+                if e.get("date")==day and str(e.get("stock_id","")).zfill(4)==sid and e.get("line_sent") is True:
+                    done.add(key(day,sid));break
+    with _lock:
+        _f14_done.clear();_f14_done.update(done);_f14_day=day;_f14_path=path
+    _atomic_json(path,{"schema":"f14_done_v1","date":day,"stock_ids":sorted(x.split("|")[1] for x in done)})
+    print(f"[F14 BOOTSTRAP] date={day} DONE={len(done)}",flush=True)
+
+def f14_mark_done(k):
+    with _lock:
+        if _f14_day!=k.split("|",1)[0]:raise RuntimeError(f"F14 day mismatch loaded={_f14_day} key={k}")
+        _f14_done.add(k)
+        _atomic_json(_f14_path,{"schema":"f14_done_v1","date":_f14_day,"stock_ids":sorted(x.split("|")[1] for x in _f14_done)})
+    print(f"[F14 DONE] {k}",flush=True)
+
+def f14_ensure_day(day):
+    day=str(day)[:10]
+    with _lock:
+        if _f14_day==day:return
+        # Same lifecycle lock: exactly one rollover bootstrap; no half-switched DONE/CLAIM state.
+        f14_bootstrap(day)
+
+def retire_runner(k,r=None):
+    sid=k.split("|",1)[1]
+    if r is not None:r.retired=True
+    with _lock:
+        if r is not None and _runners.get(k) is not r: return
+        q=_queues.pop(k,None);_runners.pop(k,None);_launching.discard(k);_subscribed.discard(sid)
+        _last_ws_minute.pop(k,None);_last_ws_fingerprint.pop(k,None);_last_overflow_log.pop(k,None)
+    if q is not None:
+        try:q.put_nowait(None)
+        except Exception:pass
+    print(f"[B RETIRE] {k} successful LINE -> runtime released",flush=True)
 def key(day,sid): return f"{day}|{str(sid).zfill(4)}"
 def ws_fingerprint(row): return (row["minute"],row["open"],row["high"],row["low"],row["close"],row["volume"])
 
@@ -46,8 +104,9 @@ def worker_loop(k,r,q):
                 r.last_ws_candle=item["minute"]
                 r.evaluate_completed("shared_websocket_completed_minute")
             with _lock:
-                _last_ws_minute[k]=item["minute"]
-                _last_ws_fingerprint[k]=ws_fingerprint(item)
+                if k in _runners and not getattr(r,"retired",False):
+                    _last_ws_minute[k]=item["minute"];_last_ws_fingerprint[k]=ws_fingerprint(item)
+                else:return
         except BaseException as e:
             print(f"[B FAIL CLOSED] {k} {type(e).__name__}: {e}; runner disabled",flush=True)
             with _lock:_runners.pop(k,None);_queues.pop(k,None)
@@ -57,7 +116,11 @@ def launch_b(payload,dry_run=False):
     for x in ("stock_id","date","discovered_at"):
         if not payload.get(x): raise ValueError("missing: "+x)
     sid=str(payload["stock_id"]).zfill(4); day=str(payload["date"])[:10]; disc=str(payload["discovered_at"]); stock_name=str(payload.get("name") or payload.get("stock_name") or "").strip(); k=key(day,sid)
+    f14_ensure_day(day)
     with _lock:
+        if k in _f14_done:
+            print(f"[F14 SKIP DONE] {k} before Runner construction",flush=True)
+            return {"ok":True,"already_done":True,"launched":False,"key":k}
         if k in _runners or k in _launching:
             return {"ok":True,"duplicate":True,"launched":False,"key":k}
         if not dry_run:
@@ -65,8 +128,14 @@ def launch_b(payload,dry_run=False):
     if dry_run:return {"ok":True,"duplicate":False,"launched":False,"dry_run":True,"key":k}
     try:
         M=runner_module(); R=M["Runner"]
-        r=R(sid,day,disc,0,line_send=LINE_SEND,stock_name=stock_name)
+        r=None
+        def on_line_sent(path,label,event):
+            f14_mark_done(k);retire_runner(k,r)
+        r=R(sid,day,disc,0,line_send=LINE_SEND,stock_name=stock_name,on_line_sent=on_line_sent)
         r.rest_reconcile("startup")
+        if getattr(r,"retired",False):
+            with _lock:_launching.discard(k)
+            return {"ok":True,"already_done":True,"launched":False,"key":k,"line_completed_during_startup":True}
         q=queue.Queue(maxsize=2000)
         with _lock:
             _runners[k]=r;_queues[k]=q;_launching.discard(k)
@@ -169,7 +238,9 @@ def shared_ws_loop():
         with _lock:rs=list(_runners.items())
         for k,r in rs:
             try:
-                with r.lock:r.rest_reconcile("reconnect")
+                with r.lock:
+                    if getattr(r,"retired",False):continue
+                    r.rest_reconcile("reconnect")
             except BaseException as e:print(f"[B RECONCILE FAIL CLOSED] {k}: {e}",flush=True)
         time.sleep(backoff);backoff=min(backoff*2,30)
 
@@ -178,7 +249,9 @@ def clock_loop():
         with _lock:rs=list(_runners.items())
         for k,r in rs:
             try:
-                with r.lock:r.evaluate_completed("shared_clock_completed_minute")
+                with r.lock:
+                    if getattr(r,"retired",False):continue
+                    r.evaluate_completed("shared_clock_completed_minute")
             except BaseException as e:print(f"[B CLOCK FAIL CLOSED] {k}: {e}",flush=True)
         time.sleep(1)
 
@@ -263,7 +336,7 @@ def main():
     ap=argparse.ArgumentParser();ap.add_argument("--self-test",action="store_true");a=ap.parse_args()
     if a.self_test:self_test();return
     self_test()
-    preflight();STATE_ROOT.mkdir(parents=True,exist_ok=True);threading.Thread(target=f10_maintenance_loop,name="f10-maint",daemon=True).start();wait_session()
+    preflight();STATE_ROOT.mkdir(parents=True,exist_ok=True);f14_bootstrap(now_tpe().date().isoformat());threading.Thread(target=f10_maintenance_loop,name="f10-maint",daemon=True).start();wait_session()
     threading.Thread(target=serve,daemon=True).start()
     threading.Thread(target=shared_ws_loop,daemon=True).start()
     threading.Thread(target=clock_loop,daemon=True).start()

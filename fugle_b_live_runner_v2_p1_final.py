@@ -56,8 +56,10 @@ def completed_cutoff(now=None):
     return z.strftime("%H:%M:00")
 
 class Runner:
-    def __init__(self,sid,date,disc,watch,line_send=False,stock_name=""):
+    def __init__(self,sid,date,disc,watch,line_send=False,stock_name="",on_line_sent=None):
         self.sid=str(sid).zfill(4); self.date=date; self.disc=nt(disc); self.watch=float(watch); self.line_send=bool(line_send)
+        self.on_line_sent=on_line_sent
+        self.retired=False
         self.stock_name=str(stock_name or "").strip()
         # PHASE 1 causal completed-minute dedupe: RAM-only scheduling state.
         self._dirty_minutes=set()
@@ -288,6 +290,7 @@ class Runner:
             self._f13_reset();return False
 
     def evaluate(self,through,origin):
+        if self.retired:return
         d=self.df(through)
         if d.empty:return
         a,p,early=self._f13_project(d)
@@ -322,7 +325,9 @@ class Runner:
                 banner("NEW SIGNAL EVENT | persistent stock/date dedupe")
                 print(json.dumps(e,ensure_ascii=False,indent=2))
                 self._notify_if_recognized(self.sig,"ABC")
+                if self.retired:return
         self.evaluate_p1(d,through,origin,p)
+        if self.retired:return
         self.fill_execution(through,d)
         self._f13_save_checkpoint()
         self.persist(through,st,typ,origin)
@@ -386,6 +391,15 @@ class Runner:
         cp=subprocess.run(cmd,check=False)
         if cp.returncode!=0:
             print(f"[{label} LINE FAILED] notifier exit={cp.returncode}; recognition/execution unchanged.")
+            return
+        try:after=json.loads(path.read_text(encoding="utf-8"))
+        except Exception as ex:
+            print(f"[{label} F14 DEFER] cannot reread event after notifier: {ex!r}")
+            return
+        if after.get("line_sent") is True:
+            self.retired=True
+            print(f"[F14 LINE CONFIRMED] {self.date}|{self.sid} {label} line_sent=true",flush=True)
+            if self.on_line_sent is not None:self.on_line_sent(path,label,after)
 
     def fill_execution(self,through,d):
         # Research ledger only: after recognition, persist the first observed
@@ -475,6 +489,7 @@ class Runner:
         self._dirty_minutes={k for k in self._dirty_minutes if k>through}
 
     def evaluate_completed(self,origin):
+        if self.retired:return
         cut=completed_cutoff()
         eligible=[k for k in self.rows if k<=cut]
         if not eligible:return
