@@ -68,7 +68,7 @@ def parse(symbol,obj,to_day):
 
 def trim(c,symbol):
     days=[r[0] for r in c.execute("SELECT day FROM f10_day WHERE symbol=? ORDER BY day DESC",(symbol,)).fetchall()]
-    for ds in days[10:]: c.execute("DELETE FROM f10_day WHERE symbol=? AND day=?",(symbol,ds))
+    for ds in days[11:]: c.execute("DELETE FROM f10_day WHERE symbol=? AND day=?",(symbol,ds))
 
 def build(mode,pause):
     now=datetime.now(TZ); today=now.date()
@@ -115,7 +115,7 @@ def audit():
     c=db();seed_members(c)
     total=c.execute("SELECT COUNT(*) FROM member").fetchone()[0]
     rows=c.execute("SELECT symbol,COUNT(*),MIN(day),MAX(day) FROM f10_day GROUP BY symbol ORDER BY symbol").fetchall()
-    bad=[x for x in rows if x[1]<5 or x[1]>10]
+    bad=[x for x in rows if x[1]<5 or x[1]>11]
     print(f"[AUDIT] members={total} with_data={len(rows)} bad_session_count={len(bad)} db={DB}")
     print(f"[AUDIT] db_bytes={DB.stat().st_size if DB.exists() else 0}")
     return 0 if total==435 and len(rows)==435 and not bad else 2
