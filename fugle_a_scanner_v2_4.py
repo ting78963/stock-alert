@@ -44,6 +44,7 @@ import json
 import math
 import os
 import re
+import sqlite3
 import sys
 import time
 import urllib.error
@@ -391,6 +392,138 @@ class FugleAdapter:
             if isinstance(persisted, list) and len(persisted) >= 5:
                 days = persisted
                 self._estvr5_cache[cache_key] = days
+        if days is None:
+            # F10 FAST path: replace only historical data acquisition.
+            # All EstVR5 / EVG mathematics below remain unchanged.
+            f10_db = (
+                Path(os.environ.get("PRODUCTION_STATE_DIR"))
+                / "f10_baseline_v1.sqlite3"
+                if os.environ.get("PRODUCTION_STATE_DIR")
+                else (
+                    Path("/var/data/stock-alert/f10_baseline_v1.sqlite3")
+                    if Path("/var/data").exists()
+                    else OUTDIR.parent / "f10_baseline_v1.sqlite3"
+                )
+            )
+
+            if f10_db.exists():
+                try:
+                    conn = sqlite3.connect(
+                        f"file:{f10_db}?mode=ro",
+                        uri=True,
+                        timeout=5,
+                    )
+                    try:
+                        rows = conn.execute(
+                            """
+                            SELECT day, full, pts_json
+                            FROM f10_day
+                            WHERE symbol=? AND day<?
+                            ORDER BY day DESC
+                            LIMIT 10
+                            """,
+                            (symbol, snapshot_date),
+                        ).fetchall()
+                    finally:
+                        conn.close()
+                except sqlite3.Error as e:
+                    raise AuditStop(
+                        f"{symbol} F10 SQLite audit failed: {e}"
+                    )
+
+                # F10 incomplete / ordinary miss:
+                # preserve the original Fugle OLD path below.
+                if len(rows) == 10:
+                    rows = list(reversed(rows))
+                    fast_days = []
+                    seen_dates = set()
+
+                    for ds, full, pts_json in rows:
+                        ds = str(ds)
+
+                        if ds >= snapshot_date:
+                            raise AuditStop(
+                                f"{symbol} F10 future leakage: "
+                                f"{ds}>={snapshot_date}"
+                            )
+
+                        if ds in seen_dates:
+                            raise AuditStop(
+                                f"{symbol} F10 duplicate session: {ds}"
+                            )
+                        seen_dates.add(ds)
+
+                        try:
+                            full = float(full)
+                            pts_raw = json.loads(pts_json)
+                        except Exception as e:
+                            raise AuditStop(
+                                f"{symbol} F10 malformed row {ds}: {e}"
+                            )
+
+                        if full <= 0:
+                            raise AuditStop(
+                                f"{symbol} F10 invalid full volume: {ds}"
+                            )
+
+                        if not isinstance(pts_raw, list) or not pts_raw:
+                            raise AuditStop(
+                                f"{symbol} F10 empty pts: {ds}"
+                            )
+
+                        pts = []
+                        seen_minutes = set()
+                        last_running = -1.0
+
+                        for item in pts_raw:
+                            if (
+                                not isinstance(item, (list, tuple))
+                                or len(item) != 2
+                            ):
+                                raise AuditStop(
+                                    f"{symbol} F10 malformed point: {ds}"
+                                )
+
+                            tm = str(item[0])
+
+                            try:
+                                running = float(item[1])
+                            except Exception as e:
+                                raise AuditStop(
+                                    f"{symbol} F10 invalid cumulative "
+                                    f"{ds} {tm}: {e}"
+                                )
+
+                            if tm in seen_minutes:
+                                raise AuditStop(
+                                    f"{symbol} F10 duplicate minute: "
+                                    f"{ds} {tm}"
+                                )
+
+                            if running < 0 or running < last_running:
+                                raise AuditStop(
+                                    f"{symbol} F10 invalid cumulative: "
+                                    f"{ds} {tm}"
+                                )
+
+                            seen_minutes.add(tm)
+                            last_running = running
+                            pts.append((tm, running))
+
+                        if abs(last_running - full) > 1e-9:
+                            raise AuditStop(
+                                f"{symbol} F10 full/curve mismatch: {ds}"
+                            )
+
+                        fast_days.append({
+                            "date": ds,
+                            "full": full,
+                            "pts": pts,
+                        })
+
+                    days = fast_days
+                    self._estvr5_cache[cache_key] = days
+
         if days is None:
             bars = self.daily_history(symbol, snapshot_date)
             hist_dates = [b.date for b in bars[-10:]]
