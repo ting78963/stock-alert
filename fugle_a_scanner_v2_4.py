@@ -43,9 +43,11 @@ import argparse
 import json
 import math
 import os
+import queue
 import re
 import sqlite3
 import sys
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -281,6 +283,66 @@ class FugleAdapter:
         tmp.write_text(json.dumps(self.f11_metadata_store, ensure_ascii=False, indent=2), encoding="utf-8")
         tmp.replace(F11_METADATA_CACHE_FILE)
         return d
+
+    def daily_history_local_ready(self, symbol: str, snapshot_date: str) -> Optional[List[DailyBar]]:
+        cache_key = f"{symbol}|{snapshot_date}"
+        if symbol in self.daily_cache and self.daily_cache[symbol][0] == cache_key:
+            return self.daily_cache[symbol][1]
+
+        to_d = date.fromisoformat(snapshot_date) - timedelta(days=1)
+        from_d = to_d - timedelta(days=170)
+        store_key = "daily_static|" + symbol
+        covered_key = "daily_static_covered|" + symbol
+
+        persisted = self.history_cache.get(store_key)
+        covered_through = str(self.history_cache.get(covered_key) or "")[:10]
+
+        if not isinstance(persisted, list) or not persisted:
+            prefix = "daily|" + symbol + "|"
+            legacy_candidates = []
+            for k, v in self.history_cache.items():
+                if not isinstance(k, str) or not k.startswith(prefix) or not isinstance(v, list) or not v:
+                    continue
+                legacy_snapshot = k[len(prefix):]
+                if legacy_snapshot and legacy_snapshot <= snapshot_date:
+                    legacy_candidates.append((legacy_snapshot, v))
+            if legacy_candidates:
+                legacy_candidates.sort(key=lambda x: x[0])
+                legacy_snapshot, persisted = legacy_candidates[-1]
+                covered_through = (date.fromisoformat(legacy_snapshot) - timedelta(days=1)).isoformat()
+
+        merged: Dict[str, DailyBar] = {}
+        if isinstance(persisted, list):
+            for x in persisted:
+                try:
+                    ds = str(x["date"])[:10]
+                    close = float(x["close"])
+                    vol_zhang = float(x["volume_zhang"])
+                except Exception:
+                    continue
+                if ds and ds < snapshot_date and close > 0:
+                    merged[ds] = DailyBar(ds, close, vol_zhang)
+
+        if covered_through:
+            try:
+                fetch_from = date.fromisoformat(covered_through) + timedelta(days=1)
+            except Exception:
+                fetch_from = from_d
+        elif merged:
+            fetch_from = max(date.fromisoformat(ds) for ds in merged) + timedelta(days=1)
+        else:
+            fetch_from = from_d
+
+        if fetch_from <= to_d:
+            return None
+
+        all_bars = sorted(merged.values(), key=lambda x: x.date)
+        if any(b.date >= snapshot_date for b in all_bars):
+            raise AuditStop(f"{symbol} causal history audit failed")
+
+        bars = [b for b in all_bars if b.date >= from_d.isoformat() and b.date < snapshot_date]
+        self.daily_cache[symbol] = (cache_key, bars)
+        return bars
 
     def daily_history(self, symbol: str, snapshot_date: str) -> List[DailyBar]:
         # 必須嚴格只用 snapshot_date 之前的完整交易日。
@@ -909,6 +971,189 @@ class StrongSelector:
         return None
 
 
+@dataclass
+class WaitDataJob:
+    symbol: str
+    snapshot_date: str
+
+
+@dataclass
+class WaitDataResult:
+    symbol: str
+    snapshot_date: str
+    ok: bool
+    rows: Optional[List[Dict[str, Any]]] = None
+    covered_through: Optional[str] = None
+    error: Optional[str] = None
+    fatal: bool = False
+
+
+class WaitDataWorker:
+    """
+    Single background historical-D fetch worker.
+
+    Safety:
+    - A main scan never waits for this worker.
+    - Only one historical-D job executes at a time.
+    - Background worker never writes Production cache/state.
+    - Results are returned to Scanner main thread for incorporation.
+    - A symbol/date can be pending only once.
+    """
+
+    def __init__(self, api_key: str, max_pending: int = 512):
+        self.api_key = api_key
+        self.jobs: "queue.Queue[WaitDataJob]" = queue.Queue(maxsize=max_pending)
+        self.results: "queue.Queue[WaitDataResult]" = queue.Queue()
+        self.pending = set()
+        self.pending_lock = threading.Lock()
+        self.thread = threading.Thread(
+            target=self._run,
+            name="a-wait-data-worker",
+            daemon=True,
+        )
+        self.thread.start()
+
+    def submit(self, symbol: str, snapshot_date: str) -> bool:
+        key = (str(symbol), str(snapshot_date))
+        with self.pending_lock:
+            if key in self.pending:
+                return False
+            try:
+                self.jobs.put_nowait(WaitDataJob(*key))
+            except queue.Full:
+                return False
+            self.pending.add(key)
+        return True
+
+    def drain_results(self) -> List[WaitDataResult]:
+        out: List[WaitDataResult] = []
+        while True:
+            try:
+                out.append(self.results.get_nowait())
+            except queue.Empty:
+                break
+        return out
+
+    def _finish(self, result: WaitDataResult) -> None:
+        key = (result.symbol, result.snapshot_date)
+        with self.pending_lock:
+            self.pending.discard(key)
+        self.results.put(result)
+
+    def _run(self) -> None:
+        # Worker owns its own historical backoff state.
+        history_backoff_until = 0.0
+
+        while True:
+            job = self.jobs.get()
+            try:
+                symbol = job.symbol
+                snapshot_date = job.snapshot_date
+
+                now_mono = time.monotonic()
+                if now_mono < history_backoff_until:
+                    time.sleep(history_backoff_until - now_mono)
+
+                to_d = date.fromisoformat(snapshot_date) - timedelta(days=1)
+                from_d = to_d - timedelta(days=170)
+
+                q = urllib.parse.urlencode({
+                    "symbol": symbol,
+                    "from": from_d.isoformat(),
+                    "to": to_d.isoformat(),
+                    "timeframe": "D",
+                    "fields": "close,volume",
+                })
+                url = f"{BASE}/historical/candles?{q}"
+
+                while True:
+                    now_mono = time.monotonic()
+                    if now_mono < history_backoff_until:
+                        time.sleep(history_backoff_until - now_mono)
+
+                    try:
+                        payload = http_json(url, self.api_key)
+                        break
+                    except AuditStop as e:
+                        if "Fugle HTTP 429" in str(e):
+                            history_backoff_until = (
+                                time.monotonic() + HISTORY_429_BACKOFF_SEC
+                            )
+                            print(
+                                f"[A WAIT_DATA BACKOFF] symbol={symbol} "
+                                f"date={snapshot_date} "
+                                f"sleep={HISTORY_429_BACKOFF_SEC:.0f}s",
+                                flush=True,
+                            )
+                            continue
+                        raise
+
+                if str(payload.get("symbol") or "") != symbol:
+                    raise AuditStop(
+                        f"WAIT_DATA identity mismatch: requested={symbol}, "
+                        f"got={payload.get('symbol')}"
+                    )
+
+                data = payload.get("data")
+                if not isinstance(data, list):
+                    raise AuditStop(f"WAIT_DATA {symbol} historical D missing data list")
+
+                merged: Dict[str, Dict[str, Any]] = {}
+                for x in data:
+                    if not isinstance(x, dict):
+                        continue
+                    ds = str(x.get("date") or "")[:10]
+                    if not ds or ds >= snapshot_date:
+                        continue
+                    try:
+                        close = float(x["close"])
+                        volume_zhang = float(x["volume"]) / 1000.0
+                    except Exception as e:
+                        raise AuditStop(
+                            f"WAIT_DATA {symbol} invalid D row {ds}: {e}"
+                        ) from e
+
+                    if close <= 0 or volume_zhang < 0:
+                        raise AuditStop(
+                            f"WAIT_DATA {symbol} invalid D values {ds}"
+                        )
+
+                    merged[ds] = {
+                        "date": ds,
+                        "close": close,
+                        "volume_zhang": volume_zhang,
+                    }
+
+                rows = [merged[k] for k in sorted(merged)]
+
+                self._finish(WaitDataResult(
+                    symbol=symbol,
+                    snapshot_date=snapshot_date,
+                    ok=True,
+                    rows=rows,
+                    covered_through=to_d.isoformat(),
+                ))
+
+            except AuditStop as e:
+                self._finish(WaitDataResult(
+                    symbol=job.symbol,
+                    snapshot_date=job.snapshot_date,
+                    ok=False,
+                    error=f"{type(e).__name__}: {e}",
+                    fatal=True,
+                ))
+            except Exception as e:
+                self._finish(WaitDataResult(
+                    symbol=job.symbol,
+                    snapshot_date=job.snapshot_date,
+                    ok=False,
+                    error=f"{type(e).__name__}: {e}",
+                    fatal=True,
+                ))
+            finally:
+                self.jobs.task_done()
+
+
 class Scanner:
     def __init__(self, adapter: FugleAdapter, bridge_url: Optional[str]):
         self.adapter = adapter
@@ -923,6 +1168,88 @@ class Scanner:
             self.state["volume_armed"] = {}
         if not isinstance(self.state.get("queue_waiting"), dict):
             self.state["queue_waiting"] = {}
+
+        # Historical-D MISS work is isolated from the A main scan.
+        # Worker performs network I/O only; Scanner main thread owns cache mutation.
+        self.wait_data_worker = WaitDataWorker(self.adapter.key)
+
+    def apply_wait_data_results(self) -> int:
+        applied = 0
+
+        for result in self.wait_data_worker.drain_results():
+            if not result.ok:
+                if result.fatal:
+                    raise AuditStop(
+                        f"WAIT_DATA fatal: symbol={result.symbol} "
+                        f"date={result.snapshot_date} reason={result.error}"
+                    )
+                print(
+                    f"[A WAIT_DATA] symbol={result.symbol} "
+                    f"date={result.snapshot_date} status=RETRY "
+                    f"reason={result.error}",
+                    flush=True,
+                )
+                continue
+
+            if result.rows is None or not result.covered_through:
+                raise AuditStop(
+                    f"WAIT_DATA result incomplete: {result.symbol} "
+                    f"{result.snapshot_date}"
+                )
+
+            store_key = "daily_static|" + result.symbol
+            covered_key = "daily_static_covered|" + result.symbol
+
+            existing = self.adapter.history_cache.get(store_key)
+            merged: Dict[str, Dict[str, Any]] = {}
+
+            if isinstance(existing, list):
+                for x in existing:
+                    if not isinstance(x, dict):
+                        continue
+                    try:
+                        ds = str(x["date"])[:10]
+                        close = float(x["close"])
+                        volume_zhang = float(x["volume_zhang"])
+                    except Exception:
+                        continue
+                    if ds and ds < result.snapshot_date and close > 0:
+                        merged[ds] = {
+                            "date": ds,
+                            "close": close,
+                            "volume_zhang": volume_zhang,
+                        }
+
+            for x in result.rows:
+                ds = str(x["date"])[:10]
+                if ds >= result.snapshot_date:
+                    raise AuditStop(
+                        f"WAIT_DATA future leakage: {result.symbol} {ds} "
+                        f">= {result.snapshot_date}"
+                    )
+                merged[ds] = {
+                    "date": ds,
+                    "close": float(x["close"]),
+                    "volume_zhang": float(x["volume_zhang"]),
+                }
+
+            self.adapter.history_cache[store_key] = [
+                merged[k] for k in sorted(merged)
+            ]
+            self.adapter.history_cache[covered_key] = result.covered_through
+
+            # Invalidate symbol RAM view so next scan rebuilds from merged cache.
+            self.adapter.daily_cache.pop(result.symbol, None)
+
+            applied += 1
+            print(
+                f"[A WAIT_DATA] symbol={result.symbol} "
+                f"date={result.snapshot_date} status=READY "
+                f"rows={len(result.rows)}",
+                flush=True,
+            )
+
+        return applied
 
     def already_sent(self, d: str, symbol: str) -> bool:
         return symbol in self.state["discovered"].get(d, {})
@@ -1074,6 +1401,14 @@ class Scanner:
         print(f"[A DIAG] first_gate_done candidates={len(candidates)} liquidity_min={vol_min:.0f}", flush=True)
 
         # Phase 1: metadata/history audit + dynamic priority.
+        #
+        # WAIT_DATA rule:
+        # - completed background results are incorporated by the Scanner main thread;
+        # - historical-D network I/O is never performed by the A main scan;
+        # - a MISS is deferred while later READY candidates continue;
+        # - first queue eligibility time is preserved across the defer.
+        self.apply_wait_data_results()
+
         prepared = []
         for s in candidates:
             symbol = s["stock_id"]
@@ -1081,7 +1416,19 @@ class Scanner:
                 meta = self.adapter.ticker(symbol)
                 if not self.selector.meta_ok(meta):
                     continue
-                bars = self.adapter.daily_history(symbol, snap_date)
+                entered_at = self.queue_entered_at(snap_date, symbol)
+
+                bars = self.adapter.daily_history_local_ready(symbol, snap_date)
+                if bars is None:
+                    submitted = self.wait_data_worker.submit(symbol, snap_date)
+                    print(
+                        f"[A WAIT_DATA] symbol={symbol} date={snap_date} "
+                        f"status={'QUEUED' if submitted else 'PENDING'} "
+                        f"queue_entered_at={entered_at}",
+                        flush=True,
+                    )
+                    continue
+
                 prior5 = [b.volume_zhang for b in bars[-5:] if b.volume_zhang >= 0]
                 if len(prior5) != 5:
                     raise AuditStop(f"{symbol} prior5 complete daily volume coverage !=5")
@@ -1091,7 +1438,6 @@ class Scanner:
                 today_vol = float(s.get("total_volume") or 0.0)
                 raw_vr5 = today_vol / avg5_daily
                 priority = self.queue_priority(raw_vr5, today_vol)
-                entered_at = self.queue_entered_at(snap_date, symbol)
                 qinfo = self.state["queue_waiting"].setdefault(snap_date, {}).setdefault(symbol, {"entered_at": entered_at})
                 prev_priority = qinfo.get("shadow_last_priority")
                 if prev_priority is None:
