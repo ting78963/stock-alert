@@ -67,6 +67,7 @@ CACHE_FILE = OUTDIR / "cache.json"
 HISTORY_CACHE_FILE = OUTDIR / "a_history_cache_v2_4.json"
 F11_METADATA_CACHE_FILE = Path("/var/data/stock-alert/a_f11_metadata_v1.json") if Path("/var/data").exists() else (OUTDIR / "a_f11_metadata_v1.json")
 SHADOW_AUDIT_ROOT = Path("/var/data/stock-alert/a_queue_shadow_audit") if Path("/var/data").exists() else (OUTDIR / "a_queue_shadow_audit")
+A_SCAN_MOTHER_ROOT = Path("/var/data/stock-alert/a_scan_mother") if Path("/var/data").exists() else (OUTDIR / "a_scan_mother")
 
 # 對應原網站 excludedKeywords：
 # 食品工業、造紙工業、建材營造、航運、觀光餐旅、金融保險、
@@ -129,6 +130,36 @@ def append_queue_shadow(d: str, obj: Dict[str, Any]) -> None:
     row = {"ts": now_tw().isoformat(timespec="microseconds"), **obj}
     with p.open("a", encoding="utf-8") as f:
         f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def record_a_scan_mother_identity(d: str, symbol: str) -> None:
+    """Persist identity only for the daily A scanned candidate mother."""
+    daydir = A_SCAN_MOTHER_ROOT / d
+    daydir.mkdir(parents=True, exist_ok=True)
+    p = daydir / "stock_ids.json"
+
+    cache = getattr(record_a_scan_mother_identity, "_cache", None)
+    if cache is None:
+        cache = {}
+        setattr(record_a_scan_mother_identity, "_cache", cache)
+
+    seen = cache.get(d)
+    if seen is None:
+        existing = load_json(p, {"date": d, "stock_ids": []})
+        ids = existing.get("stock_ids", []) if isinstance(existing, dict) else []
+        seen = {str(x) for x in ids if str(x)}
+        cache[d] = seen
+
+    if symbol in seen:
+        return
+
+    seen.add(symbol)
+    save_json_atomic(p, {
+        "date": d,
+        "stock_ids": sorted(seen),
+        "count": len(seen),
+        "definition": "existing A candidate after meta_ok; identity only; recorded before history readiness, VR, queue, ARM, structural and B",
+    })
 
 
 def http_json(url: str, api_key: Optional[str] = None, timeout: int = 15) -> Dict[str, Any]:
@@ -1416,6 +1447,8 @@ class Scanner:
                 meta = self.adapter.ticker(symbol)
                 if not self.selector.meta_ok(meta):
                     continue
+
+                record_a_scan_mother_identity(snap_date, symbol)
                 entered_at = self.queue_entered_at(snap_date, symbol)
 
                 bars = self.adapter.daily_history_local_ready(symbol, snap_date)
