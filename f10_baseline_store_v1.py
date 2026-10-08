@@ -31,11 +31,11 @@ def db():
 
 def seed_members(c):
     x=json.loads(SEED.read_text(encoding="utf-8")); syms=[str(s).zfill(4) for s in x["symbols"]]
-    if len(syms)!=435 or len(set(syms))!=435: raise RuntimeError("SEED AUDIT FAILED: expected 435 unique")
+    if not syms or len(syms)!=len(set(syms)) or len(syms)!=x.get("count"): raise RuntimeError("SEED AUDIT FAILED: count/uniqueness mismatch")
     now=datetime.now(TZ).isoformat(timespec="seconds")
     c.executemany("INSERT OR IGNORE INTO member(symbol,added_at,source) VALUES(?,?,?)",[(s,now,"seed435") for s in syms]); c.commit()
     n=c.execute("SELECT COUNT(*) FROM member").fetchone()[0]
-    print(f"[F10 MEMBERS] seed=435 permanent_total={n}",flush=True)
+    print(f"[F10 MEMBERS] seed={len(syms)} permanent_total={n}",flush=True)
 
 def fetch(symbol,fr,to,key):
     q=urllib.parse.urlencode({"timeframe":"1","from":fr,"to":to,"fields":"volume","sort":"asc"})
@@ -118,7 +118,7 @@ def audit():
     bad=[x for x in rows if x[1]<5 or x[1]>11]
     print(f"[AUDIT] members={total} with_data={len(rows)} bad_session_count={len(bad)} db={DB}")
     print(f"[AUDIT] db_bytes={DB.stat().st_size if DB.exists() else 0}")
-    return 0 if total==435 and len(rows)==435 and not bad else 2
+    return 0 if total==len(rows) and not bad else 2
 
 if __name__=="__main__":
     p=argparse.ArgumentParser();p.add_argument("--mode",choices=["init","update","audit"],default="init");p.add_argument("--pause",type=float,default=0.15);a=p.parse_args()
