@@ -45,8 +45,12 @@ def main():
         if a.mode == 'audit':
             print('READY',day, f'{st.st_size/1024**2:.2f} MiB');continue
         print('COMPRESS',day,flush=True)
+        tmp = dst.with_name(dst.name + '.part')
+        if tmp.exists():
+            print('STOP incomplete temporary archive exists; manual review required', tmp)
+            continue
         try:
-            with src.open('rb') as fi, dst.open('xb') as raw:
+            with src.open('rb') as fi, tmp.open('xb') as raw:
                 with gzip.GzipFile(filename='', mode='wb', fileobj=raw, compresslevel=6) as fo:
                     while True:
                         b = fi.read(1024*1024)
@@ -56,8 +60,9 @@ def main():
             end = src.stat()
             if (st.st_size,st.st_mtime_ns,st.st_ino)!=(end.st_size,end.st_mtime_ns,end.st_ino):
                 print('FAIL source changed during archive; manual review required',day);continue
-            if digest(src)!=digest(dst,True):
+            if digest(src)!=digest(tmp,True):
                 print('FAIL SHA256 mismatch; original retained',day);continue
+            os.replace(tmp, dst)
             print('PASS',day,f'{st.st_size/1024**2:.2f} -> {dst.stat().st_size/1024**2:.2f} MiB','SHA256 matched; original retained')
         except Exception as e:
             print('FAIL',day,type(e).__name__,str(e),'original retained')
