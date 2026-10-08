@@ -66,11 +66,14 @@ def main():
     p.add_argument("--f10",type=Path,default=F10)
     p.add_argument("--limit",type=int,default=0,help="0=all; use 2 for smoke test")
     p.add_argument("--dry-run",action="store_true",help="Print planned requests; no network and no database writes")
+    p.add_argument("--expected-last-session",required=True,help="Verified latest COMPLETE trading session YYYY-MM-DD; do not infer from calendar days")
     a=p.parse_args()
     if a.delay<1 or a.history_calendar_days<170 or a.max_retries<0:
         raise SystemExit("STOP: invalid parameters")
     asof=dt.date.fromisoformat(a.asof)
     end=asof-dt.timedelta(days=1)
+    expected=dt.date.fromisoformat(a.expected_last_session)
+    if expected>end:raise SystemExit("STOP: expected session later than requested end")
     start=end-dt.timedelta(days=a.history_calendar_days)
     if asof>dt.datetime.now(dt.timezone(dt.timedelta(hours=8))).date()+dt.timedelta(days=1):
         raise SystemExit("STOP: asof too far in future")
@@ -83,14 +86,14 @@ def main():
     finally:src.close()
     if not symbols or len(set(symbols))!=len(symbols):raise SystemExit("STOP: invalid member universe")
     if a.dry_run:
-        print(json.dumps({"mode":"DRY_RUN","universe":len(symbols),"selected":symbols[:a.limit or None],"from":start.isoformat(),"to":end.isoformat(),"delay_seconds":a.delay,"output":str(a.db),"warning":"No network; no DB writes; date completeness not yet certified"},ensure_ascii=False))
+        print(json.dumps({"mode":"DRY_RUN","universe":len(symbols),"selected":symbols[:a.limit or None],"from":start.isoformat(),"to":end.isoformat(),"delay_seconds":a.delay,"expected_last_session":expected.isoformat(),"output":str(a.db),"warning":"No network; no DB writes; date completeness not yet certified"},ensure_ascii=False))
         return
     db=dbopen(a.db)
     try:
         total=len(symbols); done=0; failed=0; skipped=0
         for index,sym in enumerate(symbols[:a.limit or None],1):
             existing=db.execute("SELECT covered_through FROM fetch_status WHERE symbol=?",(sym,)).fetchone()
-            if existing and existing[0]>=end.isoformat():
+            if existing and existing[0]>=expected.isoformat():
                 skipped+=1;continue
             fetch_start=max(start,dt.date.fromisoformat(existing[0])+dt.timedelta(days=1)) if existing else start
             if fetch_start>end:skipped+=1;continue
@@ -99,6 +102,8 @@ def main():
                 try:
                     reply=fetch(sym,fetch_start.isoformat(),end.isoformat(),key,a.timeout)
                     rows=parse(sym,reply,fetch_start.isoformat(),end.isoformat())
+                    if not any(row[1]==expected.isoformat() for row in rows) and not db.execute("SELECT 1 FROM daily_ohlcv WHERE symbol=? AND day=?",(sym,expected.isoformat())).fetchone():
+                        raise ValueError("latest expected session missing: "+expected.isoformat())
                     with db:
                         for row in rows:
                             old=db.execute("SELECT open,high,low,close,volume_zhang FROM daily_ohlcv WHERE symbol=? AND day=?",row[:2]).fetchone()
@@ -106,7 +111,7 @@ def main():
                                 raise ValueError("existing OHLCV conflict "+str(row[:2]))
                             db.execute("INSERT OR IGNORE INTO daily_ohlcv VALUES(?,?,?,?,?,?,?)",row)
                         db.execute("INSERT INTO fetch_status VALUES(?,?,?) ON CONFLICT(symbol) DO UPDATE SET covered_through=excluded.covered_through,last_success_utc=excluded.last_success_utc",
-                            (sym,end.isoformat(),dt.datetime.now(dt.timezone.utc).isoformat()))
+                            (sym,expected.isoformat(),dt.datetime.now(dt.timezone.utc).isoformat()))
                         db.execute("DELETE FROM fetch_error WHERE symbol=?",(sym,))
                     done+=1;error=None;break
                 except (urllib.error.HTTPError,urllib.error.URLError,TimeoutError,ValueError,KeyError) as ex:
@@ -124,7 +129,7 @@ def main():
                     (sym,error[:400],dt.datetime.now(dt.timezone.utc).isoformat()))
                 print(f"[FAIL] {index}/{total} {sym} {error}",flush=True)
             elif index%25==0:print(f"[PROGRESS] {index}/{total} done={done} skipped={skipped} failed={failed}",flush=True)
-        print(json.dumps({"status":"COMPLETE" if failed==0 else "INCOMPLETE","universe":total,"processed":done,"skipped":skipped,"failed":failed,"database":str(a.db),"covered_through":end.isoformat(),"note":"staging only; A/B/LINE unchanged; calendar and formula parity pending"},ensure_ascii=False))
+        print(json.dumps({"status":"COMPLETE" if failed==0 else "INCOMPLETE","universe":total,"processed":done,"skipped":skipped,"failed":failed,"database":str(a.db),"covered_through":expected.isoformat(),"note":"Latest expected session checked; full historical calendar coverage NOT yet certified. Staging only; A/B/LINE unchanged"},ensure_ascii=False))
         if failed:raise SystemExit(2)
     finally:db.close()
 
