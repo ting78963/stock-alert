@@ -65,6 +65,7 @@ def main():
     p.add_argument("--db",type=Path,default=OUT)
     p.add_argument("--f10",type=Path,default=F10)
     p.add_argument("--limit",type=int,default=0,help="0=all; use 2 for smoke test")
+    p.add_argument("--dry-run",action="store_true",help="Print planned requests; no network and no database writes")
     a=p.parse_args()
     if a.delay<1 or a.history_calendar_days<170 or a.max_retries<0:
         raise SystemExit("STOP: invalid parameters")
@@ -76,11 +77,14 @@ def main():
     if not a.f10.is_file():raise SystemExit("STOP: F10 source missing")
     if a.db.resolve()==a.f10.resolve():raise SystemExit("STOP: staging DB must differ from F10")
     key=os.environ.get("FUGLE_API_KEY","").strip()
-    if not key:raise SystemExit("STOP: FUGLE_API_KEY missing")
+    if not key and not a.dry_run:raise SystemExit("STOP: FUGLE_API_KEY missing")
     src=sqlite3.connect(a.f10.resolve().as_uri()+"?mode=ro",uri=True)
     try: symbols=[str(x[0]) for x in src.execute("SELECT symbol FROM member ORDER BY symbol")]
     finally:src.close()
     if not symbols or len(set(symbols))!=len(symbols):raise SystemExit("STOP: invalid member universe")
+    if a.dry_run:
+        print(json.dumps({"mode":"DRY_RUN","universe":len(symbols),"selected":symbols[:a.limit or None],"from":start.isoformat(),"to":end.isoformat(),"delay_seconds":a.delay,"output":str(a.db),"warning":"No network; no DB writes; date completeness not yet certified"},ensure_ascii=False))
+        return
     db=dbopen(a.db)
     try:
         total=len(symbols); done=0; failed=0; skipped=0
