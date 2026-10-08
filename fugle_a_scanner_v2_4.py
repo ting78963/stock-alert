@@ -1089,13 +1089,13 @@ class WaitDataWorker:
                 from_d = to_d - timedelta(days=170)
 
                 q = urllib.parse.urlencode({
-                    "symbol": symbol,
                     "from": from_d.isoformat(),
                     "to": to_d.isoformat(),
                     "timeframe": "D",
                     "fields": "close,volume",
+                    "sort": "asc",
                 })
-                url = f"{BASE}/historical/candles?{q}"
+                url = f"{BASE}/historical/candles/{urllib.parse.quote(symbol)}?{q}"
 
                 while True:
                     now_mono = time.monotonic()
