@@ -11,6 +11,7 @@ CSV=ROOT/"f10_expansion_add_1014_v1.csv"
 STAGE=ROOT/"f10_expansion_stage_v1.sqlite3"
 PROD=Path("/var/data/stock-alert/f10_baseline_v1.sqlite3")
 TZ=ZoneInfo("Asia/Taipei")
+EXCLUDED={"1589"}  # User-approved delisted candidate; preserve frozen audit for traceability
 def main():
     ap=argparse.ArgumentParser()
     ap.add_argument("--batch",type=int,default=30)
@@ -39,11 +40,11 @@ def main():
         statuses={s:status for s,status in c.execute("SELECT symbol,status FROM audit")}
         if set(statuses)-set(names): raise RuntimeError("stage contains symbols outside roster; STOP")
         if not args.retry_failed:
-            pending=[s for s in names if s not in statuses]
+            pending=[s for s in names if s not in statuses and s not in EXCLUDED]
         else:
-            pending=[s for s in names if statuses.get(s)=="FAIL"]
+            pending=[s for s in names if statuses.get(s)=="FAIL" and s not in EXCLUDED]
         selected=pending[:args.batch]
-        print(f"[PLAN] total={len(names)} pass={sum(v=='PASS' for v in statuses.values())} fail={sum(v=='FAIL' for v in statuses.values())} pending={len([s for s in names if s not in statuses])} selected={len(selected)} range={start}..{end}",flush=True)
+        print(f"[PLAN] total={len(names)} pass={sum(v=='PASS' for v in statuses.values())} fail={sum(v=='FAIL' for v in statuses.values())} pending={len([s for s in names if s not in statuses])} excluded={sorted(EXCLUDED)} selected={len(selected)} range={start}..{end}",flush=True)
         if not selected:
             print("[NO WORK] no matching symbols",flush=True);return
         consecutive_429=0
