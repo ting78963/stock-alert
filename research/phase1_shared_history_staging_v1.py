@@ -76,7 +76,7 @@ def main():
                 # do not claim those dates are valid for this snapshot.
                 continue
             covered.append((sym,ds))
-        elif k.startswith("daily_static|"):
+        elif k.startswith("daily|") or k.startswith("daily_static|"):
             sym=k.split("|",1)[1]
             if not sym.isdigit() or len(sym)!=4 or not isinstance(v,list):
                 raise SystemExit(f"STOP: bad daily identity {k}")
@@ -89,7 +89,7 @@ def main():
                 if close<=0 or volume<0:
                     raise SystemExit(f"STOP: invalid daily values {sym} {ds}")
                 daily.append((sym,ds,close,volume))
-    dst=sqlite3.connect(a.output)
+    # Historical cache uses daily|symbol|target_day and estvr5|symbol|target_day.\n    # The target day is NOT necessarily the date of each historical bar.\n    dst=sqlite3.connect(a.output)
     try:
         dst.executescript("""
         CREATE TABLE f10_minute_baseline(symbol TEXT NOT NULL, day TEXT NOT NULL, full_volume_zhang REAL NOT NULL, pts_json TEXT NOT NULL, PRIMARY KEY(symbol,day));
@@ -98,7 +98,7 @@ def main():
         CREATE TABLE metadata(key TEXT PRIMARY KEY,value TEXT NOT NULL);
         """)
         dst.executemany("INSERT INTO f10_minute_baseline VALUES(?,?,?,?)",checked)
-        dst.executemany("INSERT INTO daily_history VALUES(?,?,?,?)",daily)
+        dst.executemany("INSERT OR IGNORE INTO daily_history VALUES(?,?,?,?)",daily)
         dst.executemany("INSERT INTO daily_coverage VALUES(?,?)",covered)
         dst.executemany("INSERT INTO metadata VALUES(?,?)",[
             ("asof_exclusive",asof),("source_f10",str(a.f10)),
@@ -112,7 +112,7 @@ def main():
             "f10_symbols":len(counts),"f10_days":len(checked),
             "f10_symbols_ge10":sum(v>=10 for v in counts.values()),
             "daily_symbols":len({r[0] for r in daily}),
-            "daily_rows":len(daily),"daily_coverage_symbols":len(covered),
+            "daily_rows":len(daily),"daily_unique_rows":dst.execute("SELECT COUNT(*) FROM daily_history").fetchone()[0],"daily_coverage_symbols":len(covered),
             "sqlite_integrity":integrity,"output":str(a.output),
             "important":"No VR5/EVG/VCP values computed yet; live A unchanged."
         },ensure_ascii=False,indent=2))
