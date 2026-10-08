@@ -70,6 +70,40 @@ def trim(c,symbol):
     days=[r[0] for r in c.execute("SELECT day FROM f10_day WHERE symbol=? ORDER BY day DESC",(symbol,)).fetchall()]
     for ds in days[11:]: c.execute("DELETE FROM f10_day WHERE symbol=? AND day=?",(symbol,ds))
 
+def backfill_older(c,symbol,key,pause):
+    """Fill missing slots using older positive-volume sessions; preserve existing rows."""
+    have=[r[0] for r in c.execute("SELECT day FROM f10_day WHERE symbol=? ORDER BY day",(symbol,))]
+    if not have or len(have)>=11: return 0
+    cursor=date.fromisoformat(have[0])-timedelta(days=1)
+    added=0
+    # Bounded 24-calendar-day windows, at most four per maintenance run.
+    for _ in range(4):
+        if len(have)>=11: break
+        start=cursor-timedelta(days=23)
+        try:
+            older=parse(symbol,fetch(symbol,start.isoformat(),cursor.isoformat(),key),cursor.isoformat())
+        except urllib.error.HTTPError as e:
+            print(f"[F10 BACKFILL STOP] {symbol} HTTP {e.code}",flush=True)
+            break
+        except Exception as e:
+            print(f"[F10 BACKFILL STOP] {symbol} {type(e).__name__}: {e}",flush=True)
+            break
+        for ds,full,pts in reversed(older):
+            if len(have)>=11: break
+            if ds in have: continue
+            if not pts or abs(pts[-1][1]-full)>0.0001:
+                print(f"[F10 BACKFILL STOP] {symbol} volume integrity {ds}",flush=True)
+                return added
+            c.execute("INSERT OR IGNORE INTO f10_day(symbol,day,full,pts_json) VALUES(?,?,?,?)",
+                      (symbol,ds,full,json.dumps(pts,separators=(",",":"))))
+            if c.execute("SELECT changes()").fetchone()[0]:
+                have.insert(0,ds); added+=1
+        c.commit()
+        cursor=start-timedelta(days=1)
+        if len(have)<11: time.sleep(max(0.75,pause))
+    if added: print(f"[F10 BACKFILL] {symbol} added={added} sessions={len(have)}",flush=True)
+    return added
+
 def build(mode,pause):
     now=datetime.now(TZ); today=now.date()
     try:
@@ -104,6 +138,10 @@ def build(mode,pause):
                 fail+=1;print(f"[F10 FAIL] {s} HTTP {e.code}",flush=True);break
             except Exception as e:
                 fail+=1;print(f"[F10 FAIL] {s} {type(e).__name__}: {e}",flush=True);break
+        # Backfill only incomplete symbols, after normal forward maintenance.
+        if mode=="update":
+            count=c.execute("SELECT COUNT(*) FROM f10_day WHERE symbol=?",(s,)).fetchone()[0]
+            if 0<count<11: backfill_older(c,s,key,pause)
         time.sleep(max(0,pause))
     complete=c.execute("SELECT COUNT(*) FROM (SELECT symbol FROM f10_day GROUP BY symbol HAVING COUNT(*)>=5)").fetchone()[0]
     total=c.execute("SELECT COUNT(*) FROM member").fetchone()[0]
