@@ -36,7 +36,7 @@ def main():
             if is_scheduled_open(day,rows=rows):sessions.append(day.isoformat())
             day+=timedelta(days=1)
         if len(sessions)<11:stop("official schedule yielded fewer than 11 sessions")
-        window=sessions[-11:]
+        # Fail closed for known 2026 TWSE holiday API omission/misclassification.\n        # These are independently identified full-market closure dates; do not modify shared production gate here.\n        known_closed={"2026-09-25","2026-09-28"}\n        wrongly_open=sorted(known_closed.intersection(sessions))\n        if wrongly_open:\n            print("[SCHEDULE CONFLICT] official gate incorrectly marked closed dates as open:",wrongly_open,flush=True)\n            print("[STOP] session gate needs independent holiday verification; no coverage conclusion",flush=True)\n            return\n        window=sessions[-11:]
         counts=Counter()
         missing_by_day=Counter()
         gaps=[]
