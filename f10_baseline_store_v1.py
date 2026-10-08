@@ -121,7 +121,9 @@ def build(mode,pause):
         if mode=="init" and len(have)>=10:
             skip+=1; continue
         fr=(today-timedelta(days=24)).isoformat() if not have else (date.fromisoformat(have[-1])+timedelta(days=1)).isoformat()
-        if fr>to: skip+=1; continue
+        if fr>to:
+            if mode=="update" and 0<len(have)<11: backfill_older(c,s,key,pause)
+            skip+=1; continue
         tries=0
         while True:
             try:
