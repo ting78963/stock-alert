@@ -17,7 +17,7 @@ def main():
     ap.add_argument("--pause",type=float,default=0.75)
     ap.add_argument("--retry-failed",action="store_true")
     args=ap.parse_args()
-    if not 1<=args.batch<=100 or args.pause<0.5: raise RuntimeError("batch must be 1..100 and pause >=0.5s")
+    if not 1<=args.batch<=300 or args.pause<0.5: raise RuntimeError("batch must be 1..300 and pause >=0.5s")
     roster=json.loads(ROSTER.read_text(encoding="utf-8"))
     with CSV.open(encoding="utf-8-sig",newline="") as f: rows=list(csv.DictReader(f))
     names=[r["symbol"] for r in rows]
@@ -46,6 +46,7 @@ def main():
         print(f"[PLAN] total={len(names)} pass={sum(v=='PASS' for v in statuses.values())} fail={sum(v=='FAIL' for v in statuses.values())} pending={len([s for s in names if s not in statuses])} selected={len(selected)} range={start}..{end}",flush=True)
         if not selected:
             print("[NO WORK] no matching symbols",flush=True);return
+        consecutive_429=0
         for i,s in enumerate(selected,1):
             print(f"[FETCH] {i}/{len(selected)} {s}",flush=True)
             error=None
@@ -60,17 +61,25 @@ def main():
                         c.execute("DELETE FROM f10_day WHERE symbol=?",(s,))
                         c.executemany("INSERT INTO f10_day VALUES(?,?,?,?)",[(s,d,v,json.dumps(pts,separators=(",",":"))) for d,v,pts in days])
                         c.execute("INSERT OR REPLACE INTO audit VALUES(?,?,?,?)",(s,"PASS",f"sessions={len(days)};end={end}",datetime.now(TZ).isoformat()))
-                    print(f"[PASS] {s} sessions={len(days)}",flush=True);error=None;break
+                    print(f"[PASS] {s} sessions={len(days)}",flush=True);error=None;consecutive_429=0;break
                 except Exception as e:
                     error=f"{type(e).__name__}: {e}"
                     if attempt<3:
-                        wait=5*attempt
+                        is429=isinstance(e,urllib.error.HTTPError) and e.code==429
+                        wait=(30*attempt if is429 else 5*attempt)
                         print(f"[RETRY] {s} attempt={attempt} wait={wait}s reason={error}",flush=True)
                         time.sleep(wait)
             if error is not None:
                 with c:
                     c.execute("INSERT OR REPLACE INTO audit VALUES(?,?,?,?)",(s,"FAIL",error,datetime.now(TZ).isoformat()))
                 print(f"[FAIL] {s} {error}",flush=True)
+                if "HTTP Error 429" in error:
+                    consecutive_429+=1
+                    if consecutive_429>=2:
+                        print("[COOLDOWN STOP] 2 consecutive 429 failures; preserve remaining pending symbols for later",flush=True)
+                        break
+                else:
+                    consecutive_429=0
             time.sleep(args.pause)
         summary=c.execute("SELECT status,COUNT(*) FROM audit GROUP BY status").fetchall()
         rows_count=c.execute("SELECT COUNT(*) FROM f10_day").fetchone()[0]
