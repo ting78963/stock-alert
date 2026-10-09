@@ -106,7 +106,7 @@ def main():
         if a.dry_run:
             print("[DRY RUN] no downloader launched; no network or DB writes", flush=True)
             return
-        child = subprocess.Popen([sys.executable, str(a.builder), "--asof", a.asof, "--limit", "0"])
+        child = subprocess.Popen([sys.executable, str(a.builder), "--asof", a.asof, "--limit", str(a.limit)])
         try:
             while child.poll() is None:
                 time.sleep(a.check_seconds)
