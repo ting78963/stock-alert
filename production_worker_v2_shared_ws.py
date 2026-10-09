@@ -325,6 +325,7 @@ def daily_history_maintenance_loop():
         return
     daily=BASE/"research"/"a_daily_incremental_maintenance_v1.py"
     f10=BASE/"f10_baseline_store_v1.py"
+    metadata_gate=BASE/"research"/"a_f11_f12_staging_coverage_gate_v1.py"
     completed_day=None
     next_retry_at=0.0
     while True:
@@ -334,13 +335,14 @@ def daily_history_maintenance_loop():
             try:
                 if not is_scheduled_open(n.date()):
                     completed_day=day
-                elif not daily.is_file() or not f10.is_file():
+                elif not daily.is_file() or not f10.is_file() or not metadata_gate.is_file():
                     print("[SEQUENTIAL MAINT] script missing; retry in 30m",flush=True)
                     next_retry_at=time.monotonic()+1800
                 else:
                     # Daily K is resumable; successful reruns use coverage and make zero API calls.
                     tasks=(("DAILY_K",[sys.executable,str(daily),"--execute"]),
-                           ("F10",[sys.executable,str(f10),"--mode","update","--pause","0.15"]))
+                           ("F10",[sys.executable,str(f10),"--mode","update","--pause","0.15"]),
+                           ("F11_F12_CHECK",[sys.executable,str(metadata_gate)]))
                     for name,cmd in tasks:
                         print(f"[SEQUENTIAL MAINT] {name} start date={day}",flush=True)
                         rc=subprocess.call(cmd,cwd=str(BASE),env=os.environ.copy())
