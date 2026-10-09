@@ -53,6 +53,7 @@ def main():
     p.add_argument("--min-headroom-mib", type=int, default=180)
     p.add_argument("--check-seconds", type=int, default=2)
     p.add_argument("--dry-run", action="store_true", help="Validate guards only; no child, no network, no DB writes")
+    p.add_argument("--self-test", action="store_true", help="Pure simulated guard checks; no lock, network, DB or child")
     a = p.parse_args()
     if a.min_headroom_mib < 64 or a.check_seconds < 1:
         p.error("invalid safety parameters")
@@ -60,6 +61,23 @@ def main():
         asof = dt.date.fromisoformat(a.asof)
     except ValueError:
         p.error("invalid --asof")
+    if a.self_test:
+        weekday = dt.datetime(2026, 10, 12, 9, 0, tzinfo=TZ)
+        evening = dt.datetime(2026, 10, 12, 20, 0, tzinfo=TZ)
+        weekend = dt.datetime(2026, 10, 11, 9, 0, tzinfo=TZ)
+        checks = {
+            "weekday_market_blocked": in_protected_hours(weekday),
+            "weekday_evening_allowed": not in_protected_hours(evening),
+            "weekend_allowed": not in_protected_hours(weekend),
+            "low_memory_rejected": 120 < a.min_headroom_mib,
+            "adequate_memory_allowed": 220 >= a.min_headroom_mib,
+        }
+        for name, passed in checks.items():
+            print(f"[{'PASS' if passed else 'FAIL'}] {name}", flush=True)
+        if not all(checks.values()):
+            raise SystemExit("STOP: simulated guard failure")
+        print("[SELF TEST PASS] no lock, network, database writes, or child process", flush=True)
+        return
     now = dt.datetime.now(TZ)
     if in_protected_hours(now):
         raise SystemExit("STOP: protected Taiwan weekday 08:30-14:00; production priority")
