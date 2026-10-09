@@ -53,7 +53,13 @@ assert calls[1][1]>=60 and calls[2][1]>=120,calls
 assert calls[3][0]=="2222" and calls[3][1]>=180,calls
 assert results["1111"].ok is False and results["1111"].fatal is False
 assert results["2222"].ok is True
-assert worker.submit("1111","2026-10-12") is False
+# The next queued stock starts only after the global 60s backoff.
+# By then, the first stock's own 60s cooldown may legitimately have expired.
+# Check that the per-symbol cooldown was recorded at failure, rather than
+# asserting it is still active after another 60s of virtual time.
+assert ("1111","2026-10-12") in worker.retry_after
+assert worker.retry_after[("1111","2026-10-12")] >= 180.0
+print("PASS: 429 failure recorded a per-symbol cooldown through virtual t>=180s")
 print("PASS: live background thread limited 429 stock to 3 HTTP attempts")
 print("PASS: next stock waited until shared cooldown (virtual t>=180s)")
 print("PASS: exhausted 429 recoverable; next stock succeeded")
