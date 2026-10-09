@@ -66,6 +66,9 @@ TRACK_FILE = OUTDIR / "vcp_breakout_track_v2.json"
 CACHE_FILE = OUTDIR / "cache.json"
 HISTORY_CACHE_FILE = OUTDIR / "a_history_cache_v2_4.json"
 F11_METADATA_CACHE_FILE = Path("/var/data/stock-alert/a_f11_metadata_v1.json") if Path("/var/data").exists() else (OUTDIR / "a_f11_metadata_v1.json")
+# Explicit staging opt-in; production defaults stay unchanged.
+F11_OFFLINE_STAGING_FILE = Path("/var/data/stock-alert/f11-staging/a_f11_staging_v1.json")
+F11_OFFLINE_STAGING_ENABLED = os.environ.get("A_F11_OFFLINE_STAGING", "") == "1"
 SHADOW_AUDIT_ROOT = Path("/var/data/stock-alert/a_queue_shadow_audit") if Path("/var/data").exists() else (OUTDIR / "a_queue_shadow_audit")
 A_SCAN_MOTHER_ROOT = Path("/var/data/stock-alert/a_scan_mother") if Path("/var/data").exists() else (OUTDIR / "a_scan_mother")
 
@@ -238,6 +241,14 @@ class FugleAdapter:
         symbols = self.f11_metadata_store.get("symbols")
         # Backward compatible with v2.1: reuse the symbol map across trading days.
         self.f11_metadata_cache: Dict[str, Any] = symbols if isinstance(symbols, dict) else {}
+        if F11_OFFLINE_STAGING_ENABLED:
+            # Fail closed before scanning; never silently fall back to synchronous HTTP.
+            staging = load_json(F11_OFFLINE_STAGING_FILE, None)
+            records = staging.get("symbols") if isinstance(staging, dict) else None
+            if not isinstance(records, dict) or not records:
+                raise AuditStop("F11 offline staging unavailable or invalid")
+            self.f11_metadata_cache = records
+            print(f"[A F11 OFFLINE] loaded={len(records)} path={F11_OFFLINE_STAGING_FILE}", flush=True)
         self.daily_cache: Dict[str, Tuple[str, List[DailyBar]]] = {}
         # Historical D/1m baselines are immutable for a target trading day.
         # Persist them on Render disk so a restart/scan does not refetch 10x 1m
@@ -303,6 +314,10 @@ class FugleAdapter:
         if isinstance(persisted, dict) and str(persisted.get("symbol") or "") == symbol:
             self.meta_cache[symbol] = persisted
             return persisted
+
+        if F11_OFFLINE_STAGING_ENABLED:
+            # Caller must defer this symbol; no network and no production cache write.
+            raise RuntimeError(f"F11_OFFLINE_MISS:{symbol}")
 
         d = http_json(f"{BASE}/intraday/ticker/{urllib.parse.quote(symbol)}", self.key)
         if str(d.get("symbol") or "") != symbol:
@@ -1517,7 +1532,13 @@ class Scanner:
         for s in candidates:
             symbol = s["stock_id"]
             try:
-                meta = self.adapter.ticker(symbol)
+                try:
+                    meta = self.adapter.ticker(symbol)
+                except RuntimeError as exc:
+                    if F11_OFFLINE_STAGING_ENABLED and str(exc).startswith("F11_OFFLINE_MISS:"):
+                        print(f"[A F11 OFFLINE MISS] symbol={symbol} deferred; no HTTP", flush=True)
+                        continue
+                    raise
                 if not self.selector.meta_ok(meta):
                     continue
 
