@@ -55,7 +55,18 @@ def main():
   OUT.mkdir(parents=True,exist_ok=True)
   cache=OUT/"api_day_cache";cache.mkdir(exist_ok=True)
   requests=0;results=[]
+  checkpoint=OUT/"progress_174.json"
+  if checkpoint.exists():
+   old=json.loads(checkpoint.read_text())
+   if not isinstance(old,list):stop("checkpoint not a list")
+   expected=[x[0] for x in identities]
+   for j,row in enumerate(old):
+    if j>=len(expected) or (row["date"],row["stock_id"],row["class"],row["recognition"])!=expected[j]:stop("checkpoint identity mismatch "+str(j))
+   results=old
+  print("RESUME_COMPLETED",len(results),"OF",len(identities),flush=True)
   for idx,((d,s,c,rt),obs) in enumerate(identities,1):
+   if idx<=len(results):continue
+   print(f"START {idx}/{len(identities)} {d} {s} {c}",flush=True)
    prev=[x for x in cal if x<d][-10:]
    if len(prev)!=10:stop("calendar <10 "+s+" "+d)
    rows=f10.execute("SELECT day,full,pts_json FROM f10_day WHERE symbol=? AND day<? ORDER BY day DESC LIMIT 10",(s,d)).fetchall()
@@ -107,6 +118,10 @@ def main():
       "first_800":first[800],"first_1000":first[1000],
       "lead_800":rec-first[800] if first[800] is not None else None,
       "lead_1000":rec-first[1000] if first[1000] is not None else None})
+   tmp=checkpoint.with_suffix(".json.tmp")
+   tmp.write_text(json.dumps(results,ensure_ascii=False,indent=2))
+   tmp.replace(checkpoint)
+   print(f"COMPLETED {idx}/{len(identities)} {d} {s} {c}",flush=True)
    if idx%10==0 or idx==len(identities):print(f"PROGRESS {idx}/{len(identities)} API_REQUESTS_THIS_RUN={requests}",flush=True)
   path=OUT/"results_174.json";path.write_text(json.dumps(results,ensure_ascii=False,indent=2))
   for th in (800,1000):
