@@ -66,6 +66,9 @@ TRACK_FILE = OUTDIR / "vcp_breakout_track_v2.json"
 CACHE_FILE = OUTDIR / "cache.json"
 HISTORY_CACHE_FILE = OUTDIR / "a_history_cache_v2_4.json"
 F11_METADATA_CACHE_FILE = Path("/var/data/stock-alert/a_f11_metadata_v1.json") if Path("/var/data").exists() else (OUTDIR / "a_f11_metadata_v1.json")
+# Explicit staging opt-in; production defaults stay unchanged.
+F11_OFFLINE_STAGING_FILE = Path("/var/data/stock-alert/f11-staging/a_f11_staging_v1.json")
+F11_OFFLINE_STAGING_ENABLED = os.environ.get("A_F11_OFFLINE_STAGING", "") == "1"
 SHADOW_AUDIT_ROOT = Path("/var/data/stock-alert/a_queue_shadow_audit") if Path("/var/data").exists() else (OUTDIR / "a_queue_shadow_audit")
 A_SCAN_MOTHER_ROOT = Path("/var/data/stock-alert/a_scan_mother") if Path("/var/data").exists() else (OUTDIR / "a_scan_mother")
 
@@ -77,6 +80,8 @@ EXCLUDED_INDUSTRY_CODES = {"02", "09", "14", "15", "16", "17", "18", "22", "32"}
 ESTIMATED_VR5_MIN = 1.5
 EVG_MIN_PCT = 50.0
 HISTORY_429_BACKOFF_SEC = 60.0
+HISTORY_BACKUP_FAILURE_COOLDOWN_SEC = 15.0
+HISTORY_BACKUP_MAX_429_RETRIES = 2  # at most 3 HTTP attempts per queued job
 RAW_VR5_MIN = 1.5          # SPECIAL priority only; never a handoff gate
 EARLY_VOLUME_MIN = 4_000   # 09:01-09:09
 REGULAR_VOLUME_MIN = 2_000 # 09:10+
@@ -236,6 +241,14 @@ class FugleAdapter:
         symbols = self.f11_metadata_store.get("symbols")
         # Backward compatible with v2.1: reuse the symbol map across trading days.
         self.f11_metadata_cache: Dict[str, Any] = symbols if isinstance(symbols, dict) else {}
+        if F11_OFFLINE_STAGING_ENABLED:
+            # Fail closed before scanning; never silently fall back to synchronous HTTP.
+            staging = load_json(F11_OFFLINE_STAGING_FILE, None)
+            records = staging.get("symbols") if isinstance(staging, dict) else None
+            if not isinstance(records, dict) or not records:
+                raise AuditStop("F11 offline staging unavailable or invalid")
+            self.f11_metadata_cache = records
+            print(f"[A F11 OFFLINE] loaded={len(records)} path={F11_OFFLINE_STAGING_FILE}", flush=True)
         self.daily_cache: Dict[str, Tuple[str, List[DailyBar]]] = {}
         # Historical D/1m baselines are immutable for a target trading day.
         # Persist them on Render disk so a restart/scan does not refetch 10x 1m
@@ -302,6 +315,10 @@ class FugleAdapter:
             self.meta_cache[symbol] = persisted
             return persisted
 
+        if F11_OFFLINE_STAGING_ENABLED:
+            # Caller must defer this symbol; no network and no production cache write.
+            raise RuntimeError(f"F11_OFFLINE_MISS:{symbol}")
+
         d = http_json(f"{BASE}/intraday/ticker/{urllib.parse.quote(symbol)}", self.key)
         if str(d.get("symbol") or "") != symbol:
             raise AuditStop(f"ticker identity mismatch: requested={symbol}, got={d.get('symbol')}")
@@ -315,8 +332,61 @@ class FugleAdapter:
         tmp.replace(F11_METADATA_CACHE_FILE)
         return d
 
+    def _shared_daily_history(self, symbol: str, snapshot_date: str) -> Optional[List[DailyBar]]:
+        """Shared daily SQLite fast path; None means use existing WAIT_DATA fallback.
+
+        Fail closed unless the last completed market session was verified externally.
+        A_LAST_COMPLETED_SESSION is supplied by the premarket market-calendar updater,
+        NOT inferred from an individual stock's most recent bar.
+        """
+        db_path = Path(os.environ.get(
+            "A_SHARED_DAILY_DB", "/var/data/stock-alert/shared_history_stage_v1.sqlite3"
+        ))
+        required = os.environ.get("A_LAST_COMPLETED_SESSION", "").strip()
+        to_d = date.fromisoformat(snapshot_date) - timedelta(days=1)
+        from_d = to_d - timedelta(days=170)
+        if not required or not db_path.is_file():
+            return None
+        try:
+            verified = date.fromisoformat(required)
+            if verified > to_d:
+                return None
+            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=2)
+            try:
+                status = conn.execute(
+                    "SELECT covered_through FROM fetch_status WHERE symbol=?", (symbol,)
+                ).fetchone()
+                if not status or not status[0] or str(status[0])[:10] < required:
+                    return None
+                rows = conn.execute(
+                    """SELECT day,close,volume_zhang FROM daily_ohlcv
+                       WHERE symbol=? AND day>=? AND day<=? ORDER BY day""",
+                    (symbol, from_d.isoformat(), to_d.isoformat())
+                ).fetchall()
+            finally:
+                conn.close()
+            if not rows:
+                return None
+            bars = []
+            for ds, close, volume in rows:
+                if (not isinstance(ds, str) or ds < from_d.isoformat()
+                        or ds >= snapshot_date or close is None or volume is None
+                        or float(close) <= 0 or float(volume) < 0):
+                    return None
+                bars.append(DailyBar(ds, float(close), float(volume)))
+            return bars
+        except (OSError, ValueError, TypeError, sqlite3.Error) as exc:
+            print(f"[A SHARED DAILY FALLBACK] symbol={symbol} reason={type(exc).__name__}")
+            return None
+
     def daily_history_local_ready(self, symbol: str, snapshot_date: str) -> Optional[List[DailyBar]]:
         cache_key = f"{symbol}|{snapshot_date}"
+        if symbol in self.daily_cache and self.daily_cache[symbol][0] == cache_key:
+            return self.daily_cache[symbol][1]
+        shared_bars = self._shared_daily_history(symbol, snapshot_date)
+        if shared_bars is not None:
+            self.daily_cache[symbol] = (cache_key, shared_bars)
+            return shared_bars
         if symbol in self.daily_cache and self.daily_cache[symbol][0] == cache_key:
             return self.daily_cache[symbol][1]
 
@@ -526,7 +596,7 @@ class FugleAdapter:
 
                 # F10 incomplete / ordinary miss:
                 # preserve the original Fugle OLD path below.
-                if len(rows) == 10:
+                if rows:
                     rows = list(reversed(rows))
                     fast_days = []
                     seen_dates = set()
@@ -615,15 +685,45 @@ class FugleAdapter:
                         })
 
                     days = fast_days
-                    self._estvr5_cache[cache_key] = days
+                    if len(rows) == 10:
+                        self._estvr5_cache[cache_key] = days
 
-        if days is None:
+        if days is None or len(days) < 10:
+            # Staging incremental F10 fallback: reuse validated DB sessions.
+            # Never refetch a day that is already in F10; fail closed on
+            # excessive misses instead of generating a burst of 1m requests.
             bars = self.daily_history(symbol, snapshot_date)
             hist_dates = [b.date for b in bars[-10:]]
             if len(hist_dates) < 5:
                 raise AuditStop(f"{symbol} Estimated VR5 history <5 sessions")
-            days = []
-            for ds in hist_dates:
+            existing = {str(d["date"]): d for d in (days or [])}
+            missing = [ds for ds in hist_dates if ds not in existing]
+            cap = int(os.environ.get("A_F10_FALLBACK_MAX_DAYS", "2"))
+            if cap < 0 or cap > 2:
+                raise AuditStop("A_F10_FALLBACK_MAX_DAYS must be 0..2")
+            if len(missing) > cap:
+                raise AuditStop(
+                    f"{symbol} F10 DB incomplete: {len(missing)} missing sessions "
+                    f"(cap={cap}); defer instead of bulk historical API"
+                )
+            # Prevent the same failed/missing session from triggering a Fugle
+            # request on every 5-second scan. RAM-only, staging opt-in.
+            if not hasattr(self, "_f10_fallback_attempts"):
+                self._f10_fallback_attempts = {}
+            cooldown = int(os.environ.get("A_F10_FALLBACK_COOLDOWN_SECONDS", "1800"))
+            if cooldown < 60:
+                raise AuditStop("A_F10_FALLBACK_COOLDOWN_SECONDS must be >=60")
+            stamp = time.monotonic()
+            for ds in missing:
+                key = (symbol, ds)
+                prev = self._f10_fallback_attempts.get(key)
+                if prev is not None and stamp - prev < cooldown:
+                    raise AuditStop(
+                        f"{symbol} F10 fallback cooldown: {ds}; defer retry"
+                    )
+            days = [existing[ds] for ds in hist_dates if ds in existing]
+            for ds in missing:
+                self._f10_fallback_attempts[(symbol, ds)] = time.monotonic()
                 q = urllib.parse.urlencode({
                     "timeframe": "1", "from": ds, "to": ds,
                     "fields": "open,high,low,close,volume,average", "sort": "asc",
@@ -655,8 +755,9 @@ class FugleAdapter:
                     pts.append((tm, full))
                 if full > 0 and pts:
                     days.append({"date": ds, "full": full, "pts": pts})
+            days = sorted(days, key=lambda d: d["date"])
             if len(days) < 5:
-                raise AuditStop(f"{symbol} Estimated VR5 valid Fugle sessions <5")
+                raise AuditStop(f"{symbol} Estimated VR5 valid sessions <5")
             self._estvr5_cache[cache_key] = days
             self.history_cache[cache_key] = days
             save_json_atomic(HISTORY_CACHE_FILE, self.history_cache)
@@ -1036,6 +1137,7 @@ class WaitDataWorker:
         self.jobs: "queue.Queue[WaitDataJob]" = queue.Queue(maxsize=max_pending)
         self.results: "queue.Queue[WaitDataResult]" = queue.Queue()
         self.pending = set()
+        self.retry_after: Dict[Tuple[str, str], float] = {}
         self.pending_lock = threading.Lock()
         self.thread = threading.Thread(
             target=self._run,
@@ -1047,7 +1149,7 @@ class WaitDataWorker:
     def submit(self, symbol: str, snapshot_date: str) -> bool:
         key = (str(symbol), str(snapshot_date))
         with self.pending_lock:
-            if key in self.pending:
+            if key in self.pending or time.monotonic() < self.retry_after.get(key, 0.0):
                 return False
             try:
                 self.jobs.put_nowait(WaitDataJob(*key))
@@ -1069,6 +1171,13 @@ class WaitDataWorker:
         key = (result.symbol, result.snapshot_date)
         with self.pending_lock:
             self.pending.discard(key)
+            if not result.ok:
+                cooldown = (HISTORY_429_BACKOFF_SEC
+                            if result.error and "HISTORY_RATE_LIMITED" in result.error
+                            else HISTORY_BACKUP_FAILURE_COOLDOWN_SEC)
+                self.retry_after[key] = time.monotonic() + cooldown
+            else:
+                self.retry_after.pop(key, None)
         self.results.put(result)
 
     def _run(self) -> None:
@@ -1097,6 +1206,7 @@ class WaitDataWorker:
                 })
                 url = f"{BASE}/historical/candles/{urllib.parse.quote(symbol)}?{q}"
 
+                retries_429 = 0
                 while True:
                     now_mono = time.monotonic()
                     if now_mono < history_backoff_until:
@@ -1107,6 +1217,14 @@ class WaitDataWorker:
                         break
                     except AuditStop as e:
                         if "Fugle HTTP 429" in str(e):
+                            retries_429 += 1
+                            if retries_429 > HISTORY_BACKUP_MAX_429_RETRIES:
+                                # Keep the single historical worker in cooldown
+                                # even after this job exhausts its retry budget.
+                                history_backoff_until = (
+                                    time.monotonic() + HISTORY_429_BACKOFF_SEC
+                                )
+                                raise RuntimeError(f"HISTORY_RATE_LIMITED: 429 retry budget exhausted for {symbol}") from e
                             history_backoff_until = (
                                 time.monotonic() + HISTORY_429_BACKOFF_SEC
                             )
@@ -1174,12 +1292,13 @@ class WaitDataWorker:
                     fatal=True,
                 ))
             except Exception as e:
+                rate_limited = "HISTORY_RATE_LIMITED" in str(e)
                 self._finish(WaitDataResult(
                     symbol=job.symbol,
                     snapshot_date=job.snapshot_date,
                     ok=False,
                     error=f"{type(e).__name__}: {e}",
-                    fatal=True,
+                    fatal=not rate_limited,
                 ))
             finally:
                 self.jobs.task_done()
@@ -1444,7 +1563,13 @@ class Scanner:
         for s in candidates:
             symbol = s["stock_id"]
             try:
-                meta = self.adapter.ticker(symbol)
+                try:
+                    meta = self.adapter.ticker(symbol)
+                except RuntimeError as exc:
+                    if F11_OFFLINE_STAGING_ENABLED and str(exc).startswith("F11_OFFLINE_MISS:"):
+                        print(f"[A F11 OFFLINE MISS] symbol={symbol} deferred; no HTTP", flush=True)
+                        continue
+                    raise
                 if not self.selector.meta_ok(meta):
                     continue
 
@@ -1538,19 +1663,30 @@ class Scanner:
                 est_vr5 = None
                 evg_pct = None
 
+                f10_missing_no_vcp = False
                 if not armed:
-                    f10, avg5_1m, prev1_1m, _fdays = self.adapter.estimated_vr5_parts(
-                        symbol, snap_date, now_tw()
-                    )
-                    projected = today_vol / f10
-                    est_vr5 = projected / avg5_1m
-                    evg_pct = (projected / prev1_1m - 1.0) * 100.0
+                    try:
+                        f10, avg5_1m, prev1_1m, _fdays = self.adapter.estimated_vr5_parts(
+                            symbol, snap_date, now_tw()
+                        )
+                    except AuditStop as exc:
+                        # Only the explicit >2-session F10 miss takes this route.
+                        # Malformed rows, causal mismatches, and other audits still STOP.
+                        if "F10 DB incomplete:" not in str(exc):
+                            raise
+                        f10_missing_no_vcp = True
+                        print(f"[A F10 MISS] symbol={symbol} NO_VCP evaluation; no bulk API", flush=True)
+                    if not f10_missing_no_vcp:
+                        projected = today_vol / f10
+                        est_vr5 = projected / avg5_1m
+                        evg_pct = (projected / prev1_1m - 1.0) * 100.0
 
                     reasons: List[str] = []
-                    if est_vr5 >= ESTIMATED_VR5_MIN:
-                        reasons.append("EST_VR5_1P5")
-                    if evg_pct >= EVG_MIN_PCT:
-                        reasons.append("EVG_P50")
+                    if not f10_missing_no_vcp:
+                        if est_vr5 >= ESTIMATED_VR5_MIN:
+                            reasons.append("EST_VR5_1P5")
+                        if evg_pct >= EVG_MIN_PCT:
+                            reasons.append("EVG_P50")
 
                     if reasons:
                         armed = self.arm_volume(snap_date, symbol, reasons, raw_vr5, est_vr5)
@@ -1562,6 +1698,32 @@ class Scanner:
                                       "estimated_vr5": round(est_vr5, 4),
                                       "evg_pct": round(evg_pct, 4),
                                       "priority": "SPECIAL" if priority == 0 else f"Q{priority}"})
+
+                if f10_missing_no_vcp:
+                    # Preserve original NO_VCP price/MA20 requirements. Do not
+                    # fabricate F10/EVG or classify insufficient MA20 as a hit.
+                    chg = float(s.get("change_rate") or 0)
+                    price = float(s.get("close") or 0)
+                    ma20 = sum(b.close for b in bars[-20:]) / 20 if len(bars) >= 20 else 0
+                    if len(bars) >= 20 and chg >= 3 and ma20 > 0 and price >= ma20:
+                        hit = {
+                            "code": symbol, "name": s.get("name") or symbol,
+                            "todayVol": today_vol, "volRatio": round(raw_vr5, 2),
+                            "chgPct": round(chg, 2), "price": price,
+                            "vcpInfo": None, "source": "NO_VCP",
+                            "ma20": round(ma20, 2),
+                            "rawVr5": round(raw_vr5, 4),
+                            "volumeTriggers": ["F10_INCOMPLETE_NO_VCP"],
+                            "volumeArmedAt": None, "estimatedVr5": None,
+                            "evgPct": None,
+                            "queuePriority": "SPECIAL" if priority == 0 else f"Q{priority}",
+                        }
+                        selected.append(hit)
+                        handed = self.handoff_hit(hit, snap_date)
+                        print(f"[A F10 NO_VCP] symbol={symbol} handed={handed}", flush=True)
+                    else:
+                        print(f"[A F10 NO_VCP] symbol={symbol} original MA20/3pct gate not met", flush=True)
+                    continue
 
                 if not armed:
                     print(f"[A DIAG] candidate_done {idx}/{len(prepared)} symbol={symbol} "
@@ -1725,6 +1887,17 @@ def main() -> int:
     while True:
         dt = now_tw()
         if args.ignore_market_hours or is_market_window(dt):
+            # Stage-only safety: do not carry yesterday's verified DB watermark
+            # into a new trading day. Exit so parent reruns calendar + DB preflight.
+            verified_day = os.environ.get("A_VERIFIED_SNAPSHOT_DAY", "").strip()
+            if verified_day:
+                from a_session_rollover_guard_v1 import assert_a_session_identity, ASessionRolloverError
+                try:
+                    assert_a_session_identity(dt.date().isoformat(), verified_day,
+                                              os.environ.get("A_LAST_COMPLETED_SESSION", ""))
+                except ASessionRolloverError as exc:
+                    print(f"[A SESSION ROLLOVER STOP] {exc}; NO PRODUCTION SIGNAL", flush=True)
+                    return 2
             tick = time.monotonic()
             try:
                 scanner.scan_once()
