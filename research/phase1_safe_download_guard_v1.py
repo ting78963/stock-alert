@@ -52,10 +52,11 @@ def main():
     p.add_argument("--builder", type=Path, default=DEFAULT_BUILDER)
     p.add_argument("--min-headroom-mib", type=int, default=180)
     p.add_argument("--check-seconds", type=int, default=2)
+    p.add_argument("--limit", type=int, default=0, help="0=all symbols; 2=two-symbol pilot")
     p.add_argument("--dry-run", action="store_true", help="Validate guards only; no child, no network, no DB writes")
     p.add_argument("--self-test", action="store_true", help="Pure simulated guard checks; no lock, network, DB or child")
     a = p.parse_args()
-    if a.min_headroom_mib < 64 or a.check_seconds < 1:
+    if a.min_headroom_mib < 64 or a.check_seconds < 1 or a.limit < 0:
         p.error("invalid safety parameters")
     try:
         asof = dt.date.fromisoformat(a.asof)
@@ -96,7 +97,7 @@ def main():
             raise SystemExit("STOP: cgroup memory headroom unavailable; fail closed")
         if headroom < a.min_headroom_mib:
             raise SystemExit(f"STOP: low memory headroom {headroom:.1f} MiB")
-        print(f"[GUARD PASS] Taiwan={now.isoformat()} headroom={headroom:.1f} MiB, lock acquired", flush=True)
+        print(f"[GUARD PASS] Taiwan={now.isoformat()} headroom={headroom:.1f} MiB, lock acquired; limit={a.limit}", flush=True)
         if a.dry_run:
             print("[DRY RUN] no downloader launched; no network or DB writes", flush=True)
             return
