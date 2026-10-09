@@ -362,6 +362,7 @@ def main():
             continue
         a_env=os.environ.copy()
         a_env["A_LAST_COMPLETED_SESSION"]=required_session
+        a_env["A_VERIFIED_SNAPSHOT_DAY"]=now_tpe().date().isoformat()
         print(f"[A HISTORY PREFLIGHT PASS] last_completed={required_session}",flush=True)
         p=subprocess.Popen([sys.executable,str(A),"--interval","5","--bridge-url",bridge],cwd=str(BASE),env=a_env)
         rc=p.wait();print(f"[A EXIT] rc={rc}; restart in 10s",flush=True);time.sleep(10)
