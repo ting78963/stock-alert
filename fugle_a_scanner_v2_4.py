@@ -77,6 +77,8 @@ EXCLUDED_INDUSTRY_CODES = {"02", "09", "14", "15", "16", "17", "18", "22", "32"}
 ESTIMATED_VR5_MIN = 1.5
 EVG_MIN_PCT = 50.0
 HISTORY_429_BACKOFF_SEC = 60.0
+HISTORY_BACKUP_FAILURE_COOLDOWN_SEC = 300.0
+HISTORY_BACKUP_MAX_429_RETRIES = 2  # at most 3 HTTP attempts per queued job
 RAW_VR5_MIN = 1.5          # SPECIAL priority only; never a handoff gate
 EARLY_VOLUME_MIN = 4_000   # 09:01-09:09
 REGULAR_VOLUME_MIN = 2_000 # 09:10+
@@ -1089,6 +1091,7 @@ class WaitDataWorker:
         self.jobs: "queue.Queue[WaitDataJob]" = queue.Queue(maxsize=max_pending)
         self.results: "queue.Queue[WaitDataResult]" = queue.Queue()
         self.pending = set()
+        self.retry_after: Dict[Tuple[str, str], float] = {}
         self.pending_lock = threading.Lock()
         self.thread = threading.Thread(
             target=self._run,
@@ -1100,7 +1103,7 @@ class WaitDataWorker:
     def submit(self, symbol: str, snapshot_date: str) -> bool:
         key = (str(symbol), str(snapshot_date))
         with self.pending_lock:
-            if key in self.pending:
+            if key in self.pending or time.monotonic() < self.retry_after.get(key, 0.0):
                 return False
             try:
                 self.jobs.put_nowait(WaitDataJob(*key))
@@ -1122,6 +1125,10 @@ class WaitDataWorker:
         key = (result.symbol, result.snapshot_date)
         with self.pending_lock:
             self.pending.discard(key)
+            if not result.ok:
+                self.retry_after[key] = time.monotonic() + HISTORY_BACKUP_FAILURE_COOLDOWN_SEC
+            else:
+                self.retry_after.pop(key, None)
         self.results.put(result)
 
     def _run(self) -> None:
@@ -1150,6 +1157,7 @@ class WaitDataWorker:
                 })
                 url = f"{BASE}/historical/candles/{urllib.parse.quote(symbol)}?{q}"
 
+                retries_429 = 0
                 while True:
                     now_mono = time.monotonic()
                     if now_mono < history_backoff_until:
@@ -1160,6 +1168,9 @@ class WaitDataWorker:
                         break
                     except AuditStop as e:
                         if "Fugle HTTP 429" in str(e):
+                            retries_429 += 1
+                            if retries_429 > HISTORY_BACKUP_MAX_429_RETRIES:
+                                raise AuditStop(f"Fugle HTTP 429 retry budget exhausted for {symbol}") from e
                             history_backoff_until = (
                                 time.monotonic() + HISTORY_429_BACKOFF_SEC
                             )
