@@ -17,7 +17,7 @@ LOCK = Path("/var/data/stock-alert/shared_history_builder.lock")
 DEFAULT_BUILDER = Path("/tmp/phase1_fugle_daily_builder_v1.py")
 # Conservative weekday window, including preparation and post-close buffer.
 BLOCK_START = dt.time(8, 30)
-BLOCK_END = dt.time(14, 0)
+BLOCK_END = dt.time(14, 30)
 
 
 def in_protected_hours(now):
@@ -88,7 +88,7 @@ def main():
     if end == now.date() and now.time() < dt.time(18, 0):
         raise SystemExit("STOP: same-day candles may be incomplete before Taiwan 18:00")
     if in_protected_hours(now):
-        raise SystemExit("STOP: protected Taiwan weekday 08:30-14:00; production priority")
+        raise SystemExit("STOP: protected Taiwan weekday 08:30-14:30; production priority")
     if not a.builder.is_file():
         raise SystemExit("STOP: builder missing")
     LOCK.parent.mkdir(parents=True, exist_ok=True)
