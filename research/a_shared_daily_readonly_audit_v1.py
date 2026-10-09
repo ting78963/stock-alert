@@ -13,19 +13,24 @@ DEFAULT_DB = "/var/data/stock-alert/shared_history_stage_v1.sqlite3"
 class HistoryNotReady(Exception):
     pass
 
-def read_daily(db_path, symbol, snapshot_date):
+def read_daily(db_path, symbol, snapshot_date, completed_session=None):
     """Match A's original inclusive 170-calendar-day range, strictly before D0."""
     snap = dt.date.fromisoformat(snapshot_date)
     to_day = snap - dt.timedelta(days=1)
     from_day = to_day - dt.timedelta(days=170)
+    # A market-session date is an explicit, independently verified input.
+    # Never infer it from the latest individual stock bar (suspensions are valid).
+    required_through = completed_session or to_day.isoformat()
+    if required_through > to_day.isoformat():
+        raise ValueError("completed_session cannot be after snapshot_date - 1")
     uri = "file:" + str(Path(db_path).resolve()) + "?mode=ro"
     with sqlite3.connect(uri, uri=True, timeout=5) as db:
         check = db.execute(
             "SELECT covered_through FROM fetch_status WHERE symbol=?", (symbol,)
         ).fetchone()
-        if check is None or not check[0] or check[0] < to_day.isoformat():
+        if check is None or not check[0] or check[0] < required_through:
             raise HistoryNotReady(
-                f"{symbol}: fetch_status does not cover {to_day}; status={check}"
+                f"{symbol}: fetch_status does not cover {required_through}; status={check}"
             )
         rows = db.execute(
             """SELECT day,close,volume_zhang FROM daily_ohlcv
@@ -43,7 +48,7 @@ def read_daily(db_path, symbol, snapshot_date):
         out.append({"date": day, "close": float(close), "volume_zhang": float(vol)})
     return out
 
-def audit(db_path, snapshot_date):
+def audit(db_path, snapshot_date, completed_session):
     uri = "file:" + str(Path(db_path).resolve()) + "?mode=ro"
     with sqlite3.connect(uri, uri=True) as db:
         symbols = [x[0] for x in db.execute("SELECT DISTINCT symbol FROM daily_ohlcv ORDER BY symbol")]
@@ -52,13 +57,13 @@ def audit(db_path, snapshot_date):
     sizes = []
     for symbol in symbols:
         try:
-            rows = read_daily(db_path, symbol, snapshot_date)
+            rows = read_daily(db_path, symbol, snapshot_date, completed_session)
             ready += 1
             sizes.append(len(rows))
         except HistoryNotReady as exc:
             not_ready.append(str(exc))
     result = {
-        "snapshot_date": snapshot_date, "stocks": len(symbols),
+        "snapshot_date": snapshot_date, "completed_session": completed_session, "stocks": len(symbols),
         "local_ready": ready, "not_ready": len(not_ready),
         "min_rows": min(sizes) if sizes else None,
         "max_rows": max(sizes) if sizes else None,
@@ -80,6 +85,7 @@ def self_test():
             db.execute("INSERT INTO fetch_status VALUES ('1101','2026-10-11','x')")
         assert read_daily(path,"1101","2026-10-12") == [
             {"date":"2026-10-08","close":10.0,"volume_zhang":20.0}]
+        assert len(read_daily(path,"1101","2026-10-13", "2026-10-08")) == 1
         try:
             read_daily(path,"1101","2026-10-13")
             raise AssertionError("expected not-ready")
@@ -92,8 +98,11 @@ if __name__ == "__main__":
     p.add_argument("--db", default=DEFAULT_DB)
     p.add_argument("--snapshot-date", default="2026-10-12")
     p.add_argument("--self-test", action="store_true")
+    p.add_argument("--completed-session", help="Last independently verified completed TWSE trading session, YYYY-MM-DD; required for audit")
     a = p.parse_args()
     if a.self_test:
         self_test()
     else:
-        raise SystemExit(audit(a.db, a.snapshot_date))
+        if not a.completed_session:
+            p.error("--completed-session is required; do not infer from stock bars")
+        raise SystemExit(audit(a.db, a.snapshot_date, a.completed_session))
