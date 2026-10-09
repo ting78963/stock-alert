@@ -1663,19 +1663,30 @@ class Scanner:
                 est_vr5 = None
                 evg_pct = None
 
+                f10_missing_no_vcp = False
                 if not armed:
-                    f10, avg5_1m, prev1_1m, _fdays = self.adapter.estimated_vr5_parts(
-                        symbol, snap_date, now_tw()
-                    )
-                    projected = today_vol / f10
-                    est_vr5 = projected / avg5_1m
-                    evg_pct = (projected / prev1_1m - 1.0) * 100.0
+                    try:
+                        f10, avg5_1m, prev1_1m, _fdays = self.adapter.estimated_vr5_parts(
+                            symbol, snap_date, now_tw()
+                        )
+                    except AuditStop as exc:
+                        # Only the explicit >2-session F10 miss takes this route.
+                        # Malformed rows, causal mismatches, and other audits still STOP.
+                        if "F10 DB incomplete:" not in str(exc):
+                            raise
+                        f10_missing_no_vcp = True
+                        print(f"[A F10 MISS] symbol={symbol} NO_VCP evaluation; no bulk API", flush=True)
+                    if not f10_missing_no_vcp:
+                        projected = today_vol / f10
+                        est_vr5 = projected / avg5_1m
+                        evg_pct = (projected / prev1_1m - 1.0) * 100.0
 
                     reasons: List[str] = []
-                    if est_vr5 >= ESTIMATED_VR5_MIN:
-                        reasons.append("EST_VR5_1P5")
-                    if evg_pct >= EVG_MIN_PCT:
-                        reasons.append("EVG_P50")
+                    if not f10_missing_no_vcp:
+                        if est_vr5 >= ESTIMATED_VR5_MIN:
+                            reasons.append("EST_VR5_1P5")
+                        if evg_pct >= EVG_MIN_PCT:
+                            reasons.append("EVG_P50")
 
                     if reasons:
                         armed = self.arm_volume(snap_date, symbol, reasons, raw_vr5, est_vr5)
@@ -1687,6 +1698,32 @@ class Scanner:
                                       "estimated_vr5": round(est_vr5, 4),
                                       "evg_pct": round(evg_pct, 4),
                                       "priority": "SPECIAL" if priority == 0 else f"Q{priority}"})
+
+                if f10_missing_no_vcp:
+                    # Preserve original NO_VCP price/MA20 requirements. Do not
+                    # fabricate F10/EVG or classify insufficient MA20 as a hit.
+                    chg = float(s.get("change_rate") or 0)
+                    price = float(s.get("close") or 0)
+                    ma20 = sum(b.close for b in bars[-20:]) / 20 if len(bars) >= 20 else 0
+                    if len(bars) >= 20 and chg >= 3 and ma20 > 0 and price >= ma20:
+                        hit = {
+                            "code": symbol, "name": s.get("name") or symbol,
+                            "todayVol": today_vol, "volRatio": round(raw_vr5, 2),
+                            "chgPct": round(chg, 2), "price": price,
+                            "vcpInfo": None, "source": "NO_VCP",
+                            "ma20": round(ma20, 2),
+                            "rawVr5": round(raw_vr5, 4),
+                            "volumeTriggers": ["F10_INCOMPLETE_NO_VCP"],
+                            "volumeArmedAt": None, "estimatedVr5": None,
+                            "evgPct": None,
+                            "queuePriority": "SPECIAL" if priority == 0 else f"Q{priority}",
+                        }
+                        selected.append(hit)
+                        handed = self.handoff_hit(hit, snap_date)
+                        print(f"[A F10 NO_VCP] symbol={symbol} handed={handed}", flush=True)
+                    else:
+                        print(f"[A F10 NO_VCP] symbol={symbol} original MA20/3pct gate not met", flush=True)
+                    continue
 
                 if not armed:
                     print(f"[A DIAG] candidate_done {idx}/{len(prepared)} symbol={symbol} "
