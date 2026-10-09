@@ -596,7 +596,7 @@ class FugleAdapter:
 
                 # F10 incomplete / ordinary miss:
                 # preserve the original Fugle OLD path below.
-                if len(rows) == 10:
+                if rows:
                     rows = list(reversed(rows))
                     fast_days = []
                     seen_dates = set()
@@ -684,16 +684,30 @@ class FugleAdapter:
                             "pts": pts,
                         })
 
-                    days = fast_days
-                    self._estvr5_cache[cache_key] = days
+                    days = fast_days if len(rows) == 10 else fast_days
+                    if len(rows) == 10:
+                        self._estvr5_cache[cache_key] = days
 
-        if days is None:
+        if days is None or len(days) < 10:
+            # Staging incremental F10 fallback: reuse validated DB sessions.
+            # Never refetch a day that is already in F10; fail closed on
+            # excessive misses instead of generating a burst of 1m requests.
             bars = self.daily_history(symbol, snapshot_date)
             hist_dates = [b.date for b in bars[-10:]]
             if len(hist_dates) < 5:
                 raise AuditStop(f"{symbol} Estimated VR5 history <5 sessions")
-            days = []
-            for ds in hist_dates:
+            existing = {str(d["date"]): d for d in (days or [])}
+            missing = [ds for ds in hist_dates if ds not in existing]
+            cap = int(os.environ.get("A_F10_FALLBACK_MAX_DAYS", "2"))
+            if cap < 0 or cap > 2:
+                raise AuditStop("A_F10_FALLBACK_MAX_DAYS must be 0..2")
+            if len(missing) > cap:
+                raise AuditStop(
+                    f"{symbol} F10 DB incomplete: {len(missing)} missing sessions "
+                    f"(cap={cap}); defer instead of bulk historical API"
+                )
+            days = [existing[ds] for ds in hist_dates if ds in existing]
+            for ds in missing:
                 q = urllib.parse.urlencode({
                     "timeframe": "1", "from": ds, "to": ds,
                     "fields": "open,high,low,close,volume,average", "sort": "asc",
@@ -725,8 +739,9 @@ class FugleAdapter:
                     pts.append((tm, full))
                 if full > 0 and pts:
                     days.append({"date": ds, "full": full, "pts": pts})
+            days = sorted(days, key=lambda d: d["date"])
             if len(days) < 5:
-                raise AuditStop(f"{symbol} Estimated VR5 valid Fugle sessions <5")
+                raise AuditStop(f"{symbol} Estimated VR5 valid sessions <5")
             self._estvr5_cache[cache_key] = days
             self.history_cache[cache_key] = days
             save_json_atomic(HISTORY_CACHE_FILE, self.history_cache)
