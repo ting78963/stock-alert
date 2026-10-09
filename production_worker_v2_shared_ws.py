@@ -351,7 +351,19 @@ def main():
     print("="*92);print("TREND PRODUCTION WORKER v2 | ONE SHARED WS | A=5s | P1/A/B/C | LINE="+("ON" if LINE_SEND else "DRY"));print("="*92)
     import subprocess
     while True:
-        p=subprocess.Popen([sys.executable,str(A),"--interval","5","--bridge-url",bridge],cwd=str(BASE),env=os.environ.copy())
+        # A daily history preflight: one official calendar fetch per launch.
+        # Fail closed BEFORE starting A, preventing mass WAIT_DATA/Fugle fallback.
+        try:
+            from a_history_preflight_v1 import verify_a_history
+            required_session=verify_a_history(now_tpe().date().isoformat())
+        except Exception as exc:
+            print(f"[A HISTORY PREFLIGHT BLOCKED] {type(exc).__name__}: {exc}; NO A LAUNCH",flush=True)
+            time.sleep(60)
+            continue
+        a_env=os.environ.copy()
+        a_env["A_LAST_COMPLETED_SESSION"]=required_session
+        print(f"[A HISTORY PREFLIGHT PASS] last_completed={required_session}",flush=True)
+        p=subprocess.Popen([sys.executable,str(A),"--interval","5","--bridge-url",bridge],cwd=str(BASE),env=a_env)
         rc=p.wait();print(f"[A EXIT] rc={rc}; restart in 10s",flush=True);time.sleep(10)
 
 if __name__=="__main__":main()
