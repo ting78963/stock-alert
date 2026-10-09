@@ -82,15 +82,15 @@ def main():
         print("[SELF TEST PASS] no lock, network, database writes, or child process", flush=True)
         return
     now = dt.datetime.now(TZ)
-    if in_protected_hours(now):
-        raise SystemExit("STOP: protected Taiwan weekday 08:30-14:00; production priority")
-    if not a.builder.is_file():
-        raise SystemExit("STOP: builder missing")
     end = asof - dt.timedelta(days=1)
     if end > now.date():
         raise SystemExit("STOP: requested data date is in the future")
     if end == now.date() and now.time() < dt.time(18, 0):
         raise SystemExit("STOP: same-day candles may be incomplete before Taiwan 18:00")
+    if in_protected_hours(now):
+        raise SystemExit("STOP: protected Taiwan weekday 08:30-14:00; production priority")
+    if not a.builder.is_file():
+        raise SystemExit("STOP: builder missing")
     LOCK.parent.mkdir(parents=True, exist_ok=True)
     with LOCK.open("a+") as lock:
         try:
