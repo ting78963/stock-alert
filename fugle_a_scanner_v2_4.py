@@ -1789,6 +1789,17 @@ def main() -> int:
     while True:
         dt = now_tw()
         if args.ignore_market_hours or is_market_window(dt):
+            # Stage-only safety: do not carry yesterday's verified DB watermark
+            # into a new trading day. Exit so parent reruns calendar + DB preflight.
+            verified_day = os.environ.get("A_VERIFIED_SNAPSHOT_DAY", "").strip()
+            if verified_day:
+                from a_session_rollover_guard_v1 import assert_a_session_identity, ASessionRolloverError
+                try:
+                    assert_a_session_identity(dt.date().isoformat(), verified_day,
+                                              os.environ.get("A_LAST_COMPLETED_SESSION", ""))
+                except ASessionRolloverError as exc:
+                    print(f"[A SESSION ROLLOVER STOP] {exc}; NO PRODUCTION SIGNAL", flush=True)
+                    return 2
             tick = time.monotonic()
             try:
                 scanner.scan_once()
