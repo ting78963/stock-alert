@@ -293,8 +293,11 @@ def wait_session():
         time.sleep(300)
 
 def f10_maintenance_loop():
-    """Build permanent F10 store on startup; then roll it once after each trading day."""
+    """Legacy F10 maintenance remains available only when sequential staging mode is OFF."""
     import subprocess
+    if os.environ.get("A_DAILY_HISTORY_MAINTENANCE_ENABLED","0").strip()=="1":
+        print("[F10 MAINT] managed by sequential daily updater; legacy thread disabled",flush=True)
+        return
     script=BASE/"f10_baseline_store_v1.py"
     last_attempt_day=None
     first=True
@@ -303,7 +306,6 @@ def f10_maintenance_loop():
         after_close=(n.hour,n.minute)>=(14,30)
         should=first or (after_close and last_attempt_day!=n.date().isoformat())
         if should:
-            # After close, always roll the store so today's completed session is added.
             mode="update" if after_close else "init"
             print(f"[F10 MAINT] start mode={mode}",flush=True)
             try:
@@ -311,10 +313,50 @@ def f10_maintenance_loop():
                 print(f"[F10 MAINT] done mode={mode} rc={rc}",flush=True)
             except BaseException as e:
                 print(f"[F10 MAINT FAIL] {type(e).__name__}: {e}",flush=True)
-            if after_close:
-                # One scheduled attempt per day even if an exceptional symbol fails.
-                last_attempt_day=n.date().isoformat()
+            if after_close:last_attempt_day=n.date().isoformat()
             first=False
+        time.sleep(60)
+
+def daily_history_maintenance_loop():
+    """Opt-in sequential 15:30 maintenance: daily K -> F10, retry failed stage in 30 min."""
+    import subprocess
+    if os.environ.get("A_DAILY_HISTORY_MAINTENANCE_ENABLED","0").strip()!="1":
+        print("[A DAILY HISTORY MAINT] disabled (default)",flush=True)
+        return
+    daily=BASE/"research"/"a_daily_incremental_maintenance_v1.py"
+    f10=BASE/"f10_baseline_store_v1.py"
+    completed_day=None
+    next_retry_at=0.0
+    while True:
+        n=now_tpe()
+        day=n.date().isoformat()
+        if (n.hour,n.minute)>=(15,30) and completed_day!=day and time.monotonic()>=next_retry_at:
+            try:
+                if not is_scheduled_open(n.date()):
+                    completed_day=day
+                elif not daily.is_file() or not f10.is_file():
+                    print("[SEQUENTIAL MAINT] script missing; retry in 30m",flush=True)
+                    next_retry_at=time.monotonic()+1800
+                else:
+                    # Daily K is resumable; successful reruns use coverage and make zero API calls.
+                    tasks=(("DAILY_K",[sys.executable,str(daily),"--execute"]),
+                           ("F10",[sys.executable,str(f10),"--mode","update","--pause","0.15"]))
+                    for name,cmd in tasks:
+                        print(f"[SEQUENTIAL MAINT] {name} start date={day}",flush=True)
+                        rc=subprocess.call(cmd,cwd=str(BASE),env=os.environ.copy())
+                        if rc!=0:
+                            print(f"[SEQUENTIAL MAINT] {name} incomplete rc={rc}; later stages blocked",flush=True)
+                            break
+                        print(f"[SEQUENTIAL MAINT] {name} completed",flush=True)
+                    else:
+                        completed_day=day
+                        print(f"[SEQUENTIAL MAINT] ALL COMPLETED date={day}",flush=True)
+                        time.sleep(60)
+                        continue
+                    next_retry_at=time.monotonic()+1800
+            except BaseException as exc:
+                next_retry_at=time.monotonic()+1800
+                print(f"[SEQUENTIAL MAINT] FAIL {type(exc).__name__}: {exc}; retry in 30m",flush=True)
         time.sleep(60)
 
 def self_test():
@@ -332,11 +374,24 @@ def self_test():
     print("[PASS] self-test opens NO network, sends NO LINE, creates NO runner")
     print("NO PRODUCTION SIGNAL")
 
+def a_launch_gate_once(snapshot_day, verify=None):
+    """Pure decision boundary for A launch; caller handles retry and subprocess."""
+    if verify is None:
+        from a_history_preflight_v1 import verify_a_history
+        verify=verify_a_history
+    required=verify(snapshot_day)
+    if not required or str(required) >= str(snapshot_day):
+        raise RuntimeError("A history preflight returned invalid last completed session")
+    env=os.environ.copy()
+    env["A_LAST_COMPLETED_SESSION"]=str(required)
+    env["A_VERIFIED_SNAPSHOT_DAY"]=str(snapshot_day)
+    return env
+
 def main():
     ap=argparse.ArgumentParser();ap.add_argument("--self-test",action="store_true");a=ap.parse_args()
     if a.self_test:self_test();return
     self_test()
-    preflight();STATE_ROOT.mkdir(parents=True,exist_ok=True);f14_bootstrap(now_tpe().date().isoformat());threading.Thread(target=f10_maintenance_loop,name="f10-maint",daemon=True).start();wait_session()
+    preflight();STATE_ROOT.mkdir(parents=True,exist_ok=True);f14_bootstrap(now_tpe().date().isoformat());threading.Thread(target=f10_maintenance_loop,name="f10-maint",daemon=True).start();threading.Thread(target=daily_history_maintenance_loop,name="a-daily-maint",daemon=True).start();wait_session()
     threading.Thread(target=serve,daemon=True).start()
     threading.Thread(target=shared_ws_loop,daemon=True).start()
     threading.Thread(target=clock_loop,daemon=True).start()
@@ -351,7 +406,16 @@ def main():
     print("="*92);print("TREND PRODUCTION WORKER v2 | ONE SHARED WS | A=5s | P1/A/B/C | LINE="+("ON" if LINE_SEND else "DRY"));print("="*92)
     import subprocess
     while True:
-        p=subprocess.Popen([sys.executable,str(A),"--interval","5","--bridge-url",bridge],cwd=str(BASE),env=os.environ.copy())
+        # A daily history preflight: one official calendar fetch per launch.
+        # Fail closed BEFORE starting A, preventing mass WAIT_DATA/Fugle fallback.
+        try:
+            a_env=a_launch_gate_once(now_tpe().date().isoformat())
+        except Exception as exc:
+            print(f"[A HISTORY PREFLIGHT BLOCKED] {type(exc).__name__}: {exc}; NO A LAUNCH",flush=True)
+            time.sleep(60)
+            continue
+        print(f"[A HISTORY PREFLIGHT PASS] last_completed={a_env['A_LAST_COMPLETED_SESSION']}",flush=True)
+        p=subprocess.Popen([sys.executable,str(A),"--interval","5","--bridge-url",bridge],cwd=str(BASE),env=a_env)
         rc=p.wait();print(f"[A EXIT] rc={rc}; restart in 10s",flush=True);time.sleep(10)
 
 if __name__=="__main__":main()
