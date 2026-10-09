@@ -684,7 +684,7 @@ class FugleAdapter:
                             "pts": pts,
                         })
 
-                    days = fast_days if len(rows) == 10 else fast_days
+                    days = fast_days
                     if len(rows) == 10:
                         self._estvr5_cache[cache_key] = days
 
