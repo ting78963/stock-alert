@@ -21,6 +21,7 @@ def main():
     p.add_argument("--limit",type=int,default=20)
     p.add_argument("--execute",action="store_true")
     p.add_argument("--delay",type=float,default=3.0)
+    p.add_argument("--output",type=Path,default=None,help="Required with --execute; isolated staging cache path")
     a=p.parse_args()
     if not 1<=a.limit<=20:raise SystemExit("STOP: limit must be 1..20")
     if a.delay<3:raise SystemExit("STOP: delay must be >=3 seconds")
@@ -37,9 +38,24 @@ def main():
     print("SELECTED =",",".join(batch))
     if not a.execute:
         print("DRY_RUN_ONLY=YES; HTTP=NONE; WRITES=NONE");return
+    if a.output is None:raise SystemExit("STOP: --execute requires explicit --output under /tmp or /var/data/stock-alert/f11-staging/")
+    target=a.output.resolve()
+    staging=Path("/var/data/stock-alert/f11-staging").resolve()
+    if not (target.is_relative_to(Path("/tmp").resolve()) or target.is_relative_to(staging)):
+        raise SystemExit("STOP: output must be in /tmp or dedicated f11-staging directory")
+    if target==CACHE.resolve():raise SystemExit("STOP: production F11 cache forbidden")
+    if target.exists():
+        prior=json.loads(target.read_text(encoding="utf-8"))
+        existing=prior.get("symbols",prior)
+        if not isinstance(existing,dict):raise SystemExit("STOP: staging cache invalid")
+        for symbol,record in existing.items():
+            if valid(symbol,record):rows[symbol]=record
+        missing=sorted(universe-{s for s,v in rows.items() if valid(s,v)})
+        batch=missing[:a.limit]
+        print("STAGING_REUSE =",len(existing),"STILL_MISSING =",len(missing))
     key=os.environ.get("FUGLE_API_KEY") or os.environ.get("FUGLE_KEY")
     if not key:raise SystemExit("STOP: FUGLE_API_KEY/FUGLE_KEY absent")
-    print("EXECUTE REQUESTED; MAX_CALLS =",len(batch),"MIN_DELAY_SEC =",a.delay)
+    print("EXECUTE REQUESTED; OUTPUT =",str(target),"MAX_CALLS =",len(batch),"MIN_DELAY_SEC =",a.delay)
     done=0
     for idx,symbol in enumerate(batch):
         if idx:time.sleep(a.delay)
@@ -57,7 +73,7 @@ def main():
         if not valid(symbol,payload):
             print("INVALID_IDENTITY_OR_FIELDS",symbol);continue
         rows[symbol]=payload
-        atomic_save(CACHE,rows)
+        atomic_save(target,rows)
         done+=1
         print("SAVED",symbol)
     print("SAVED_TOTAL =",done,"REMAINING_ESTIMATE =",len(missing)-done)
