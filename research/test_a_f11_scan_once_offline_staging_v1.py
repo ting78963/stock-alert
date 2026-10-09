@@ -57,4 +57,21 @@ print("FIRST_GATE_CANDIDATES = 2 (see scanner diagnostic above)")
 print("SCAN_ONCE_F11_MISS_CONTINUES = PASS")
 print("VALID_STOCK_HISTORY_QUEUED =", good)
 print("HTTP_CALLS = 0; PRODUCTION_WRITES = 0")
+# Recovery: metadata becomes locally available before the next scan; both candidates proceed.
+adapter.f11_metadata_cache[missing] = dict(adapter.f11_metadata_cache[good], symbol=missing)
+adapter.meta_cache.pop(missing, None)
+adapter.daily_history_local_ready.reset_mock()
+scanner.wait_data_worker.submit.reset_mock()
+scanner.scan_once()
+assert adapter.daily_history_local_ready.call_count == 2, "recovered stock did not re-enter scan"
+seen = {c.args[0] for c in adapter.daily_history_local_ready.call_args_list}
+assert seen == {missing, good}, f"unexpected recovered candidates: {seen}"
+assert scanner.wait_data_worker.submit.call_count == 2
+assert a.http_json.call_count == 0
+assert a.save_json_atomic.call_count == 0
+assert a.append_event.call_count == 0
+assert a.append_queue_shadow.call_count == 0
+print("RECOVERED_MISSING_SYMBOL =", missing)
+print("RECOVERY_NEXT_SCAN = PASS")
+print("HTTP_CALLS = 0; PRODUCTION_WRITES = 0")
 print("RESULT = PASS")
