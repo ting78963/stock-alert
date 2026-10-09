@@ -18,7 +18,10 @@ assert len(rows)==10,"STOP: baseline fixture incomplete"
 dates=sorted(r[0] for r in rows)
 class FakeConnection:
  def __init__(self,missing):self.missing=missing
- def execute(self,*a,**kw):return [r for r in rows if r[0] not in self.missing]
+ def execute(self,*a,**kw):
+  class Cursor:
+   def fetchall(inner):return [r for r in rows if r[0] not in self.missing]
+  return Cursor()
  def close(self):pass
 class FakeDB:
  def __init__(self,missing):self.missing=missing
