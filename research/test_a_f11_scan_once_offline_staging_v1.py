@@ -17,7 +17,9 @@ good = next(s for s, v in adapter.f11_metadata_cache.items()
             if v.get("market") == "TSE" and v.get("securityType") == "01"
             and str(v.get("industry")) not in a.EXCLUDED_INDUSTRY_CODES
             and a.StrongSelector.basic_code_ok(s))
-missing = "ZZZZ_NOT_EXIST"
+missing = "9999"  # Valid four-digit code, absent from offline F11 staging cache
+assert a.StrongSelector.basic_code_ok(missing)
+assert missing not in adapter.f11_metadata_cache
 today = datetime.now(ZoneInfo("Asia/Taipei")).date().isoformat()
 snaps = [{"stock_id": sym, "date": today, "change_rate": 3.0,
           "total_volume": 10000.0, "total_amount": 100000000.0,
@@ -41,6 +43,7 @@ scanner.queue_entered_at = mock.Mock(return_value="2026-10-09T09:01:00+08:00")
 scanner.wait_data_worker = mock.Mock()
 scanner.wait_data_worker.submit.return_value = True
 result = scanner.scan_once()
+assert scanner.liquidity_minimum.call_count == 1
 assert adapter.daily_history_local_ready.call_count == 1, "valid stock not processed"
 assert adapter.daily_history_local_ready.call_args.args[0] == good
 scanner.wait_data_worker.submit.assert_called_once_with(good, today)
@@ -50,6 +53,7 @@ assert a.append_event.call_count == 0
 assert a.append_queue_shadow.call_count == 0
 assert not a.record_a_scan_mother_identity.call_args_list or all(
     c.args[1] == good for c in a.record_a_scan_mother_identity.call_args_list)
+print("FIRST_GATE_CANDIDATES = 2 (see scanner diagnostic above)")
 print("SCAN_ONCE_F11_MISS_CONTINUES = PASS")
 print("VALID_STOCK_HISTORY_QUEUED =", good)
 print("HTTP_CALLS = 0; PRODUCTION_WRITES = 0")
