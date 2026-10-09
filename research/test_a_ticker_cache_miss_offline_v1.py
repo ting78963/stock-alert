@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Offline A ticker cache-miss blocking proof. Extract actual method, fake HTTP."""
-import ast,types,urllib.parse
+import ast,types,urllib.parse,json
 from pathlib import Path
 s=Path("/tmp/a_ticker_stage.py").read_text(encoding="utf-8")
 t=ast.parse(s)
@@ -14,6 +14,7 @@ def fake_http(url,key):
     return {"symbol":url.rsplit("/",1)[-1],"market":"TSE","securityType":"01","industry":"24"}
 ns["http_json"]=fake_http
 class FakePath:
+    suffix = '.json'
     def mkdir(self,**kw):pass
     def with_suffix(self,s):return self
     def write_text(self,*a,**kw):pass
