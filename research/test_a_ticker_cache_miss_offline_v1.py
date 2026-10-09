@@ -7,7 +7,7 @@ t=ast.parse(s)
 adapter=next(n for n in t.body if isinstance(n,ast.ClassDef) and n.name=="FugleAdapter")
 ticker=next(n for n in adapter.body if isinstance(n,ast.FunctionDef) and n.name=="ticker")
 ns={"Dict":dict,"Any":object,"urllib":types.SimpleNamespace(parse=urllib.parse),
-    "BASE":"https://fake.invalid","AuditStop":RuntimeError}
+    "BASE":"https://fake.invalid","AuditStop":RuntimeError,"json":json}
 requests=[]
 def fake_http(url,key):
     requests.append(url)
