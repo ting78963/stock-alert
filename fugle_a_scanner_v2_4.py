@@ -706,8 +706,24 @@ class FugleAdapter:
                     f"{symbol} F10 DB incomplete: {len(missing)} missing sessions "
                     f"(cap={cap}); defer instead of bulk historical API"
                 )
+            # Prevent the same failed/missing session from triggering a Fugle
+            # request on every 5-second scan. RAM-only, staging opt-in.
+            if not hasattr(self, "_f10_fallback_attempts"):
+                self._f10_fallback_attempts = {}
+            cooldown = int(os.environ.get("A_F10_FALLBACK_COOLDOWN_SECONDS", "1800"))
+            if cooldown < 60:
+                raise AuditStop("A_F10_FALLBACK_COOLDOWN_SECONDS must be >=60")
+            stamp = time.monotonic()
+            for ds in missing:
+                key = (symbol, ds)
+                prev = self._f10_fallback_attempts.get(key)
+                if prev is not None and stamp - prev < cooldown:
+                    raise AuditStop(
+                        f"{symbol} F10 fallback cooldown: {ds}; defer retry"
+                    )
             days = [existing[ds] for ds in hist_dates if ds in existing]
             for ds in missing:
+                self._f10_fallback_attempts[(symbol, ds)] = time.monotonic()
                 q = urllib.parse.urlencode({
                     "timeframe": "1", "from": ds, "to": ds,
                     "fields": "open,high,low,close,volume,average", "sort": "asc",
