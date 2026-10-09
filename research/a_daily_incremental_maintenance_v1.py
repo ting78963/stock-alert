@@ -22,8 +22,8 @@ def plan(now, db_path=DB, f10_path=F10):
     if now.tzinfo is None:
         raise ValueError("timezone-aware Taiwan time required")
     local=now.astimezone(dt.timezone(dt.timedelta(hours=8)))
-    if (local.hour,local.minute)<(14,30):
-        raise ValueError("post-close maintenance only (>=14:30 Asia/Taipei)")
+    if (local.hour,local.minute)<(15,30):
+        raise ValueError("post-close maintenance only (>=15:30 Asia/Taipei)")
     if not db_path.is_file() or not f10_path.is_file():
         raise ValueError("source SQLite missing")
     def connect_ro(path):
