@@ -1126,7 +1126,10 @@ class WaitDataWorker:
         with self.pending_lock:
             self.pending.discard(key)
             if not result.ok:
-                self.retry_after[key] = time.monotonic() + HISTORY_BACKUP_FAILURE_COOLDOWN_SEC
+                cooldown = (HISTORY_429_BACKOFF_SEC
+                            if result.error and "HISTORY_RATE_LIMITED" in result.error
+                            else HISTORY_BACKUP_FAILURE_COOLDOWN_SEC)
+                self.retry_after[key] = time.monotonic() + cooldown
             else:
                 self.retry_after.pop(key, None)
         self.results.put(result)
@@ -1170,7 +1173,12 @@ class WaitDataWorker:
                         if "Fugle HTTP 429" in str(e):
                             retries_429 += 1
                             if retries_429 > HISTORY_BACKUP_MAX_429_RETRIES:
-                                raise AuditStop(f"Fugle HTTP 429 retry budget exhausted for {symbol}") from e
+                                # Keep the single historical worker in cooldown
+                                # even after this job exhausts its retry budget.
+                                history_backoff_until = (
+                                    time.monotonic() + HISTORY_429_BACKOFF_SEC
+                                )
+                                raise RuntimeError(f"HISTORY_RATE_LIMITED: 429 retry budget exhausted for {symbol}") from e
                             history_backoff_until = (
                                 time.monotonic() + HISTORY_429_BACKOFF_SEC
                             )
@@ -1238,12 +1246,13 @@ class WaitDataWorker:
                     fatal=True,
                 ))
             except Exception as e:
+                rate_limited = "HISTORY_RATE_LIMITED" in str(e)
                 self._finish(WaitDataResult(
                     symbol=job.symbol,
                     snapshot_date=job.snapshot_date,
                     ok=False,
                     error=f"{type(e).__name__}: {e}",
-                    fatal=True,
+                    fatal=not rate_limited,
                 ))
             finally:
                 self.jobs.task_done()
