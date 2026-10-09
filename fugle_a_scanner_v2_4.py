@@ -315,8 +315,61 @@ class FugleAdapter:
         tmp.replace(F11_METADATA_CACHE_FILE)
         return d
 
+    def _shared_daily_history(self, symbol: str, snapshot_date: str) -> Optional[List[DailyBar]]:
+        """Shared daily SQLite fast path; None means use existing WAIT_DATA fallback.
+
+        Fail closed unless the last completed market session was verified externally.
+        A_LAST_COMPLETED_SESSION is supplied by the premarket market-calendar updater,
+        NOT inferred from an individual stock's most recent bar.
+        """
+        db_path = Path(os.environ.get(
+            "A_SHARED_DAILY_DB", "/var/data/stock-alert/shared_history_stage_v1.sqlite3"
+        ))
+        required = os.environ.get("A_LAST_COMPLETED_SESSION", "").strip()
+        to_d = date.fromisoformat(snapshot_date) - timedelta(days=1)
+        from_d = to_d - timedelta(days=170)
+        if not required or not db_path.is_file():
+            return None
+        try:
+            verified = date.fromisoformat(required)
+            if verified > to_d:
+                return None
+            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=2)
+            try:
+                status = conn.execute(
+                    "SELECT covered_through FROM fetch_status WHERE symbol=?", (symbol,)
+                ).fetchone()
+                if not status or not status[0] or str(status[0])[:10] < required:
+                    return None
+                rows = conn.execute(
+                    """SELECT day,close,volume_zhang FROM daily_ohlcv
+                       WHERE symbol=? AND day>=? AND day<=? ORDER BY day""",
+                    (symbol, from_d.isoformat(), to_d.isoformat())
+                ).fetchall()
+            finally:
+                conn.close()
+            if not rows:
+                return None
+            bars = []
+            for ds, close, volume in rows:
+                if (not isinstance(ds, str) or ds < from_d.isoformat()
+                        or ds >= snapshot_date or close is None or volume is None
+                        or float(close) <= 0 or float(volume) < 0):
+                    return None
+                bars.append(DailyBar(ds, float(close), float(volume)))
+            return bars
+        except (OSError, ValueError, TypeError, sqlite3.Error) as exc:
+            print(f"[A SHARED DAILY FALLBACK] symbol={symbol} reason={type(exc).__name__}")
+            return None
+
     def daily_history_local_ready(self, symbol: str, snapshot_date: str) -> Optional[List[DailyBar]]:
         cache_key = f"{symbol}|{snapshot_date}"
+        if symbol in self.daily_cache and self.daily_cache[symbol][0] == cache_key:
+            return self.daily_cache[symbol][1]
+        shared_bars = self._shared_daily_history(symbol, snapshot_date)
+        if shared_bars is not None:
+            self.daily_cache[symbol] = (cache_key, shared_bars)
+            return shared_bars
         if symbol in self.daily_cache and self.daily_cache[symbol][0] == cache_key:
             return self.daily_cache[symbol][1]
 
