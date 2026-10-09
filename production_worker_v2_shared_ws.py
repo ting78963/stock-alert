@@ -332,6 +332,19 @@ def self_test():
     print("[PASS] self-test opens NO network, sends NO LINE, creates NO runner")
     print("NO PRODUCTION SIGNAL")
 
+def a_launch_gate_once(snapshot_day, verify=None):
+    """Pure decision boundary for A launch; caller handles retry and subprocess."""
+    if verify is None:
+        from a_history_preflight_v1 import verify_a_history
+        verify=verify_a_history
+    required=verify(snapshot_day)
+    if not required or str(required) >= str(snapshot_day):
+        raise RuntimeError("A history preflight returned invalid last completed session")
+    env=os.environ.copy()
+    env["A_LAST_COMPLETED_SESSION"]=str(required)
+    env["A_VERIFIED_SNAPSHOT_DAY"]=str(snapshot_day)
+    return env
+
 def main():
     ap=argparse.ArgumentParser();ap.add_argument("--self-test",action="store_true");a=ap.parse_args()
     if a.self_test:self_test();return
@@ -354,16 +367,12 @@ def main():
         # A daily history preflight: one official calendar fetch per launch.
         # Fail closed BEFORE starting A, preventing mass WAIT_DATA/Fugle fallback.
         try:
-            from a_history_preflight_v1 import verify_a_history
-            required_session=verify_a_history(now_tpe().date().isoformat())
+            a_env=a_launch_gate_once(now_tpe().date().isoformat())
         except Exception as exc:
             print(f"[A HISTORY PREFLIGHT BLOCKED] {type(exc).__name__}: {exc}; NO A LAUNCH",flush=True)
             time.sleep(60)
             continue
-        a_env=os.environ.copy()
-        a_env["A_LAST_COMPLETED_SESSION"]=required_session
-        a_env["A_VERIFIED_SNAPSHOT_DAY"]=now_tpe().date().isoformat()
-        print(f"[A HISTORY PREFLIGHT PASS] last_completed={required_session}",flush=True)
+        print(f"[A HISTORY PREFLIGHT PASS] last_completed={a_env['A_LAST_COMPLETED_SESSION']}",flush=True)
         p=subprocess.Popen([sys.executable,str(A),"--interval","5","--bridge-url",bridge],cwd=str(BASE),env=a_env)
         rc=p.wait();print(f"[A EXIT] rc={rc}; restart in 10s",flush=True);time.sleep(10)
 
