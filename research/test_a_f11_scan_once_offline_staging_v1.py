@@ -74,4 +74,32 @@ assert a.append_queue_shadow.call_count == 0
 print("RECOVERED_MISSING_SYMBOL =", missing)
 print("RECOVERY_NEXT_SCAN = PASS")
 print("HTTP_CALLS = 0; PRODUCTION_WRITES = 0")
+# Phase 2: two ready candidates, same-priority FIFO, mocked handoff and dedupe.
+from datetime import date, timedelta
+bars = [a.DailyBar((date(2026, 7, 1) + timedelta(days=i)).isoformat(), 100.0, 1000.0)
+        for i in range(5)]
+adapter.daily_history_local_ready = mock.Mock(return_value=bars)
+scanner.armed_info = mock.Mock(return_value={"armed_at": "09:01:00", "reasons": ["EST_VR5_1P5"],
+                                             "estimated_vr5": 2.0, "evg_pct": 100.0})
+scanner.selector.select_one = mock.Mock(side_effect=lambda snap, meta, bars: {
+    "code": snap["stock_id"], "source": "NO_VCP", "name": snap["stock_id"],
+    "volRatio": 2.0, "chgPct": 3.0})
+handed = []
+scanner.handoff_hit = mock.Mock(side_effect=lambda hit, d: handed.append(hit["code"]) or True)
+scanner.queue_entered_at = mock.Mock(side_effect=lambda d, sym: (
+    "2026-10-09T09:01:00+08:00" if sym == missing else "2026-10-09T09:02:00+08:00"))
+scanner.state["queue_waiting"] = {}
+first = scanner.scan_once()
+assert [x["code"] for x in first] == [missing, good], "FIFO changed"
+assert handed == [missing, good], "handoff order changed"
+scanner.already_sent = mock.Mock(side_effect=lambda d, sym: sym in handed)
+second = scanner.scan_once()
+assert second == [] and handed == [missing, good], "dedupe failed"
+assert a.http_json.call_count == 0
+assert a.save_json_atomic.call_count == 0
+assert a.append_event.call_count == 0
+assert a.append_queue_shadow.call_count == 0
+print("SAME_PRIORITY_FIFO = PASS")
+print("HANDOFF_ONCE_PER_SYMBOL = PASS (mocked handoff)")
+print("HTTP_CALLS = 0; PRODUCTION_WRITES = 0")
 print("RESULT = PASS")
