@@ -317,6 +317,37 @@ def f10_maintenance_loop():
             first=False
         time.sleep(60)
 
+def daily_history_maintenance_loop():
+    """Opt-in staging daily K updater, after close only; never changes production by default."""
+    import subprocess
+    enabled=os.environ.get("A_DAILY_HISTORY_MAINTENANCE_ENABLED","0").strip()=="1"
+    if not enabled:
+        print("[A DAILY HISTORY MAINT] disabled (default)",flush=True)
+        return
+    script=BASE/"research"/"a_daily_incremental_maintenance_v1.py"
+    last_attempt_day=None
+    while True:
+        n=now_tpe()
+        day=n.date().isoformat()
+        if (n.hour,n.minute)>=(14,30) and last_attempt_day!=day:
+            # Only exchange sessions; no unnecessary weekend/holiday API requests.
+            try:
+                if not is_scheduled_open(n.date()):
+                    last_attempt_day=day
+                    time.sleep(60)
+                    continue
+                if not script.is_file():
+                    print("[A DAILY HISTORY MAINT] missing staging updater; NO WRITE",flush=True)
+                else:
+                    cmd=[sys.executable,str(script),"--execute"]
+                    print(f"[A DAILY HISTORY MAINT] start date={day}",flush=True)
+                    rc=subprocess.call(cmd,cwd=str(BASE),env=os.environ.copy())
+                    print(f"[A DAILY HISTORY MAINT] done rc={rc}",flush=True)
+            except BaseException as exc:
+                print(f"[A DAILY HISTORY MAINT] FAIL {type(exc).__name__}: {exc}",flush=True)
+            last_attempt_day=day
+        time.sleep(60)
+
 def self_test():
     assert launch_b({"stock_id":"3714","date":"2026-09-29","discovered_at":"10:22:05"},True)["dry_run"]
     assert key("2026-09-29","2330")=="2026-09-29|2330"
@@ -349,7 +380,7 @@ def main():
     ap=argparse.ArgumentParser();ap.add_argument("--self-test",action="store_true");a=ap.parse_args()
     if a.self_test:self_test();return
     self_test()
-    preflight();STATE_ROOT.mkdir(parents=True,exist_ok=True);f14_bootstrap(now_tpe().date().isoformat());threading.Thread(target=f10_maintenance_loop,name="f10-maint",daemon=True).start();wait_session()
+    preflight();STATE_ROOT.mkdir(parents=True,exist_ok=True);f14_bootstrap(now_tpe().date().isoformat());threading.Thread(target=f10_maintenance_loop,name="f10-maint",daemon=True).start();threading.Thread(target=daily_history_maintenance_loop,name="a-daily-maint",daemon=True).start();wait_session()
     threading.Thread(target=serve,daemon=True).start()
     threading.Thread(target=shared_ws_loop,daemon=True).start()
     threading.Thread(target=clock_loop,daemon=True).start()
