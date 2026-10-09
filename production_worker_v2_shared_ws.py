@@ -318,34 +318,38 @@ def f10_maintenance_loop():
         time.sleep(60)
 
 def daily_history_maintenance_loop():
-    """Opt-in staging daily K updater, after close only; never changes production by default."""
+    """Opt-in staging daily K updater. Retry failed updates after close; never run during trading."""
     import subprocess
     enabled=os.environ.get("A_DAILY_HISTORY_MAINTENANCE_ENABLED","0").strip()=="1"
     if not enabled:
         print("[A DAILY HISTORY MAINT] disabled (default)",flush=True)
         return
     script=BASE/"research"/"a_daily_incremental_maintenance_v1.py"
-    last_attempt_day=None
+    completed_day=None
+    next_retry_at=0.0
     while True:
         n=now_tpe()
         day=n.date().isoformat()
-        if (n.hour,n.minute)>=(14,30) and last_attempt_day!=day:
-            # Only exchange sessions; no unnecessary weekend/holiday API requests.
+        if (n.hour,n.minute)>=(14,30) and completed_day!=day and time.monotonic()>=next_retry_at:
             try:
                 if not is_scheduled_open(n.date()):
-                    last_attempt_day=day
-                    time.sleep(60)
-                    continue
-                if not script.is_file():
-                    print("[A DAILY HISTORY MAINT] missing staging updater; NO WRITE",flush=True)
+                    completed_day=day
+                elif not script.is_file():
+                    print("[A DAILY HISTORY MAINT] missing staging updater; retry in 30m",flush=True)
+                    next_retry_at=time.monotonic()+1800
                 else:
                     cmd=[sys.executable,str(script),"--execute"]
                     print(f"[A DAILY HISTORY MAINT] start date={day}",flush=True)
                     rc=subprocess.call(cmd,cwd=str(BASE),env=os.environ.copy())
-                    print(f"[A DAILY HISTORY MAINT] done rc={rc}",flush=True)
+                    if rc==0:
+                        completed_day=day
+                        print(f"[A DAILY HISTORY MAINT] completed date={day}",flush=True)
+                    else:
+                        next_retry_at=time.monotonic()+1800
+                        print(f"[A DAILY HISTORY MAINT] incomplete rc={rc}; retry in 30m",flush=True)
             except BaseException as exc:
-                print(f"[A DAILY HISTORY MAINT] FAIL {type(exc).__name__}: {exc}",flush=True)
-            last_attempt_day=day
+                next_retry_at=time.monotonic()+1800
+                print(f"[A DAILY HISTORY MAINT] FAIL {type(exc).__name__}: {exc}; retry in 30m",flush=True)
         time.sleep(60)
 
 def self_test():
