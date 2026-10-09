@@ -89,6 +89,10 @@ scanner.handoff_hit = mock.Mock(side_effect=lambda hit, d: handed.append(hit["co
 scanner.queue_entered_at = mock.Mock(side_effect=lambda d, sym: (
     "2026-10-09T09:01:00+08:00" if sym == missing else "2026-10-09T09:02:00+08:00"))
 scanner.state["queue_waiting"] = {}
+# The ready-candidate path normally logs queue shadow records.
+# Accept calls in memory, never write files or hit the network.
+a.append_queue_shadow = mock.Mock()
+a.append_event = mock.Mock()
 first = scanner.scan_once()
 assert [x["code"] for x in first] == [missing, good], "FIFO changed"
 assert handed == [missing, good], "handoff order changed"
@@ -97,8 +101,9 @@ second = scanner.scan_once()
 assert second == [] and handed == [missing, good], "dedupe failed"
 assert a.http_json.call_count == 0
 assert a.save_json_atomic.call_count == 0
-assert a.append_event.call_count == 0
-assert a.append_queue_shadow.call_count == 0
+assert all(c.args[1].get("symbol") in {missing, good} for c in a.append_queue_shadow.call_args_list)
+assert not any(c.args[0].get("type") == "candidate_error" for c in a.append_event.call_args_list)
+print("SHADOW_EVENTS = IN_MEMORY_ONLY")
 print("SAME_PRIORITY_FIFO = PASS")
 print("HANDOFF_ONCE_PER_SYMBOL = PASS (mocked handoff)")
 print("HTTP_CALLS = 0; PRODUCTION_WRITES = 0")
