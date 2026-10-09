@@ -72,6 +72,8 @@ def main():
             "weekend_allowed": not in_protected_hours(weekend),
             "low_memory_rejected": 120 < a.min_headroom_mib,
             "adequate_memory_allowed": 220 >= a.min_headroom_mib,
+            "early_same_day_blocked": dt.time(17, 59) < dt.time(18, 0),
+            "late_same_day_allowed": dt.time(18, 1) >= dt.time(18, 0),
         }
         for name, passed in checks.items():
             print(f"[{'PASS' if passed else 'FAIL'}] {name}", flush=True)
@@ -84,8 +86,11 @@ def main():
         raise SystemExit("STOP: protected Taiwan weekday 08:30-14:00; production priority")
     if not a.builder.is_file():
         raise SystemExit("STOP: builder missing")
-    if asof > now.date() + dt.timedelta(days=1):
-        raise SystemExit("STOP: future asof")
+    end = asof - dt.timedelta(days=1)
+    if end > now.date():
+        raise SystemExit("STOP: requested data date is in the future")
+    if end == now.date() and now.time() < dt.time(18, 0):
+        raise SystemExit("STOP: same-day candles may be incomplete before Taiwan 18:00")
     LOCK.parent.mkdir(parents=True, exist_ok=True)
     with LOCK.open("a+") as lock:
         try:
