@@ -1175,6 +1175,9 @@ class Scanner:
         if not isinstance(self.state.get("queue_waiting"), dict):
             self.state["queue_waiting"] = {}
 
+        if not isinstance(self.state.get("vcp_near_watch"), dict):
+            self.state["vcp_near_watch"] = {}
+
         # Historical-D MISS work is isolated from the A main scan.
         # Worker performs network I/O only; Scanner main thread owns cache mutation.
         self.wait_data_worker = WaitDataWorker(self.adapter.key)
@@ -1489,18 +1492,34 @@ class Scanner:
                 "candidate_volume_rank": candidate_rank.get(symbol),
             })
             try:
-                # VCP early route: original selector, minimum 800 cumulative lots.
+                # Only FINAL_CONTRACTION may arm a VCP watch; never hand off near-only.
                 if today_vol >= 800:
-                    vcp_stock = dict(s)
-                    vcp_stock["_volume_display_ratio"] = raw_vr5
-                    vcp_hit = self.selector.select_one(vcp_stock, meta, bars)
-                    if vcp_hit and vcp_hit.get("source") == "VCP":
-                        vcp_hit["rawVr5"] = round(raw_vr5, 4)
-                        vcp_hit["queuePriority"] = "SPECIAL" if priority == 0 else f"Q{priority}"
-                        selected.append(vcp_hit)
-                        handed = self.handoff_hit(vcp_hit, snap_date)
-                        print(f"[VCP EARLY] symbol={symbol} volume={today_vol:.0f} handed={handed}", flush=True)
-                        continue
+                    vcp_closes = [b.close for b in bars] + [float(s.get("close") or 0)]
+                    vcp_vols = [b.volume_zhang for b in bars] + [today_vol]
+                    vcp_dates = [b.date for b in bars] + [snap_date]
+                    vcp_state = self.selector.analyze_vcp(vcp_closes, vcp_vols, symbol, vcp_dates)
+                    watch = self.state["vcp_near_watch"].setdefault(snap_date, {})
+                    if vcp_state["status"] == "final_contraction" and symbol not in watch:
+                        watch[symbol] = {"armed_at": now_tw().strftime("%H:%M:%S"),
+                                         "pivot": vcp_state["pivot"]}
+                        save_json_atomic(STATE_FILE, self.state)
+                        print(f"[VCP WATCH] symbol={symbol} near breakout; no B handoff", flush=True)
+                    track = vcp_state.get("breakoutTrack") or {}
+                    if (symbol in watch and vcp_state["status"] == "just_broke"
+                            and vcp_state["justBroke"] and track.get("isNew")
+                            and track.get("dayCount") == 1 and not track.get("broken")):
+                        vcp_stock = dict(s)
+                        vcp_stock["_volume_display_ratio"] = raw_vr5
+                        vcp_hit = self.selector.select_one(vcp_stock, meta, bars)
+                        if vcp_hit and vcp_hit.get("source") == "VCP"
+                                and (vcp_hit.get("vcpInfo") or {}).get("type") == "broke":
+                            vcp_hit["rawVr5"] = round(raw_vr5, 4)
+                            vcp_hit["queuePriority"] = "SPECIAL" if priority == 0 else f"Q{priority}"
+                            handed = self.handoff_hit(vcp_hit, snap_date)
+                            if handed:
+                                selected.append(vcp_hit)
+                            print(f"[VCP BREAKOUT] symbol={symbol} volume={today_vol:.0f} handed={handed}", flush=True)
+                            continue
 
                 if today_vol < vol_min:
                     continue
