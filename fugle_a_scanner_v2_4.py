@@ -346,17 +346,19 @@ class FugleAdapter:
         to_d = date.fromisoformat(snapshot_date) - timedelta(days=1)
         from_d = to_d - timedelta(days=170)
         if not required or not db_path.is_file():
-            return None
+            raise AuditStop("shared daily SQLite preflight missing; no API fallback")
         try:
             verified = date.fromisoformat(required)
             if verified > to_d:
-                return None
+                raise AuditStop("shared daily calendar watermark invalid; no API fallback")
             conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=2)
             try:
                 status = conn.execute(
                     "SELECT covered_through FROM fetch_status WHERE symbol=?", (symbol,)
                 ).fetchone()
-                if not status or not status[0] or str(status[0])[:10] < required:
+                if not status:
+                    raise AuditStop(f"shared daily member missing: {symbol}; no API fallback")
+                if not status[0] or str(status[0])[:10] < required:
                     return None
                 rows = conn.execute(
                     """SELECT day,close,volume_zhang FROM daily_ohlcv
@@ -376,8 +378,7 @@ class FugleAdapter:
                 bars.append(DailyBar(ds, float(close), float(volume)))
             return bars
         except (OSError, ValueError, TypeError, sqlite3.Error) as exc:
-            print(f"[A SHARED DAILY FALLBACK] symbol={symbol} reason={type(exc).__name__}")
-            return None
+            raise AuditStop(f"shared daily SQLite read failed: {symbol} {type(exc).__name__}; no API fallback") from exc
 
     def daily_history_local_ready(self, symbol: str, snapshot_date: str) -> Optional[List[DailyBar]]:
         """Only the verified shared daily SQLite may supply historical daily bars."""
@@ -1105,10 +1106,14 @@ class WaitDataWorker:
                 merged: Dict[str, Dict[str, Any]] = {}
                 for x in data:
                     if not isinstance(x, dict):
-                        continue
+                        raise AuditStop(f"WAIT_DATA {symbol} non-object daily row")
                     ds = str(x.get("date") or "")[:10]
-                    if not ds or ds >= snapshot_date:
-                        continue
+                    try:
+                        parsed_day = date.fromisoformat(ds)
+                    except ValueError as e:
+                        raise AuditStop(f"WAIT_DATA {symbol} invalid daily date: {ds}") from e
+                    if parsed_day < from_d or parsed_day > to_d:
+                        raise AuditStop(f"WAIT_DATA {symbol} daily date outside request: {ds}")
                     try:
                         op, hi, lo, close = (float(x[k]) for k in ("open","high","low","close"))
                         volume_zhang = float(x["volume"]) / 1000.0
@@ -1119,6 +1124,8 @@ class WaitDataWorker:
                     if min(op,hi,lo,close)<=0 or volume_zhang<0 or hi<max(op,close,lo) or lo>min(op,close,hi):
                         raise AuditStop(f"WAIT_DATA {symbol} invalid OHLCV {ds}")
 
+                    if ds in merged:
+                        raise AuditStop(f"WAIT_DATA {symbol} duplicate daily date: {ds}")
                     merged[ds] = {
                         "date": ds,
                         "open": op,
@@ -1129,6 +1136,8 @@ class WaitDataWorker:
                     }
 
                 rows = [merged[k] for k in sorted(merged)]
+                if not rows:
+                    raise AuditStop(f"WAIT_DATA {symbol} empty historical response")
 
                 self._finish(WaitDataResult(
                     symbol=symbol,
