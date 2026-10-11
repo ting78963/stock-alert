@@ -131,7 +131,7 @@ def launch_b(payload,dry_run=False):
         r=None
         def on_line_sent(path,label,event):
             f14_mark_done(k);retire_runner(k,r)
-        r=R(sid,day,disc,0,line_send=LINE_SEND,stock_name=stock_name,on_line_sent=on_line_sent)
+        r=R(sid,day,disc,0,line_send=LINE_SEND,stock_name=stock_name,on_line_sent=on_line_sent,discovery_source=str(payload.get("source") or ""))
         r.rest_reconcile("startup")
         if getattr(r,"retired",False):
             with _lock:_launching.discard(k)
