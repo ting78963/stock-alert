@@ -78,6 +78,8 @@ def build_flex(e):
       {"type":"text","text":name,"size":"xxl","weight":"bold","color":C_TEXT,"margin":"xl"},{"type":"text","text":sid,"size":"sm","color":C_MUTED,"margin":"xs"},
       {"type":"box","layout":"horizontal","alignItems":"center","margin":"lg","contents":[{"type":"text","text":cls,"size":"xl","weight":"bold","color":C_RED,"flex":0},{"type":"separator","margin":"md","color":C_RED},{"type":"text","text":spec["title"],"size":"md","weight":"bold","color":C_RED,"margin":"md","flex":0}]}
     ]
+    if str(e.get("discovery_source") or "").upper()=="VCP":
+        contents.insert(3,{"type":"text","text":"VCP爆發","size":"sm","weight":"bold","color":C_RED,"margin":"md"})
     if cls=="P1":contents.append({"type":"text","text":spec["daytrade"],"size":"sm","weight":"bold","color":C_GOLD,"margin":"md"})
     contents += [
       {"type":"text","text":spec["desc"],"size":"sm","color":"#676C75","wrap":True,"margin":"md"},{"type":"separator","color":C_BORDER,"margin":"xl"},
@@ -86,7 +88,7 @@ def build_flex(e):
       {"type":"text","text":f"◷  趨勢已成立  {recog}","size":"sm","color":C_MUTED,"align":"center","margin":"md"},{"type":"separator","color":C_BORDER,"margin":"xl"},
       {"type":"box","layout":"horizontal","margin":"md","contents":[{"type":"text","text":"歷史統計・僅供參考","size":"xxs","color":C_MUTED,"flex":1},{"type":"text","text":"Trade Smart | Your Edge","size":"xxs","color":C_MUTED,"align":"end","flex":1}]}
     ]
-    return {"type":"flex","altText":f"BUY SIGNAL｜{name} {sid}｜{cls} {spec['title']}｜立即買進"[:400],"contents":{"type":"bubble","size":"mega","body":{"type":"box","layout":"vertical","paddingAll":"xl","contents":contents}}}
+    return {"type":"flex","altText":f"BUY SIGNAL｜{name} {sid}｜{'VCP爆發｜' if str(e.get('discovery_source') or '').upper()=='VCP' else ''}{cls} {spec['title']}｜立即買進"[:400],"contents":{"type":"bubble","size":"mega","body":{"type":"box","layout":"vertical","paddingAll":"xl","contents":contents}}}
 def retry_key(e):
     # Stable signal identity: late discovery/replay must not create a new LINE retry key.
     raw=f"{e['date']}|{e['stock_id']}|{e['signal_class']}|{e['recognition_time']}"
