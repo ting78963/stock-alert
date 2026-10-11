@@ -1158,13 +1158,14 @@ class WaitDataWorker:
                     fatal=True,
                 ))
             except Exception as e:
-                rate_limited = "HISTORY_RATE_LIMITED" in str(e)
+                # Network/HTTP failures are per-symbol retryable; identity and
+                # malformed history remain AuditStop (fatal) above.
                 self._finish(WaitDataResult(
                     symbol=job.symbol,
                     snapshot_date=job.snapshot_date,
                     ok=False,
                     error=f"{type(e).__name__}: {e}",
-                    fatal=not rate_limited,
+                    fatal=False,
                 ))
             finally:
                 self.jobs.task_done()
