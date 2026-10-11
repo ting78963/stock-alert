@@ -1375,7 +1375,7 @@ class Scanner:
             s for s in snaps
             if self.selector.basic_code_ok(s["stock_id"])
             and float(s.get("change_rate") or 0) > 0
-            and float(s.get("total_volume") or 0) >= vol_min
+            and float(s.get("total_volume") or 0) >= min(vol_min, 800)
             and not self.already_sent(snap_date, s["stock_id"])
         ]
         print(f"[A DIAG] first_gate_done candidates={len(candidates)} liquidity_min={vol_min:.0f}", flush=True)
@@ -1489,6 +1489,21 @@ class Scanner:
                 "candidate_volume_rank": candidate_rank.get(symbol),
             })
             try:
+                # VCP early route: original selector, minimum 800 cumulative lots.
+                if today_vol >= 800:
+                    vcp_stock = dict(s)
+                    vcp_stock["_volume_display_ratio"] = raw_vr5
+                    vcp_hit = self.selector.select_one(vcp_stock, meta, bars)
+                    if vcp_hit and vcp_hit.get("source") == "VCP":
+                        vcp_hit["rawVr5"] = round(raw_vr5, 4)
+                        vcp_hit["queuePriority"] = "SPECIAL" if priority == 0 else f"Q{priority}"
+                        selected.append(vcp_hit)
+                        handed = self.handoff_hit(vcp_hit, snap_date)
+                        print(f"[VCP EARLY] symbol={symbol} volume={today_vol:.0f} handed={handed}", flush=True)
+                        continue
+
+                if today_vol < vol_min:
+                    continue
                 armed = self.armed_info(snap_date, symbol)
                 est_vr5 = None
                 evg_pct = None
@@ -1554,19 +1569,6 @@ class Scanner:
                     else:
                         print(f"[A F10 NO_VCP] symbol={symbol} original MA20/3pct gate not met", flush=True)
                     continue
-
-                # VCP early route: original selector, minimum 800 cumulative lots.
-                if today_vol >= 800:
-                    vcp_stock = dict(s)
-                    vcp_stock["_volume_display_ratio"] = raw_vr5
-                    vcp_hit = self.selector.select_one(vcp_stock, meta, bars)
-                    if vcp_hit and vcp_hit.get("source") == "VCP":
-                        vcp_hit["rawVr5"] = round(raw_vr5, 4)
-                        vcp_hit["queuePriority"] = "SPECIAL" if priority == 0 else f"Q{priority}"
-                        selected.append(vcp_hit)
-                        handed = self.handoff_hit(vcp_hit, snap_date)
-                        print(f"[VCP EARLY] symbol={symbol} volume={today_vol:.0f} handed={handed}", flush=True)
-                        continue
 
                 if not armed:
                     print(f"[A DIAG] candidate_done {idx}/{len(prepared)} symbol={symbol} "
