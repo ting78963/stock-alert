@@ -35,9 +35,9 @@ def main():
     got = actual_candidates(snaps, {"3714": {"armed_at": "09:20"}},
                             {(d, "8105")})
     ids = [x["stock_id"] for x in got]
-    assert ids == ["3714", "2457", "4906"], ids
-    print("[PASS] armed VCP still scanned during negative change")
-    print("[PASS] unarmed negative stock is now eligible for VCP; positive 800 stock allowed")
+    assert ids == ["4906"], ids
+    print("[PASS] negative watched VCP does not enter a new evaluation")
+    print("[PASS] unarmed negative stock blocked; positive 800 stock allowed")
     print("[PASS] 799 lots blocked; ETF blocked; successful shared handoff deduped")
     got2 = actual_candidates([snap("3714", 1800, -4.0)],
                              {"3714": {"pending_breakout": {"confirmed_at": "09:35"}}}, set())
