@@ -1508,11 +1508,16 @@ class Scanner:
                     if (symbol in watch and vcp_state["status"] == "just_broke"
                             and vcp_state["justBroke"] and track.get("isNew")
                             and track.get("dayCount") == 1 and not track.get("broken")):
-                        vcp_stock = dict(s)
-                        vcp_stock["_volume_display_ratio"] = raw_vr5
-                        vcp_hit = self.selector.select_one(vcp_stock, meta, bars)
-                        if vcp_hit and vcp_hit.get("source") == "VCP"
-                                and (vcp_hit.get("vcpInfo") or {}).get("type") == "broke":
+                        # Reuse the same audited VCP result: no second analyze_vcp call.
+                        vcp_hit = {
+                            "code": symbol, "name": s.get("name") or symbol,
+                            "todayVol": today_vol, "volRatio": round(raw_vr5, 2),
+                            "chgPct": round(float(s.get("change_rate") or 0), 2),
+                            "price": float(s.get("close") or 0),
+                            "vcpInfo": {"type": "broke"}, "source": "VCP",
+                        }
+                        if vcp_hit:
+
                             vcp_hit["rawVr5"] = round(raw_vr5, 4)
                             vcp_hit["queuePriority"] = "SPECIAL" if priority == 0 else f"Q{priority}"
                             handed = self.handoff_hit(vcp_hit, snap_date)
