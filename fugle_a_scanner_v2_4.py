@@ -1380,8 +1380,8 @@ class Scanner:
         candidates = [
             s for s in snaps
             if self.selector.basic_code_ok(s["stock_id"])
-            # VCP's first observation is independent of old A's positive-change gate.
-            # Old A still applies its own change/volume conditions in phase 2.
+            and (float(s.get("change_rate") or 0) > 0
+                 or isinstance(self.state.get("vcp_near_watch", {}).get(snap_date, {}).get(s["stock_id"]), dict))
             and float(s.get("total_volume") or 0) >= min(vol_min, 800)
             and not self.already_sent(snap_date, s["stock_id"])
         ]
