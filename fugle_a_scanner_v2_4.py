@@ -124,7 +124,8 @@ def append_event(obj: Dict[str, Any]) -> None:
     ensure_outdir()
     p = OUTDIR / "events.jsonl"
     with p.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(obj, ensure_ascii=False) + "\n")
+        f.write(json.dumps(obj, ensure_ascii=False) + "
+")
 
 
 def append_queue_shadow(d: str, obj: Dict[str, Any]) -> None:
@@ -134,7 +135,8 @@ def append_queue_shadow(d: str, obj: Dict[str, Any]) -> None:
     p = daydir / "queue_shadow_audit.jsonl"
     row = {"ts": now_tw().isoformat(timespec="microseconds"), **obj}
     with p.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        f.write(json.dumps(row, ensure_ascii=False) + "
+")
 
 
 def record_a_scan_mother_identity(d: str, symbol: str) -> None:
@@ -915,7 +917,9 @@ class StrongSelector:
             vols.append(today_vol)
             dates.append(snap_date)
 
-        # Legacy NO_VCP route must not run stateful VCP analysis again.\n        vcp = (precomputed_vcp if precomputed_vcp is not None\n               else self.analyze_vcp(closes, vols, symbol, dates)) if allow_vcp else {}
+        # Legacy NO_VCP route must not run stateful VCP analysis again.
+        vcp = (precomputed_vcp if precomputed_vcp is not None
+               else self.analyze_vcp(closes, vols, symbol, dates)) if allow_vcp else {}
         track = vcp.get("breakoutTrack")
         vcp_info = None
         if track and not track.get("broken"):
@@ -1378,7 +1382,9 @@ class Scanner:
         candidates = [
             s for s in snaps
             if self.selector.basic_code_ok(s["stock_id"])
-            and (float(s.get("change_rate") or 0) > 0\n                 or isinstance(self.state.get("vcp_near_watch", {}).get(snap_date, {}).get(s["stock_id"], {}).get("pending_breakout"), dict))\n            and float(s.get("total_volume") or 0) >= min(vol_min, 800)
+            and (float(s.get("change_rate") or 0) > 0
+                 or isinstance(self.state.get("vcp_near_watch", {}).get(snap_date, {}).get(s["stock_id"], {}).get("pending_breakout"), dict))
+            and float(s.get("total_volume") or 0) >= min(vol_min, 800)
             and not self.already_sent(snap_date, s["stock_id"])
         ]
         print(f"[A DIAG] first_gate_done candidates={len(candidates)} liquidity_min={vol_min:.0f}", flush=True)
