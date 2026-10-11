@@ -389,7 +389,9 @@ class FugleAdapter:
         cached = self.daily_cache.get(symbol)
         if cached is not None and cached[0] == cache_key:
             return cached[1]
-        # Never reuse yesterday's historical JSON fallback.
+        # Drop yesterday's per-symbol RAM immediately, not just ignore it.
+        if cached is not None:
+            self.daily_cache.pop(symbol, None)
         return None
 
     def daily_history(self, symbol: str, snapshot_date: str) -> List[DailyBar]:
@@ -1046,6 +1048,13 @@ class WaitDataWorker:
             try:
                 symbol = job.symbol
                 snapshot_date = job.snapshot_date
+                # A queued yesterday job must not spend today's API quota.
+                if snapshot_date != now_tw().date().isoformat():
+                    self._finish(WaitDataResult(
+                        symbol=symbol, snapshot_date=snapshot_date,
+                        ok=False, error="STALE_SESSION", fatal=False,
+                    ))
+                    continue
 
                 now_mono = time.monotonic()
                 if now_mono < history_backoff_until:
@@ -1222,6 +1231,8 @@ class Scanner:
                     raise AuditStop(f"WAIT_DATA invalid daily bar: {result.symbol} {ds}")
                 bars.append(DailyBar(ds, close, vol))
             bars.sort(key=lambda bar: bar.date)
+            if len(bars) < 5 or len({bar.date for bar in bars}) != len(bars):
+                raise AuditStop(f"WAIT_DATA insufficient/duplicate daily history: {result.symbol}")
             self.adapter.daily_cache[result.symbol] = (
                 f"{result.symbol}|{result.snapshot_date}", bars
             )
