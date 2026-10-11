@@ -887,6 +887,7 @@ class StrongSelector:
         bars: List[DailyBar],
         inject_snapshot_today: bool = True,
         precomputed_vcp: Optional[Dict[str, Any]] = None,
+        allow_vcp: bool = True,
     ) -> Optional[Dict[str, Any]]:
         symbol = stock["stock_id"]
 
@@ -939,7 +940,7 @@ class StrongSelector:
             "vcpInfo": vcp_info,
         }
 
-        if vcp_info:
+        if vcp_info and allow_vcp:
             result["source"] = "VCP"
             return result
 
@@ -1615,10 +1616,11 @@ class Scanner:
                 s_for_select = dict(s)
                 armed_est = armed.get("estimated_vr5")
                 s_for_select["_volume_display_ratio"] = float(armed_est) if armed_est is not None else raw_vr5
-                hit = self.selector.select_one(s_for_select, meta, bars, precomputed_vcp=vcp_state)
-                # Legacy A cannot bypass the dedicated near-then-breakout VCP gate.
-                if hit and hit.get("source") == "VCP":
-                    hit = None
+                # Old A keeps its original NO_VCP fallback independently of VCP watch.
+                hit = self.selector.select_one(
+                    s_for_select, meta, bars, precomputed_vcp=vcp_state,
+                    allow_vcp=False,
+                )
                 if hit:
                     hit["rawVr5"] = round(raw_vr5, 4)
                     hit["volumeTriggers"] = armed.get("reasons", [])
@@ -1723,6 +1725,12 @@ def run_self_test() -> None:
     exact20 = bars[-20:]
     hit20 = s.select_one(stock, meta, exact20, inject_snapshot_today=False)
     assert hit20 is not None and hit20["source"] == "NO_VCP", hit20
+
+    # VCP status must not mask the old A NO_VCP fallback.
+    near = {"status": "final_contraction", "breakoutTrack": None}
+    assert s.select_one(stock, meta, bars, inject_snapshot_today=False,
+                        precomputed_vcp=near, allow_vcp=False)["source"] == "NO_VCP"
+    print("[PASS] VCP watch does not suppress legacy NO_VCP fallback")
 
     print("[PASS] code exclusion")
     print("[PASS] industry / ESB exclusion")
