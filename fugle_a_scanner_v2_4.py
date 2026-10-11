@@ -1381,7 +1381,10 @@ class Scanner:
             s for s in snaps
             if self.selector.basic_code_ok(s["stock_id"])
             and (float(s.get("change_rate") or 0) > 0
-                 or isinstance(self.state.get("vcp_near_watch", {}).get(snap_date, {}).get(s["stock_id"]), dict))
+                 or isinstance(
+                     (self.state.get("vcp_near_watch", {}).get(snap_date, {}).get(s["stock_id"]) or {}).get("pending_breakout"),
+                     dict,
+                 ))
             and float(s.get("total_volume") or 0) >= min(vol_min, 800)
             and not self.already_sent(snap_date, s["stock_id"])
         ]
@@ -1498,7 +1501,13 @@ class Scanner:
             try:
                 # Only FINAL_CONTRACTION may arm a VCP watch; never hand off near-only.
                 vcp_state = None
-                if today_vol >= 800:
+                # A confirmed breakout may retry after pullback; negative/flat
+                # snapshots must never create a NEW VCP observation or signal.
+                watch_entry_for_retry = self.state.get("vcp_near_watch", {}).get(snap_date, {}).get(symbol)
+                has_pending_vcp = isinstance(watch_entry_for_retry, dict) and isinstance(
+                    watch_entry_for_retry.get("pending_breakout"), dict
+                )
+                if today_vol >= 800 and (float(s.get("change_rate") or 0) > 0 or has_pending_vcp):
                     vcp_closes = [b.close for b in bars] + [float(s.get("close") or 0)]
                     vcp_vols = [b.volume_zhang for b in bars] + [today_vol]
                     vcp_dates = [b.date for b in bars] + [snap_date]
@@ -1542,7 +1551,7 @@ class Scanner:
                         print(f"[VCP BREAKOUT] symbol={symbol} volume={today_vol:.0f} handed={handed}", flush=True)
                         continue
 
-                if today_vol < vol_min:
+                if today_vol < vol_min or float(s.get("change_rate") or 0) <= 0:
                     continue
                 armed = self.armed_info(snap_date, symbol)
                 est_vr5 = None
