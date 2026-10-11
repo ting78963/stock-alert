@@ -1501,28 +1501,28 @@ class Scanner:
                     vcp_dates = [b.date for b in bars] + [snap_date]
                     vcp_state = self.selector.analyze_vcp(vcp_closes, vcp_vols, symbol, vcp_dates)
                     watch = self.state["vcp_near_watch"].setdefault(snap_date, {})
-                    if vcp_state["status"] == "final_contraction" and symbol not in watch:
-                        watch[symbol] = {"armed_at": now_tw().strftime("%H:%M:%S"),
-                                         "pivot": vcp_state["pivot"]}
+                    track = vcp_state.get("breakoutTrack") or {}
+                    watch_entry = watch.get(symbol)
+                    arm, handoff_ready = vcp_handoff_decision(
+                        today_vol, vcp_state["status"], bool(vcp_state["justBroke"]),
+                        track, isinstance(watch_entry, dict),
+                        isinstance(watch_entry, dict)
+                        and isinstance(watch_entry.get("pending_breakout"), dict),
+                    )
+                    if arm:
+                        watch_entry = {"armed_at": now_tw().strftime("%H:%M:%S"),
+                                       "pivot": vcp_state["pivot"]}
+                        watch[symbol] = watch_entry
                         save_json_atomic(STATE_FILE, self.state)
                         print(f"[VCP WATCH] symbol={symbol} near breakout; no B handoff", flush=True)
-                    track = vcp_state.get("breakoutTrack") or {}
-                    # Latch a confirmed first breakout before bridge I/O: a failed
-                    # handoff must not disappear after the selector updates track.
-                    watch_entry = watch.get(symbol)
-                    if (isinstance(watch_entry, dict)
-                            and vcp_state["status"] == "just_broke"
-                            and vcp_state["justBroke"] and track.get("isNew")
-                            and track.get("dayCount") == 1 and not track.get("broken")
-                            and "pending_breakout" not in watch_entry):
-                        watch_entry["pending_breakout"] = {
-                            "confirmed_at": now_tw().strftime("%H:%M:%S"),
-                            "price": float(s.get("close") or 0),
-                            "volume": today_vol,
-                        }
-                        save_json_atomic(STATE_FILE, self.state)
-                    if (isinstance(watch_entry, dict)
-                            and isinstance(watch_entry.get("pending_breakout"), dict)):
+                    if handoff_ready and isinstance(watch_entry, dict):
+                        if not isinstance(watch_entry.get("pending_breakout"), dict):
+                            watch_entry["pending_breakout"] = {
+                                "confirmed_at": now_tw().strftime("%H:%M:%S"),
+                                "price": float(s.get("close") or 0),
+                                "volume": today_vol,
+                            }
+                            save_json_atomic(STATE_FILE, self.state)
                         # Reuse the same audited VCP result: no second analyze_vcp call.
                         vcp_hit = {
                             "code": symbol, "name": s.get("name") or symbol,
@@ -1646,11 +1646,35 @@ class Scanner:
         return selected
 
 
+def vcp_handoff_decision(today_vol: float, status: str, just_broke: bool,
+                         track: Dict[str, Any], watched: bool,
+                         pending: bool) -> Tuple[bool, bool]:
+    """Return (arm_near_watch, handoff_or_retry). No side effects."""
+    if today_vol < 800:
+        return False, False
+    arm = status == "final_contraction" and not watched
+    confirmed = (watched and status == "just_broke" and just_broke
+                 and track.get("isNew") is True and track.get("dayCount") == 1
+                 and not track.get("broken"))
+    return arm, bool(pending or confirmed)
+
+
 def run_self_test() -> None:
     # 純邏輯測試，不打 Fugle、不打 Bridge、不讀寫 production track。
     print("=" * 88)
     print("A SCANNER V2.4 | SELF TEST")
     print("=" * 88)
+
+    # VCP state-machine boundaries: no network or production files.
+    assert vcp_handoff_decision(799, "final_contraction", False, {}, False, False) == (False, False)
+    assert vcp_handoff_decision(800, "final_contraction", False, {}, False, False) == (True, False)
+    assert vcp_handoff_decision(1100, "final_contraction", False, {}, True, False) == (False, False)
+    fresh = {"isNew": True, "dayCount": 1, "broken": False}
+    assert vcp_handoff_decision(1500, "just_broke", True, fresh, True, False) == (False, True)
+    assert vcp_handoff_decision(1800, "contracting", False, {}, True, True) == (False, True)
+    assert vcp_handoff_decision(1800, "tracking", False, {"dayCount": 2}, True, False) == (False, False)
+    assert vcp_handoff_decision(1500, "just_broke", True, fresh, False, False) == (False, False)
+    print("[PASS] VCP 799/800, watch, breakout, retry after pullback, no tracking handoff")
 
     assert StrongSelector.basic_code_ok("3714")
     assert not StrongSelector.basic_code_ok("0050")
