@@ -1598,6 +1598,9 @@ class Scanner:
                 armed_est = armed.get("estimated_vr5")
                 s_for_select["_volume_display_ratio"] = float(armed_est) if armed_est is not None else raw_vr5
                 hit = self.selector.select_one(s_for_select, meta, bars)
+                # Legacy A cannot bypass the dedicated near-then-breakout VCP gate.
+                if hit and hit.get("source") == "VCP":
+                    hit = None
                 if hit:
                     hit["rawVr5"] = round(raw_vr5, 4)
                     hit["volumeTriggers"] = armed.get("reasons", [])
