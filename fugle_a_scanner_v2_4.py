@@ -1056,7 +1056,7 @@ class WaitDataWorker:
                     "from": from_d.isoformat(),
                     "to": to_d.isoformat(),
                     "timeframe": "D",
-                    "fields": "close,volume",
+                    "fields": "open,high,low,close,volume",
                     "sort": "asc",
                 })
                 url = f"{BASE}/historical/candles/{urllib.parse.quote(symbol)}?{q}"
@@ -1110,20 +1110,20 @@ class WaitDataWorker:
                     if not ds or ds >= snapshot_date:
                         continue
                     try:
-                        close = float(x["close"])
+                        op, hi, lo, close = (float(x[k]) for k in ("open","high","low","close"))
                         volume_zhang = float(x["volume"]) / 1000.0
                     except Exception as e:
                         raise AuditStop(
                             f"WAIT_DATA {symbol} invalid D row {ds}: {e}"
                         ) from e
-
-                    if close <= 0 or volume_zhang < 0:
-                        raise AuditStop(
-                            f"WAIT_DATA {symbol} invalid D values {ds}"
-                        )
+                    if min(op,hi,lo,close)<=0 or volume_zhang<0 or hi<max(op,close,lo) or lo>min(op,close,hi):
+                        raise AuditStop(f"WAIT_DATA {symbol} invalid OHLCV {ds}")
 
                     merged[ds] = {
                         "date": ds,
+                        "open": op,
+                        "high": hi,
+                        "low": lo,
                         "close": close,
                         "volume_zhang": volume_zhang,
                     }
@@ -1202,48 +1202,48 @@ class Scanner:
                     f"{result.snapshot_date}"
                 )
 
-            store_key = "daily_static|" + result.symbol
-            covered_key = "daily_static_covered|" + result.symbol
-
-            existing = self.adapter.history_cache.get(store_key)
-            merged: Dict[str, Dict[str, Any]] = {}
-
-            if isinstance(existing, list):
-                for x in existing:
-                    if not isinstance(x, dict):
-                        continue
-                    try:
+            # The historical-D response is never a substitute for the shared SQLite.
+            # Persist only complete OHLCV through the existing shared-schema contract.
+            db_path = Path(os.environ.get(
+                "A_SHARED_DAILY_DB", "/var/data/stock-alert/shared_history_stage_v1.sqlite3"
+            ))
+            if not db_path.is_file():
+                raise AuditStop("WAIT_DATA shared SQLite missing; refusing JSON fallback")
+            if not result.rows:
+                raise AuditStop(f"WAIT_DATA empty response: {result.symbol}")
+            with sqlite3.connect(str(db_path), timeout=30) as db:
+                db.execute("PRAGMA busy_timeout=30000")
+                with db:
+                    previous = db.execute(
+                        "SELECT covered_through FROM fetch_status WHERE symbol=?",
+                        (result.symbol,)
+                    ).fetchone()
+                    if previous is None:
+                        raise AuditStop(f"WAIT_DATA missing member identity: {result.symbol}")
+                    for x in result.rows:
                         ds = str(x["date"])[:10]
-                        close = float(x["close"])
-                        volume_zhang = float(x["volume_zhang"])
-                    except Exception:
-                        continue
-                    if ds and ds < result.snapshot_date and close > 0:
-                        merged[ds] = {
-                            "date": ds,
-                            "close": close,
-                            "volume_zhang": volume_zhang,
-                        }
-
-            for x in result.rows:
-                ds = str(x["date"])[:10]
-                if ds >= result.snapshot_date:
-                    raise AuditStop(
-                        f"WAIT_DATA future leakage: {result.symbol} {ds} "
-                        f">= {result.snapshot_date}"
+                        if ds >= result.snapshot_date:
+                            raise AuditStop(f"WAIT_DATA future leakage: {result.symbol} {ds}")
+                        values = tuple(float(x[k]) for k in ("open", "high", "low", "close", "volume_zhang"))
+                        op, hi, lo, cl, vol = values
+                        if min(op, hi, lo, cl) <= 0 or vol < 0 or hi < max(op, cl, lo) or lo > min(op, cl, hi):
+                            raise AuditStop(f"WAIT_DATA invalid OHLCV: {result.symbol} {ds}")
+                        old = db.execute(
+                            "SELECT open,high,low,close,volume_zhang FROM daily_ohlcv WHERE symbol=? AND day=?",
+                            (result.symbol, ds)
+                        ).fetchone()
+                        if old is not None and any(abs(float(u)-v)>1e-6 for u,v in zip(old,values)):
+                            raise AuditStop(f"WAIT_DATA existing OHLCV conflict: {result.symbol} {ds}")
+                        db.execute(
+                            "INSERT OR IGNORE INTO daily_ohlcv(symbol,day,open,high,low,close,volume_zhang) VALUES(?,?,?,?,?,?,?)",
+                            (result.symbol, ds, *values)
+                        )
+                    # Only move coverage forward; never roll back an existing watermark.
+                    covered = max(str(previous[0]), str(result.covered_through))
+                    db.execute(
+                        "UPDATE fetch_status SET covered_through=?,last_success_utc=? WHERE symbol=?",
+                        (covered, datetime.now(ZoneInfo("UTC")).isoformat(), result.symbol)
                     )
-                merged[ds] = {
-                    "date": ds,
-                    "close": float(x["close"]),
-                    "volume_zhang": float(x["volume_zhang"]),
-                }
-
-            self.adapter.history_cache[store_key] = [
-                merged[k] for k in sorted(merged)
-            ]
-            self.adapter.history_cache[covered_key] = result.covered_through
-
-            # Invalidate symbol RAM view so next scan rebuilds from merged cache.
             self.adapter.daily_cache.pop(result.symbol, None)
 
             applied += 1
