@@ -380,168 +380,23 @@ class FugleAdapter:
             return None
 
     def daily_history_local_ready(self, symbol: str, snapshot_date: str) -> Optional[List[DailyBar]]:
+        """Only the verified shared daily SQLite may supply historical daily bars."""
         cache_key = f"{symbol}|{snapshot_date}"
         if symbol in self.daily_cache and self.daily_cache[symbol][0] == cache_key:
             return self.daily_cache[symbol][1]
-        shared_bars = self._shared_daily_history(symbol, snapshot_date)
-        if shared_bars is not None:
-            self.daily_cache[symbol] = (cache_key, shared_bars)
-            return shared_bars
-        if symbol in self.daily_cache and self.daily_cache[symbol][0] == cache_key:
-            return self.daily_cache[symbol][1]
-
-        to_d = date.fromisoformat(snapshot_date) - timedelta(days=1)
-        from_d = to_d - timedelta(days=170)
-        store_key = "daily_static|" + symbol
-        covered_key = "daily_static_covered|" + symbol
-
-        persisted = self.history_cache.get(store_key)
-        covered_through = str(self.history_cache.get(covered_key) or "")[:10]
-
-        if not isinstance(persisted, list) or not persisted:
-            prefix = "daily|" + symbol + "|"
-            legacy_candidates = []
-            for k, v in self.history_cache.items():
-                if not isinstance(k, str) or not k.startswith(prefix) or not isinstance(v, list) or not v:
-                    continue
-                legacy_snapshot = k[len(prefix):]
-                if legacy_snapshot and legacy_snapshot <= snapshot_date:
-                    legacy_candidates.append((legacy_snapshot, v))
-            if legacy_candidates:
-                legacy_candidates.sort(key=lambda x: x[0])
-                legacy_snapshot, persisted = legacy_candidates[-1]
-                covered_through = (date.fromisoformat(legacy_snapshot) - timedelta(days=1)).isoformat()
-
-        merged: Dict[str, DailyBar] = {}
-        if isinstance(persisted, list):
-            for x in persisted:
-                try:
-                    ds = str(x["date"])[:10]
-                    close = float(x["close"])
-                    vol_zhang = float(x["volume_zhang"])
-                except Exception:
-                    continue
-                if ds and ds < snapshot_date and close > 0:
-                    merged[ds] = DailyBar(ds, close, vol_zhang)
-
-        if covered_through:
-            try:
-                fetch_from = date.fromisoformat(covered_through) + timedelta(days=1)
-            except Exception:
-                fetch_from = from_d
-        elif merged:
-            fetch_from = max(date.fromisoformat(ds) for ds in merged) + timedelta(days=1)
-        else:
-            fetch_from = from_d
-
-        if fetch_from <= to_d:
+        bars = self._shared_daily_history(symbol, snapshot_date)
+        if bars is None:
             return None
-
-        all_bars = sorted(merged.values(), key=lambda x: x.date)
-        if any(b.date >= snapshot_date for b in all_bars):
-            raise AuditStop(f"{symbol} causal history audit failed")
-
-        bars = [b for b in all_bars if b.date >= from_d.isoformat() and b.date < snapshot_date]
+        if len(bars) < 5:
+            return None
         self.daily_cache[symbol] = (cache_key, bars)
         return bars
 
     def daily_history(self, symbol: str, snapshot_date: str) -> List[DailyBar]:
-        # 必須嚴格只用 snapshot_date 之前的完整交易日。
-        cache_key = f"{symbol}|{snapshot_date}"
-        if symbol in self.daily_cache and self.daily_cache[symbol][0] == cache_key:
-            return self.daily_cache[symbol][1]
-
-        to_d = date.fromisoformat(snapshot_date) - timedelta(days=1)
-        from_d = to_d - timedelta(days=170)
-        store_key = "daily_static|" + symbol
-        covered_key = "daily_static_covered|" + symbol
-
-        persisted = self.history_cache.get(store_key)
-        covered_through = str(self.history_cache.get(covered_key) or "")[:10]
-
-        if not isinstance(persisted, list) or not persisted:
-            prefix = "daily|" + symbol + "|"
-            legacy_candidates = []
-            for k, v in self.history_cache.items():
-                if not isinstance(k, str) or not k.startswith(prefix) or not isinstance(v, list) or not v:
-                    continue
-                legacy_snapshot = k[len(prefix):]
-                if legacy_snapshot and legacy_snapshot <= snapshot_date:
-                    legacy_candidates.append((legacy_snapshot, v))
-            if legacy_candidates:
-                legacy_candidates.sort(key=lambda x: x[0])
-                legacy_snapshot, persisted = legacy_candidates[-1]
-                covered_through = (date.fromisoformat(legacy_snapshot) - timedelta(days=1)).isoformat()
-
-        merged: Dict[str, DailyBar] = {}
-        if isinstance(persisted, list):
-            for x in persisted:
-                try:
-                    ds = str(x["date"])[:10]
-                    close = float(x["close"])
-                    vol_zhang = float(x["volume_zhang"])
-                except Exception:
-                    continue
-                if ds and ds < snapshot_date and close > 0:
-                    merged[ds] = DailyBar(ds, close, vol_zhang)
-
-        if covered_through:
-            try:
-                fetch_from = date.fromisoformat(covered_through) + timedelta(days=1)
-            except Exception:
-                fetch_from = from_d
-        elif merged:
-            fetch_from = max(date.fromisoformat(ds) for ds in merged) + timedelta(days=1)
-        else:
-            fetch_from = from_d
-
-        if fetch_from <= to_d:
-            params = urllib.parse.urlencode({
-                "from": fetch_from.isoformat(),
-                "to": to_d.isoformat(),
-                "timeframe": "D",
-                "fields": "close,volume",
-                "sort": "asc",
-            })
-            d = self.historical_json(
-                f"{BASE}/historical/candles/{urllib.parse.quote(symbol)}?{params}"
-            )
-            if str(d.get("symbol") or "") != symbol:
-                raise AuditStop(f"history identity mismatch: requested={symbol}, got={d.get('symbol')}")
-            rows = d.get("data")
-            if not isinstance(rows, list):
-                raise AuditStop(f"{symbol} historical candles missing data[]")
-
-            for r in rows:
-                ds = str(r.get("date") or "")[:10]
-                if not ds or ds >= snapshot_date:
-                    continue
-                try:
-                    close = float(r["close"])
-                    vol_zhang = float(r["volume"]) / 1000.0
-                except Exception:
-                    continue
-                if close > 0:
-                    merged[ds] = DailyBar(ds, close, vol_zhang)
-            covered_through = to_d.isoformat()
-
-        all_bars = sorted(merged.values(), key=lambda x: x.date)
-        if any(b.date >= snapshot_date for b in all_bars):
-            raise AuditStop(f"{symbol} causal history audit failed")
-
-        bars = [b for b in all_bars if b.date >= from_d.isoformat() and b.date < snapshot_date]
-        self.daily_cache[symbol] = (cache_key, bars)
-
-        new_store = [{"date": b.date, "close": b.close, "volume_zhang": b.volume_zhang} for b in all_bars]
-        changed = False
-        if self.history_cache.get(store_key) != new_store:
-            self.history_cache[store_key] = new_store
-            changed = True
-        if covered_through and self.history_cache.get(covered_key) != covered_through:
-            self.history_cache[covered_key] = covered_through
-            changed = True
-        if changed:
-            save_json_atomic(HISTORY_CACHE_FILE, self.history_cache)
+        """F10 fallback may inspect daily dates, but must not use JSON or Fugle historical D."""
+        bars = self.daily_history_local_ready(symbol, snapshot_date)
+        if bars is None:
+            raise AuditStop(f"{symbol} shared daily SQLite not ready: WAIT_DATA")
         return bars
 
     def estimated_vr5_parts(self, symbol: str, snapshot_date: str, now_dt: datetime) -> Tuple[float, float, float, int]:
@@ -1578,7 +1433,7 @@ class Scanner:
 
                 bars = self.adapter.daily_history_local_ready(symbol, snap_date)
                 if bars is None:
-                    submitted = self.wait_data_worker.submit(symbol, snap_date)
+                    submitted = False  # SQLite-only: do not enqueue historical-D API fetch
                     print(
                         f"[A WAIT_DATA] symbol={symbol} date={snap_date} "
                         f"status={'QUEUED' if submitted else 'PENDING'} "
