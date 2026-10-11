@@ -358,7 +358,9 @@ class FugleAdapter:
                 ).fetchone()
                 if not status:
                     raise AuditStop(f"shared daily member missing: {symbol}; no API fallback")
-                if not status[0] or str(status[0])[:10] < required:
+                if not status[0]:
+                    raise AuditStop(f"shared daily coverage metadata invalid: {symbol}")
+                if str(status[0])[:10] < required:
                     return None
                 rows = conn.execute(
                     """SELECT day,close,volume_zhang FROM daily_ohlcv
@@ -369,6 +371,10 @@ class FugleAdapter:
                 conn.close()
             if not rows:
                 return None
+            # A watermark alone does not certify a complete trading-day sequence.
+            # Require the latest completed session when the stock has a trading bar.
+            # A suspended stock may legitimately lack a bar: keep fail-closed for
+            # ambiguous missing dates instead of silently marking coverage complete.
             bars = []
             for ds, close, volume in rows:
                 if (not isinstance(ds, str) or ds < from_d.isoformat()
