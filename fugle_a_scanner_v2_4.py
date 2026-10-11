@@ -1531,14 +1531,13 @@ class Scanner:
                             "price": float(s.get("close") or 0),
                             "vcpInfo": {"type": "broke"}, "source": "VCP",
                         }
-                        if vcp_hit:
                             vcp_hit["rawVr5"] = round(raw_vr5, 4)
-                            vcp_hit["queuePriority"] = "SPECIAL" if priority == 0 else f"Q{priority}"
-                            handed = self.handoff_hit(vcp_hit, snap_date)
-                            if handed:
-                                selected.append(vcp_hit)
-                            print(f"[VCP BREAKOUT] symbol={symbol} volume={today_vol:.0f} handed={handed}", flush=True)
-                            continue
+                        vcp_hit["queuePriority"] = "SPECIAL" if priority == 0 else f"Q{priority}"
+                        handed = self.handoff_hit(vcp_hit, snap_date)
+                        if handed:
+                            selected.append(vcp_hit)
+                        print(f"[VCP BREAKOUT] symbol={symbol} volume={today_vol:.0f} handed={handed}", flush=True)
+                        continue
 
                 if today_vol < vol_min:
                     continue
