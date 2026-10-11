@@ -1176,12 +1176,12 @@ class Scanner:
 
         # Historical-D MISS work is isolated from the A main scan.
         # Worker performs network I/O only; Scanner main thread owns cache mutation.
-        self.wait_data_worker = WaitDataWorker(self.adapter.key)
+        self.wait_data_worker = None  # SQLite-only; do not start historical-D API worker
 
     def apply_wait_data_results(self) -> int:
         applied = 0
 
-        for result in self.wait_data_worker.drain_results():
+        for result in ():  # legacy result path disabled; no historical-D network jobs
             if not result.ok:
                 if result.fatal:
                     raise AuditStop(
@@ -1436,7 +1436,7 @@ class Scanner:
                     submitted = False  # SQLite-only: do not enqueue historical-D API fetch
                     print(
                         f"[A WAIT_DATA] symbol={symbol} date={snap_date} "
-                        f"status={'QUEUED' if submitted else 'PENDING'} "
+                        f"status=SQLITE_NOT_READY "
                         f"queue_entered_at={entered_at}",
                         flush=True,
                     )
