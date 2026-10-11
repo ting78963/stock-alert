@@ -1507,9 +1507,22 @@ class Scanner:
                         save_json_atomic(STATE_FILE, self.state)
                         print(f"[VCP WATCH] symbol={symbol} near breakout; no B handoff", flush=True)
                     track = vcp_state.get("breakoutTrack") or {}
-                    if (symbol in watch and vcp_state["status"] == "just_broke"
+                    # Latch a confirmed first breakout before bridge I/O: a failed
+                    # handoff must not disappear after the selector updates track.
+                    watch_entry = watch.get(symbol)
+                    if (isinstance(watch_entry, dict)
+                            and vcp_state["status"] == "just_broke"
                             and vcp_state["justBroke"] and track.get("isNew")
-                            and track.get("dayCount") == 1 and not track.get("broken")):
+                            and track.get("dayCount") == 1 and not track.get("broken")
+                            and "pending_breakout" not in watch_entry):
+                        watch_entry["pending_breakout"] = {
+                            "confirmed_at": now_tw().strftime("%H:%M:%S"),
+                            "price": float(s.get("close") or 0),
+                            "volume": today_vol,
+                        }
+                        save_json_atomic(STATE_FILE, self.state)
+                    if (isinstance(watch_entry, dict)
+                            and isinstance(watch_entry.get("pending_breakout"), dict)):
                         # Reuse the same audited VCP result: no second analyze_vcp call.
                         vcp_hit = {
                             "code": symbol, "name": s.get("name") or symbol,
@@ -1519,7 +1532,6 @@ class Scanner:
                             "vcpInfo": {"type": "broke"}, "source": "VCP",
                         }
                         if vcp_hit:
-
                             vcp_hit["rawVr5"] = round(raw_vr5, 4)
                             vcp_hit["queuePriority"] = "SPECIAL" if priority == 0 else f"Q{priority}"
                             handed = self.handoff_hit(vcp_hit, snap_date)
