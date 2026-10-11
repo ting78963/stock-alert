@@ -20,13 +20,15 @@ def main():
     watch = False
     pending = False
     observations = []
+    # The pivot is 105; 106 crosses the original 0.3% rule without
+    # artificially destroying the 20-day contraction SD as 120 did.
     # Each tuple is one successive snapshot of the same trading day.
     for label, price, vol in [
         ("below_800", 104.0, 799.0),
         ("first_eligible", 104.0, 800.0),
         ("still_near", 104.0, 1100.0),
-        ("price_and_volume_break", 120.0, 1500.0),
-        ("repeat_same_day", 120.5, 1700.0),
+        ("price_and_volume_break", 106.0, 1500.0),
+        ("repeat_same_day", 106.2, 1700.0),
         ("pullback", 103.0, 1800.0),
     ]:
         if vol < 800:
