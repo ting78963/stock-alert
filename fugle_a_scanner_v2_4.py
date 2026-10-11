@@ -1191,12 +1191,12 @@ class Scanner:
 
         # Historical-D MISS work is isolated from the A main scan.
         # Worker performs network I/O only; Scanner main thread owns cache mutation.
-        self.wait_data_worker = WaitDataWorker(self.adapter.key)  # bounded missing-data fallback
+        self.wait_data_worker = None  # INTRADAY READ-ONLY: no historical-D worker
 
     def apply_wait_data_results(self) -> int:
         applied = 0
 
-        for result in self.wait_data_worker.drain_results():
+        for result in ():  # INTRADAY READ-ONLY: no historical-D results
             if not result.ok:
                 if result.fatal:
                     raise AuditStop(
@@ -1448,10 +1448,10 @@ class Scanner:
 
                 bars = self.adapter.daily_history_local_ready(symbol, snap_date)
                 if bars is None:
-                    submitted = self.wait_data_worker.submit(symbol, snap_date)
+                    submitted = False  # INTRADAY READ-ONLY: defer historical repair until after close
                     print(
                         f"[A WAIT_DATA] symbol={symbol} date={snap_date} "
-                        f"status={'QUEUED' if submitted else 'PENDING'} "
+                        f"status=DEFER_POST_CLOSE "
                         f"queue_entered_at={entered_at}",
                         flush=True,
                     )
