@@ -1209,24 +1209,23 @@ class Scanner:
                 )
 
             if result.snapshot_date != now_tw().date().isoformat():
-            print(f"[A WAIT_DATA] stale result ignored symbol={result.symbol} date={result.snapshot_date}",flush=True)
-            continue
-        merged: Dict[str, DailyBar] = {}
-        for x in result.rows:
-            ds = str(x["date"])[:10]
-            if ds >= result.snapshot_date:
-                raise AuditStop(f"WAIT_DATA future leakage: {result.symbol} {ds} >= {result.snapshot_date}")
-            close = float(x["close"])
-            volume_zhang = float(x["volume_zhang"])
-            if not ds or close <= 0 or volume_zhang < 0:
-                raise AuditStop(f"WAIT_DATA invalid daily bar: {result.symbol} {ds}")
-            merged[ds] = DailyBar(ds, close, volume_zhang)
-        bars = [merged[k] for k in sorted(merged)]
-        if len(bars) < 5:
-            raise AuditStop(f"WAIT_DATA insufficient daily bars: {result.symbol} {len(bars)}")
-        self.adapter.daily_cache[result.symbol] = (f"{result.symbol}|{result.snapshot_date}", bars)
-
-        applied += 1
+                print(f"[A WAIT_DATA] stale result ignored symbol={result.symbol} date={result.snapshot_date}", flush=True)
+                continue
+            merged: Dict[str, DailyBar] = {}
+            for x in result.rows:
+                ds = str(x["date"])[:10]
+                if ds >= result.snapshot_date:
+                    raise AuditStop(f"WAIT_DATA future leakage: {result.symbol} {ds} >= {result.snapshot_date}")
+                close = float(x["close"])
+                volume_zhang = float(x["volume_zhang"])
+                if not ds or close <= 0 or volume_zhang < 0:
+                    raise AuditStop(f"WAIT_DATA invalid daily bar: {result.symbol} {ds}")
+                merged[ds] = DailyBar(ds, close, volume_zhang)
+            bars = [merged[k] for k in sorted(merged)]
+            if len(bars) < 5:
+                raise AuditStop(f"WAIT_DATA insufficient daily bars: {result.symbol} {len(bars)}")
+            self.adapter.daily_cache[result.symbol] = (f"{result.symbol}|{result.snapshot_date}", bars)
+            applied += 1
             print(
                 f"[A WAIT_DATA] symbol={result.symbol} "
                 f"date={result.snapshot_date} status=READY "
