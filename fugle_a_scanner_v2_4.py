@@ -886,6 +886,7 @@ class StrongSelector:
         meta: Dict[str, Any],
         bars: List[DailyBar],
         inject_snapshot_today: bool = True,
+        precomputed_vcp: Optional[Dict[str, Any]] = None,
     ) -> Optional[Dict[str, Any]]:
         symbol = stock["stock_id"]
 
@@ -913,7 +914,7 @@ class StrongSelector:
             vols.append(today_vol)
             dates.append(snap_date)
 
-        vcp = self.analyze_vcp(closes, vols, symbol, dates)
+        vcp = precomputed_vcp if precomputed_vcp is not None else self.analyze_vcp(closes, vols, symbol, dates)
         track = vcp.get("breakoutTrack")
         vcp_info = None
         if track and not track.get("broken"):
@@ -1493,6 +1494,7 @@ class Scanner:
             })
             try:
                 # Only FINAL_CONTRACTION may arm a VCP watch; never hand off near-only.
+                vcp_state = None
                 if today_vol >= 800:
                     vcp_closes = [b.close for b in bars] + [float(s.get("close") or 0)]
                     vcp_vols = [b.volume_zhang for b in bars] + [today_vol]
@@ -1602,7 +1604,7 @@ class Scanner:
                 s_for_select = dict(s)
                 armed_est = armed.get("estimated_vr5")
                 s_for_select["_volume_display_ratio"] = float(armed_est) if armed_est is not None else raw_vr5
-                hit = self.selector.select_one(s_for_select, meta, bars)
+                hit = self.selector.select_one(s_for_select, meta, bars, precomputed_vcp=vcp_state)
                 # Legacy A cannot bypass the dedicated near-then-breakout VCP gate.
                 if hit and hit.get("source") == "VCP":
                     hit = None
