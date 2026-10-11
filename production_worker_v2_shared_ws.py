@@ -317,6 +317,23 @@ def f10_maintenance_loop():
             first=False
         time.sleep(60)
 
+def clear_wait_data_daily_backup_cache():
+    """Remove only WAIT_DATA daily-D backup keys; retain F10 and signal state."""
+    path=BASE/"_production_output"/"fugle_a_scanner_v2"/"a_history_cache_v2_4.json"
+    if not path.exists():
+        print("[WAIT_DATA EOD] no backup file; nothing to clear",flush=True)
+        return
+    payload=json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload,dict):
+        raise RuntimeError("WAIT_DATA cache is not a JSON object; refusing cleanup")
+    daily_keys=[k for k in payload if isinstance(k,str) and (
+        k.startswith("daily_static|") or k.startswith("daily_static_covered|") or k.startswith("daily|")
+    )]
+    if daily_keys:
+        for k in daily_keys: del payload[k]
+        _atomic_json(path,payload)
+    print(f"[WAIT_DATA EOD] cleared_daily_keys={len(daily_keys)} preserved_other_keys={len(payload)}",flush=True)
+
 def daily_history_maintenance_loop():
     """Opt-in sequential 15:30 maintenance: daily K -> F10, retry failed stage in 30 min."""
     import subprocess
@@ -349,6 +366,8 @@ def daily_history_maintenance_loop():
                             break
                         print(f"[SEQUENTIAL MAINT] {name} completed",flush=True)
                     else:
+                        # Only after DAILY_K and F10 both succeed; never clear on failure.
+                        clear_wait_data_daily_backup_cache()
                         completed_day=day
                         print(f"[SEQUENTIAL MAINT] ALL COMPLETED date={day}",flush=True)
                         time.sleep(60)
