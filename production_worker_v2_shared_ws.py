@@ -92,7 +92,7 @@ def _history404_mark(day,sid):
 
 def _is_individual_history404(exc):
     msg=str(exc)
-    return bool(re.search(r"Fugle HTTP 404\\s*\\|\\s*(?:daily-calendar|historical-minute)\\b",msg))
+    return bool(re.search(r"Fugle HTTP 404\s*\|\s*(?:daily-calendar|historical-minute)\b",msg))
 
 def retire_runner(k,r=None):
     sid=k.split("|",1)[1]
