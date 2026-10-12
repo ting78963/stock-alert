@@ -115,8 +115,7 @@ def main():
                     reply=fetch(sym,fetch_start.isoformat(),end.isoformat(),key,a.timeout)
                     rows=parse(sym,reply,fetch_start.isoformat(),end.isoformat())
                     # A successful HTTP response without a new valid candle is not a resumption.
-                    resumed=bool(watched and any(r[1]>=(existing[0] if existing else start.isoformat()) and
-                                                   r[1]<=end.isoformat() for r in rows))
+                    resumed=bool(watched and any(r[1]==end.isoformat() for r in rows))
                     if watched and not resumed:
                         with db:
                             db.execute("UPDATE suspension_watch SET last_probe_day=?,last_probe_result=? WHERE symbol=?",
