@@ -61,6 +61,38 @@ def parse(symbol,reply,start,end):
         out[day]=row
     return list(out.values())
 
+def twse_suspension_status(symbol, day, timeout=12):
+    """Conservative TWSE-only confirmation. None means unknown, never 'not suspended'."""
+    url="https://openapi.twse.com.tw/v1/exchangeReport/TWTAWU"
+    req=urllib.request.Request(url,headers={"User-Agent":"stock-alert-suspension-watch/1"})
+    try:
+        with urllib.request.urlopen(req,timeout=timeout) as response:
+            data=json.load(response)
+    except (urllib.error.URLError,TimeoutError,ValueError):
+        return None
+    if not isinstance(data,list):
+        return None
+    # Fail closed until a known schema is validated against official response.
+    required={"證券代號","暫停交易日期","恢復交易日期"}
+    if not data or not all(isinstance(x,dict) and required.issubset(x) for x in data):
+        return None
+    for item in data:
+        if str(item["證券代號"]).strip()!=symbol:
+            continue
+        def datevalue(v):
+            v=str(v).strip().replace("/","-")
+            parts=v.split("-")
+            if len(parts)!=3:return None
+            try:
+                year=int(parts[0]);year=year+1911 if year<1911 else year
+                return dt.date(year,int(parts[1]),int(parts[2]))
+            except ValueError:return None
+        began=datevalue(item["暫停交易日期"])
+        resumed=datevalue(item["恢復交易日期"]) if str(item["恢復交易日期"]).strip() else None
+        if began and began<=day and (resumed is None or day<resumed):
+            return "twse-twtawu"
+    return None
+
 def main():
     p=argparse.ArgumentParser()
     p.add_argument("--asof",required=True,help="Exclusive YYYY-MM-DD, usually next market date")
@@ -154,6 +186,17 @@ def main():
                         time.sleep(wait)
                 finally:
                     time.sleep(a.delay)
+            if error and not watched and error.startswith("HTTPError: 404 "):
+                source=twse_suspension_status(sym,end,a.timeout)
+                if source:
+                    with db:
+                        db.execute("INSERT OR IGNORE INTO suspension_watch(symbol,confirmed_source,confirmed_at_utc,last_probe_day,last_probe_result) VALUES(?,?,?,?,?)",
+                                   (sym,source,dt.datetime.now(dt.timezone.utc).isoformat(),end.isoformat(),"http404"))
+                        db.execute("DELETE FROM fetch_error WHERE symbol=?",(sym,))
+                    print(f"[SUSPENSION WATCH] {sym} official TWSE confirmation; daily watch activated",flush=True)
+                    watched=(end.isoformat(),)
+                    error=None
+                    done+=1
             if error and watched and error.startswith("HTTPError: 404 "):
                 with db:
                     db.execute("UPDATE suspension_watch SET last_probe_day=?,last_probe_result=? WHERE symbol=?",
