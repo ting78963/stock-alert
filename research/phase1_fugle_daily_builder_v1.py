@@ -108,11 +108,12 @@ def main():
         total=len(symbols); done=0; failed=0; skipped=0
         for index,sym in enumerate(symbols[:a.limit or None],1):
             existing=db.execute("SELECT covered_through FROM fetch_status WHERE symbol=?",(sym,)).fetchone()
-            if existing and existing[0]>=end.isoformat():
+            watched=db.execute("SELECT last_probe_day FROM suspension_watch WHERE symbol=?",(sym,)).fetchone()
+            if existing and existing[0]>=end.isoformat() and not watched:
                 skipped+=1;continue
             fetch_start=max(start,dt.date.fromisoformat(existing[0])+dt.timedelta(days=1)) if existing else start
-            if fetch_start>end:skipped+=1;continue
-            watched=db.execute("SELECT last_probe_day FROM suspension_watch WHERE symbol=?",(sym,)).fetchone()
+            if fetch_start>end and not watched:skipped+=1;continue
+            if fetch_start>end:fetch_start=end
             if watched and watched[0]==end.isoformat():
                 skipped+=1;continue
             error=None
