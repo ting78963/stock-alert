@@ -38,11 +38,24 @@ class WatchTests(unittest.TestCase):
         from unittest.mock import patch
         from io import BytesIO
         import json
-        sample=[{"證券代號":"2067","暫停交易日期":"115/10/01","恢復交易日期":"115/10/20"}]
+        sample=[{"Code":"2067","TradingHaltDate":"1151001","TradingResumptionDate":"1151020"}]
         with patch.object(builder.urllib.request,"urlopen",return_value=BytesIO(json.dumps(sample).encode())):
             self.assertEqual(builder.twse_suspension_status("2067",datetime(2026,10,12).date()),"twse-twtawu")
         with patch.object(builder.urllib.request,"urlopen",return_value=BytesIO(json.dumps(sample).encode())):
             self.assertIsNone(builder.twse_suspension_status("2067",datetime(2026,10,20).date()))
+
+    def test_twse_actual_render_response_is_historical_not_active(self):
+        from unittest.mock import patch
+        from io import BytesIO
+        import json
+        # Actual TWTAWU response obtained from Render on 2026-10-12.
+        sample=[{"Number":"1","Code":"1218","Name":"泰山",
+                 "TradingHaltDate":"1150813","TradingHaltTime":"080000",
+                 "TradingResumptionDate":"1150814","TradingResumptionTime":"080000"}]
+        with patch.object(builder.urllib.request,"urlopen",return_value=BytesIO(json.dumps(sample).encode())):
+            self.assertIsNone(builder.twse_suspension_status("1218",datetime(2026,10,12).date()))
+        with patch.object(builder.urllib.request,"urlopen",return_value=BytesIO(json.dumps(sample).encode())):
+            self.assertEqual(builder.twse_suspension_status("1218",datetime(2026,8,13).date()),"twse-twtawu")
 
     def test_twse_network_failure_stays_unknown(self):
         from unittest.mock import patch
@@ -54,7 +67,7 @@ class WatchTests(unittest.TestCase):
         from unittest.mock import patch
         from io import BytesIO
         import json
-        sample=[{"證券代號":"9999","暫停交易日期":"115/10/01","恢復交易日期":""}]
+        sample=[{"Code":"9999","TradingHaltDate":"1151001","TradingResumptionDate":""}]
         with patch.object(builder.urllib.request,"urlopen",return_value=BytesIO(json.dumps(sample).encode())):
             self.assertIsNone(builder.twse_suspension_status("2067",datetime(2026,10,12).date()))
 
