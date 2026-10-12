@@ -25,6 +25,10 @@ def dbopen(path):
     CREATE TABLE IF NOT EXISTS fetch_status(
       symbol TEXT PRIMARY KEY,covered_through TEXT NOT NULL,
       last_success_utc TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS suspension_watch(
+      symbol TEXT PRIMARY KEY, confirmed_source TEXT NOT NULL,
+      confirmed_at_utc TEXT NOT NULL, last_probe_day TEXT NOT NULL DEFAULT '',
+      last_probe_result TEXT NOT NULL DEFAULT '');
     CREATE TABLE IF NOT EXISTS fetch_error(
       symbol TEXT PRIMARY KEY, error TEXT NOT NULL,last_error_utc TEXT NOT NULL);
     """)
@@ -65,6 +69,7 @@ def main():
     p.add_argument("--db",type=Path,default=OUT)
     p.add_argument("--f10",type=Path,default=F10)
     p.add_argument("--limit",type=int,default=0,help="0=all; use 2 for smoke test")
+    p.add_argument("--confirmed-suspended",default="",help="Comma-separated manually verified suspended symbols; no auto-classification from 404")
     p.add_argument("--dry-run",action="store_true",help="Print planned requests; no network and no database writes")
     a=p.parse_args()
     if a.delay<1 or a.history_calendar_days<170 or a.max_retries<0:
@@ -87,6 +92,13 @@ def main():
         return
     db=dbopen(a.db)
     try:
+        confirmed={x.strip() for x in a.confirmed_suspended.split(",") if x.strip()}
+        if confirmed and not confirmed.issubset(set(symbols)):
+            raise SystemExit("STOP: confirmed suspended identity outside member universe")
+        for sym in sorted(confirmed):
+            with db:
+                db.execute("INSERT OR IGNORE INTO suspension_watch(symbol,confirmed_source,confirmed_at_utc) VALUES(?,?,?)",
+                           (sym,"operator-confirmed",dt.datetime.now(dt.timezone.utc).isoformat()))
         total=len(symbols); done=0; failed=0; skipped=0
         for index,sym in enumerate(symbols[:a.limit or None],1):
             existing=db.execute("SELECT covered_through FROM fetch_status WHERE symbol=?",(sym,)).fetchone()
@@ -94,11 +106,22 @@ def main():
                 skipped+=1;continue
             fetch_start=max(start,dt.date.fromisoformat(existing[0])+dt.timedelta(days=1)) if existing else start
             if fetch_start>end:skipped+=1;continue
+            watched=db.execute("SELECT last_probe_day FROM suspension_watch WHERE symbol=?",(sym,)).fetchone()
+            if watched and watched[0]==end.isoformat():
+                skipped+=1;continue
             error=None
             for attempt in range(a.max_retries+1):
                 try:
                     reply=fetch(sym,fetch_start.isoformat(),end.isoformat(),key,a.timeout)
                     rows=parse(sym,reply,fetch_start.isoformat(),end.isoformat())
+                    # A successful HTTP response without a new valid candle is not a resumption.
+                    resumed=bool(watched and any(r[1]>=(existing[0] if existing else start.isoformat()) and
+                                                   r[1]<=end.isoformat() for r in rows))
+                    if watched and not resumed:
+                        with db:
+                            db.execute("UPDATE suspension_watch SET last_probe_day=?,last_probe_result=? WHERE symbol=?",
+                                       (end.isoformat(),"no_new_candle",sym))
+                        done+=1;error=None;break
                     with db:
                         for row in rows:
                             old=db.execute("SELECT open,high,low,close,volume_zhang FROM daily_ohlcv WHERE symbol=? AND day=?",row[:2]).fetchone()
@@ -108,6 +131,7 @@ def main():
                         db.execute("INSERT INTO fetch_status VALUES(?,?,?) ON CONFLICT(symbol) DO UPDATE SET covered_through=excluded.covered_through,last_success_utc=excluded.last_success_utc",
                             (sym,end.isoformat(),dt.datetime.now(dt.timezone.utc).isoformat()))
                         db.execute("DELETE FROM fetch_error WHERE symbol=?",(sym,))
+                        if resumed: db.execute("DELETE FROM suspension_watch WHERE symbol=?",(sym,))
                     done+=1;error=None;break
                 except (urllib.error.HTTPError,urllib.error.URLError,TimeoutError,ValueError,KeyError) as ex:
                     error=f"{type(ex).__name__}: {getattr(ex,'code','')} {ex}"
@@ -118,6 +142,13 @@ def main():
                         time.sleep(wait)
                 finally:
                     time.sleep(a.delay)
+            if error and watched and "HTTPError: 404" in error:
+                with db:
+                    db.execute("UPDATE suspension_watch SET last_probe_day=?,last_probe_result=? WHERE symbol=?",
+                               (end.isoformat(),"http404",sym))
+                print(f"[SUSPENSION WATCH] {sym} daily probe HTTP 404; remains watched",flush=True)
+                error=None
+                done+=1
             if error:
                 failed+=1
                 with db:db.execute("INSERT INTO fetch_error VALUES(?,?,?) ON CONFLICT(symbol) DO UPDATE SET error=excluded.error,last_error_utc=excluded.last_error_utc",
