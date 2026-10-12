@@ -46,6 +46,8 @@ def main():
     p.add_argument("--f10",type=Path,default=F10)
     p.add_argument("--builder",type=Path,default=BUILDER)
     p.add_argument("--delay",type=float,default=1.0)
+    p.add_argument("--confirmed-suspended",default="2067,3625,3632,6167,6173",
+                   help="Operator-confirmed initial watch list; persist in staging DB")
     p.add_argument("--now",help="Testing only: timezone-aware ISO timestamp; --execute forbids it")
     a=p.parse_args()
     if a.delay<1:raise SystemExit("STOP: delay must be >=1 second")
@@ -67,7 +69,7 @@ def main():
     with lock.open("w") as fd:
         try:fcntl.flock(fd.fileno(),fcntl.LOCK_EX|fcntl.LOCK_NB)
         except BlockingIOError:raise SystemExit("STOP: another daily maintenance process is running")
-        cmd=[sys.executable,str(a.builder),"--asof",info["asof"],"--delay",str(a.delay),"--db",str(a.db),"--f10",str(a.f10)]
+        cmd=[sys.executable,str(a.builder),"--asof",info["asof"],"--delay",str(a.delay),"--db",str(a.db),"--f10",str(a.f10),"--confirmed-suspended",a.confirmed_suspended]
         rc=subprocess.call(cmd)
         if rc:raise SystemExit(f"STOP: daily builder incomplete rc={rc}; next run resumes")
         print("PASS: daily incremental builder finished",flush=True)
