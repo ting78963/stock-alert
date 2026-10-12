@@ -62,7 +62,11 @@ def parse(symbol,reply,start,end):
     return list(out.values())
 
 def twse_suspension_status(symbol, day, timeout=12):
-    """Conservative TWSE-only confirmation. None means unknown, never 'not suspended'."""
+    """Confirm a TWSE trading halt only from the published effective date range.
+
+    TWTAWU uses Code, TradingHaltDate and TradingResumptionDate; dates are
+    compact ROC YYYMMDD. Missing/malformed data is UNKNOWN, never confirmed.
+    """
     url="https://openapi.twse.com.tw/v1/exchangeReport/TWTAWU"
     req=urllib.request.Request(url,headers={"User-Agent":"stock-alert-suspension-watch/1"})
     try:
@@ -72,23 +76,24 @@ def twse_suspension_status(symbol, day, timeout=12):
         return None
     if not isinstance(data,list):
         return None
-    # Fail closed until a known schema is validated against official response.
-    required={"證券代號","暫停交易日期","恢復交易日期"}
-    if not data or not all(isinstance(x,dict) and required.issubset(x) for x in data):
-        return None
+    def roc_date(value):
+        value=str(value).strip()
+        if not value:return None
+        if len(value)!=7 or not value.isascii() or not value.isdigit():
+            raise ValueError("invalid ROC YYYMMDD date")
+        return dt.date(int(value[:3])+1911,int(value[3:5]),int(value[5:7]))
     for item in data:
-        if str(item["證券代號"]).strip()!=symbol:
+        if not isinstance(item,dict) or "Code" not in item:
+            return None
+        if str(item["Code"]).strip()!=symbol:
             continue
-        def datevalue(v):
-            v=str(v).strip().replace("/","-")
-            parts=v.split("-")
-            if len(parts)!=3:return None
-            try:
-                year=int(parts[0]);year=year+1911 if year<1911 else year
-                return dt.date(year,int(parts[1]),int(parts[2]))
-            except ValueError:return None
-        began=datevalue(item["暫停交易日期"])
-        resumed=datevalue(item["恢復交易日期"]) if str(item["恢復交易日期"]).strip() else None
+        if "TradingHaltDate" not in item or "TradingResumptionDate" not in item:
+            return None
+        try:
+            began=roc_date(item["TradingHaltDate"])
+            resumed=roc_date(item["TradingResumptionDate"])
+        except ValueError:
+            return None
         if began and began<=day and (resumed is None or day<resumed):
             return "twse-twtawu"
     return None
