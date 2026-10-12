@@ -95,6 +95,29 @@ class WatchTests(unittest.TestCase):
                 self.assertEqual(db.execute("SELECT COUNT(*) FROM daily_ohlcv WHERE symbol='2067'").fetchone()[0],1)
                 self.assertEqual(db.execute("SELECT covered_through FROM fetch_status WHERE symbol='2067'").fetchone()[0],nextday.isoformat())
 
+    def test_maintenance_plan_keeps_watched_stock_due(self):
+        import importlib.util
+        from datetime import timedelta
+        spec=importlib.util.spec_from_file_location("daily_maintenance",ROOT/"a_daily_incremental_maintenance_v1.py")
+        maintenance=importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(maintenance)
+        now=datetime.now(timezone(timedelta(hours=8))).replace(hour=16,minute=0,second=0,microsecond=0)
+        today=now.date().isoformat()
+        with tempfile.TemporaryDirectory() as tmp:
+            f10=pathlib.Path(tmp)/"f10.sqlite3"
+            stage=pathlib.Path(tmp)/"stage.sqlite3"
+            with sqlite3.connect(f10) as db:
+                db.execute("CREATE TABLE member(symbol TEXT)")
+                db.execute("INSERT INTO member VALUES('2067')")
+            with builder.dbopen(stage) as db:
+                db.execute("INSERT INTO fetch_status VALUES(?,?,?)",("2067",today,"2026-10-01"))
+                db.execute("INSERT INTO suspension_watch(symbol,confirmed_source,confirmed_at_utc,last_probe_day) VALUES(?,?,?,?)",
+                           ("2067","operator-confirmed","2026-10-01",""))
+            self.assertEqual(maintenance.plan(now,stage,f10)["due"],1)
+            with sqlite3.connect(stage) as db:
+                db.execute("UPDATE suspension_watch SET last_probe_day=? WHERE symbol='2067'",(today,))
+            self.assertEqual(maintenance.plan(now,stage,f10)["due"],0)
+
     def test_watch_probe_day_is_persistent(self):
         with tempfile.TemporaryDirectory() as tmp:
             p=pathlib.Path(tmp)/"stage.sqlite3"
