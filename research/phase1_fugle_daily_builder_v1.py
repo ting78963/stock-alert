@@ -147,7 +147,7 @@ def main():
                         time.sleep(wait)
                 finally:
                     time.sleep(a.delay)
-            if error and watched and "HTTPError: 404" in error:
+            if error and watched and error.startswith("HTTPError: 404 "):
                 with db:
                     db.execute("UPDATE suspension_watch SET last_probe_day=?,last_probe_result=? WHERE symbol=?",
                                (end.isoformat(),"http404",sym))
