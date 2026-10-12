@@ -44,6 +44,20 @@ class WatchTests(unittest.TestCase):
         with patch.object(builder.urllib.request,"urlopen",return_value=BytesIO(json.dumps(sample).encode())):
             self.assertIsNone(builder.twse_suspension_status("2067",datetime(2026,10,20).date()))
 
+    def test_twse_network_failure_stays_unknown(self):
+        from unittest.mock import patch
+        from urllib.error import URLError
+        with patch.object(builder.urllib.request,"urlopen",side_effect=URLError("offline")):
+            self.assertIsNone(builder.twse_suspension_status("2067",datetime(2026,10,12).date()))
+
+    def test_twse_different_symbol_is_not_confirmed(self):
+        from unittest.mock import patch
+        from io import BytesIO
+        import json
+        sample=[{"證券代號":"9999","暫停交易日期":"115/10/01","恢復交易日期":""}]
+        with patch.object(builder.urllib.request,"urlopen",return_value=BytesIO(json.dumps(sample).encode())):
+            self.assertIsNone(builder.twse_suspension_status("2067",datetime(2026,10,12).date()))
+
     def test_watch_probe_day_is_persistent(self):
         with tempfile.TemporaryDirectory() as tmp:
             p=pathlib.Path(tmp)/"stage.sqlite3"
