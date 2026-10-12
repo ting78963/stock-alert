@@ -38,6 +38,12 @@ with tempfile.TemporaryDirectory(prefix="b404_replay_") as tmp:
     launch=env["launch_b"]
     def payload(sid,day="2026-10-12"):
         return {"stock_id":sid,"date":day,"discovered_at":"09:30:00"}
+    # Concurrent request during initialization must not be marked successful.
+    env["_launching"].add("2026-10-12|2323")
+    pending=launch(payload("2323"))
+    assert pending["ok"] is False and pending["pending"] is True and not calls
+    env["_launching"].clear()
+    print("[PASS] concurrent handoff while initializing: not acknowledged as success")
     first=launch(payload("2323"))
     assert first["skipped"] and not first["launched"] and calls==[("2026-10-12","2323")]
     assert env["_history404_path"]("2026-10-12").is_file()
