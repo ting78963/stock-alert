@@ -31,7 +31,9 @@ def plan(now, db_path=DB, f10_path=F10):
     with connect_ro(f10_path) as f,connect_ro(db_path) as d:
         members={str(r[0]) for r in f.execute("SELECT symbol FROM member")}
         covered={str(s):str(day) for s,day in d.execute("SELECT symbol,covered_through FROM fetch_status")}
-        watched={str(s):str(day) for s,day in d.execute("SELECT symbol,last_probe_day FROM suspension_watch")}
+        watch_table_exists=d.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='suspension_watch'").fetchone() is not None
+        watched=({str(s):str(day) for s,day in d.execute("SELECT symbol,last_probe_day FROM suspension_watch")}
+                 if watch_table_exists else {})
     if not members or not set(covered).issubset(members) or not set(watched).issubset(members):
         raise ValueError("member/coverage/watch identity mismatch")
     through=local.date().isoformat()
