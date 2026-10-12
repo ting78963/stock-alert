@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Trend production worker v2: A 5s -> in-process B runners -> ONE shared Fugle WS."""
 from __future__ import annotations
-import argparse,json,os,queue,runpy,sys,threading,time
+import argparse,json,os,queue,runpy,sys,threading,time,re
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 from pathlib import Path
@@ -65,6 +65,35 @@ def f14_ensure_day(day):
         # Same lifecycle lock: exactly one rollover bootstrap; no half-switched DONE/CLAIM state.
         f14_bootstrap(day)
 
+# Only individual Fugle historical-data 404s are quarantined for the current day.
+# Fail closed if persistent state cannot be read or written.
+def _history404_path(day):
+    return STATE_ROOT/"b_history_404"/(day+".json")
+
+def _history404_load(day):
+    path=_history404_path(day)
+    if not path.exists():return set()
+    obj=json.loads(path.read_text(encoding="utf-8"))
+    if obj.get("schema")!="b_history_404_v1" or obj.get("date")!=day or not isinstance(obj.get("stock_ids"),list):
+        raise RuntimeError("B historical 404 quarantine state invalid")
+    return set(str(x).zfill(4) for x in obj["stock_ids"])
+
+def _history404_has(day,sid):
+    with _lock:return sid in _history404_load(day)
+
+def _history404_mark(day,sid):
+    with _lock:
+        stocks=_history404_load(day)
+        stocks.add(sid)
+        path=_history404_path(day)
+        path.parent.mkdir(parents=True,exist_ok=True)
+        _atomic_json(path,{"schema":"b_history_404_v1","date":day,"stock_ids":sorted(stocks)})
+    print(f"[B HISTORY 404 DAY SKIP] {day} {sid}",flush=True)
+
+def _is_individual_history404(exc):
+    msg=str(exc)
+    return bool(re.search(r"Fugle HTTP 404\\s*\\|\\s*(?:daily-calendar|historical-minute)\\b",msg))
+
 def retire_runner(k,r=None):
     sid=k.split("|",1)[1]
     if r is not None:r.retired=True
@@ -118,6 +147,9 @@ def launch_b(payload,dry_run=False):
     sid=str(payload["stock_id"]).zfill(4); day=str(payload["date"])[:10]; disc=str(payload["discovered_at"]); stock_name=str(payload.get("name") or payload.get("stock_name") or "").strip(); k=key(day,sid)
     f14_ensure_day(day)
     with _lock:
+        if not dry_run and _history404_has(day,sid):
+            print(f"[B HISTORY 404 SKIP] {k} (no Fugle history request)",flush=True)
+            return {"ok":True,"skipped":True,"reason":"individual_history_404","launched":False,"key":k}
         if k in _f14_done:
             print(f"[F14 SKIP DONE] {k} before Runner construction",flush=True)
             return {"ok":True,"already_done":True,"launched":False,"key":k}
@@ -143,8 +175,11 @@ def launch_b(payload,dry_run=False):
         subscribe_symbol(sid)
         print(f"[B START] {k} shared-WS LINE={'ON' if LINE_SEND else 'DRY'}",flush=True)
         return {"ok":True,"duplicate":False,"launched":True,"key":k,"shared_ws":True}
-    except BaseException:
+    except BaseException as e:
         with _lock:_launching.discard(k)
+        if _is_individual_history404(e):
+            _history404_mark(day,sid)
+            return {"ok":True,"skipped":True,"reason":"individual_history_404","launched":False,"key":k}
         raise
 
 def subscribe_symbol(sid):
