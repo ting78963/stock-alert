@@ -351,7 +351,11 @@ def daily_history_maintenance_loop():
                             print(f"[SEQUENTIAL MAINT] {name} script missing",flush=True)
                             continue
                         print(f"[SEQUENTIAL MAINT] {name} start date={day}",flush=True)
-                        rc=subprocess.call(cmd,cwd=str(BASE),env=os.environ.copy())
+                        try:
+                            rc=subprocess.call(cmd,cwd=str(BASE),env=os.environ.copy())
+                        except OSError as exc:
+                            print(f"[SEQUENTIAL MAINT] {name} launch failed {type(exc).__name__}: {exc}; other stage may proceed independently",flush=True)
+                            continue
                         if rc==0:
                             stage_done.add(name)
                             print(f"[SEQUENTIAL MAINT] {name} completed",flush=True)
