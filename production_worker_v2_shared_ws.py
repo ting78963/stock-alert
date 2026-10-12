@@ -335,6 +335,7 @@ def daily_history_maintenance_loop():
         if day!=stage_day:
             stage_day=day
             stage_done=set()
+            completed_day=None
             next_retry_at=0.0
         if (n.hour,n.minute)>=(15,30) and completed_day!=day and time.monotonic()>=next_retry_at:
             try:
