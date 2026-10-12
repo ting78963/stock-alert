@@ -27,6 +27,23 @@ class WatchTests(unittest.TestCase):
                 self.assertEqual(db.execute("SELECT symbol FROM suspension_watch").fetchone()[0], "2067")
                 self.assertEqual(db.execute("SELECT COUNT(*) FROM suspension_meta").fetchone()[0], 0)
 
+    def test_twse_status_fails_closed_for_unknown_schema(self):
+        from unittest.mock import patch
+        from io import BytesIO
+        import json
+        with patch.object(builder.urllib.request,"urlopen",return_value=BytesIO(json.dumps([{"unknown":"2067"}]).encode())):
+            self.assertIsNone(builder.twse_suspension_status("2067",datetime(2026,10,12).date()))
+
+    def test_twse_status_confirms_active_interval(self):
+        from unittest.mock import patch
+        from io import BytesIO
+        import json
+        sample=[{"證券代號":"2067","暫停交易日期":"115/10/01","恢復交易日期":"115/10/20"}]
+        with patch.object(builder.urllib.request,"urlopen",return_value=BytesIO(json.dumps(sample).encode())):
+            self.assertEqual(builder.twse_suspension_status("2067",datetime(2026,10,12).date()),"twse-twtawu")
+        with patch.object(builder.urllib.request,"urlopen",return_value=BytesIO(json.dumps(sample).encode())):
+            self.assertIsNone(builder.twse_suspension_status("2067",datetime(2026,10,20).date()))
+
     def test_watch_probe_day_is_persistent(self):
         with tempfile.TemporaryDirectory() as tmp:
             p=pathlib.Path(tmp)/"stage.sqlite3"
