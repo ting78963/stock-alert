@@ -25,6 +25,8 @@ def dbopen(path):
     CREATE TABLE IF NOT EXISTS fetch_status(
       symbol TEXT PRIMARY KEY,covered_through TEXT NOT NULL,
       last_success_utc TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS suspension_meta(
+      key TEXT PRIMARY KEY, value TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS suspension_watch(
       symbol TEXT PRIMARY KEY, confirmed_source TEXT NOT NULL,
       confirmed_at_utc TEXT NOT NULL, last_probe_day TEXT NOT NULL DEFAULT '',
@@ -95,10 +97,14 @@ def main():
         confirmed={x.strip() for x in a.confirmed_suspended.split(",") if x.strip()}
         if confirmed and not confirmed.issubset(set(symbols)):
             raise SystemExit("STOP: confirmed suspended identity outside member universe")
-        for sym in sorted(confirmed):
+        # Seed only once: a resumed symbol must never be re-added on the next run.
+        if not db.execute("SELECT 1 FROM suspension_meta WHERE key='initial_seed_v1'").fetchone():
             with db:
-                db.execute("INSERT OR IGNORE INTO suspension_watch(symbol,confirmed_source,confirmed_at_utc) VALUES(?,?,?)",
-                           (sym,"operator-confirmed",dt.datetime.now(dt.timezone.utc).isoformat()))
+                for sym in sorted(confirmed):
+                    db.execute("INSERT OR IGNORE INTO suspension_watch(symbol,confirmed_source,confirmed_at_utc) VALUES(?,?,?)",
+                               (sym,"operator-confirmed",dt.datetime.now(dt.timezone.utc).isoformat()))
+                db.execute("INSERT INTO suspension_meta(key,value) VALUES('initial_seed_v1',?)",
+                           (dt.datetime.now(dt.timezone.utc).isoformat(),))
         total=len(symbols); done=0; failed=0; skipped=0
         for index,sym in enumerate(symbols[:a.limit or None],1):
             existing=db.execute("SELECT covered_through FROM fetch_status WHERE symbol=?",(sym,)).fetchone()
@@ -115,7 +121,7 @@ def main():
                     reply=fetch(sym,fetch_start.isoformat(),end.isoformat(),key,a.timeout)
                     rows=parse(sym,reply,fetch_start.isoformat(),end.isoformat())
                     # A successful HTTP response without a new valid candle is not a resumption.
-                    resumed=bool(watched and any(r[1]==end.isoformat() for r in rows))
+                    resumed=bool(watched and any(r[1]==end.isoformat() and r[6]>0 for r in rows))
                     if watched and not resumed:
                         with db:
                             db.execute("UPDATE suspension_watch SET last_probe_day=?,last_probe_result=? WHERE symbol=?",
@@ -154,7 +160,8 @@ def main():
                     (sym,error[:400],dt.datetime.now(dt.timezone.utc).isoformat()))
                 print(f"[FAIL] {index}/{total} {sym} {error}",flush=True)
             elif index%25==0:print(f"[PROGRESS] {index}/{total} done={done} skipped={skipped} failed={failed}",flush=True)
-        print(json.dumps({"status":"COMPLETE" if failed==0 else "INCOMPLETE","universe":total,"processed":done,"skipped":skipped,"failed":failed,"database":str(a.db),"request_checked_through":end.isoformat(),"note":"Successful query coverage only, not proof of per-day trades or calendar completeness. Staging only; A/B/LINE unchanged"},ensure_ascii=False))
+        watch_pending=db.execute("SELECT COUNT(*) FROM suspension_watch").fetchone()[0]
+        print(json.dumps({"status":"INCOMPLETE" if failed else ("WATCH_PENDING" if watch_pending else "COMPLETE"),"universe":total,"processed":done,"skipped":skipped,"failed":failed,"suspension_watch_pending":watch_pending,"database":str(a.db),"request_checked_through":end.isoformat(),"note":"Successful query coverage only, not proof of per-day trades or calendar completeness. Staging only; A/B/LINE unchanged"},ensure_ascii=False))
         if failed:raise SystemExit(2)
     finally:db.close()
 
