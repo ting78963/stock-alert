@@ -153,8 +153,12 @@ def launch_b(payload,dry_run=False):
         if k in _f14_done:
             print(f"[F14 SKIP DONE] {k} before Runner construction",flush=True)
             return {"ok":True,"already_done":True,"launched":False,"key":k}
-        if k in _runners or k in _launching:
+        if k in _runners:
             return {"ok":True,"duplicate":True,"launched":False,"key":k}
+        if k in _launching:
+            # Initialization has not succeeded yet; never acknowledge a handoff
+            # that could still fail with a historical 404.
+            return {"ok":False,"pending":True,"reason":"b_initializing","launched":False,"key":k}
         if not dry_run:
             _launching.add(k)
     if dry_run:return {"ok":True,"duplicate":False,"launched":False,"dry_run":True,"key":k}
