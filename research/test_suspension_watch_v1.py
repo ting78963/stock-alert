@@ -27,6 +27,28 @@ class WatchTests(unittest.TestCase):
                 self.assertEqual(db.execute("SELECT symbol FROM suspension_watch").fetchone()[0], "2067")
                 self.assertEqual(db.execute("SELECT COUNT(*) FROM suspension_meta").fetchone()[0], 0)
 
+    def test_watch_probe_day_is_persistent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p=pathlib.Path(tmp)/"stage.sqlite3"
+            with builder.dbopen(p) as db:
+                db.execute("INSERT INTO suspension_watch(symbol,confirmed_source,confirmed_at_utc,last_probe_day,last_probe_result) VALUES(?,?,?,?,?)",
+                           ("2067","operator-confirmed",datetime.now(timezone.utc).isoformat(),"2026-10-12","http404"))
+                db.commit()
+            with builder.dbopen(p) as db:
+                row=db.execute("SELECT last_probe_day,last_probe_result FROM suspension_watch WHERE symbol='2067'").fetchone()
+                self.assertEqual(row,("2026-10-12","http404"))
+
+    def test_duplicate_watch_seed_does_not_overwrite(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p=pathlib.Path(tmp)/"stage.sqlite3"
+            with builder.dbopen(p) as db:
+                db.execute("INSERT INTO suspension_watch(symbol,confirmed_source,confirmed_at_utc,last_probe_day) VALUES(?,?,?,?)",
+                           ("2067","operator-confirmed","2026-10-01","2026-10-12"))
+                db.execute("INSERT OR IGNORE INTO suspension_watch(symbol,confirmed_source,confirmed_at_utc) VALUES(?,?,?)",
+                           ("2067","operator-confirmed","2026-10-13"))
+                self.assertEqual(db.execute("SELECT confirmed_at_utc,last_probe_day FROM suspension_watch").fetchone(),
+                                 ("2026-10-01","2026-10-12"))
+
     def test_parse_rejects_wrong_identity(self):
         with self.assertRaisesRegex(ValueError, "symbol identity mismatch"):
             builder.parse("2067", {"symbol":"3625","data":[]}, "2026-10-01", "2026-10-12")
