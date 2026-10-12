@@ -1467,12 +1467,18 @@ class Scanner:
         }
         # Only a completed per-symbol audit may reach here. Dedupe is written
         # strictly after a successful bridge handoff (or explicit dry-run).
-        self.bridge_send(payload)
+        result = self.bridge_send(payload)
+        if result == "history_404_skip":
+            skipped = dict(payload, handoff_status="history_404_skipped", launched=False)
+            self.mark_sent(snap_date, symbol, skipped)
+            append_event({"ts": iso_now(), "type": "b_history_404_skipped", **skipped})
+            print(f"[A B-HISTORY-404 SKIP] {symbol} {snap_date}", flush=True)
+            return False
         self.mark_sent(snap_date, symbol, payload)
         append_event({"ts": iso_now(), "type": "discovery", **payload})
         return True
 
-    def bridge_send(self, payload: Dict[str, Any]) -> None:
+    def bridge_send(self, payload: Dict[str, Any]) -> Optional[str]:
         if not self.bridge_url:
             print(f"[DISCOVERY][DRY] {payload['stock_id']} {payload['date']} "
                   f"{payload['discovered_at']} source={payload['source']}")
@@ -1490,6 +1496,13 @@ class Scanner:
                 resp = r.read().decode("utf-8", errors="replace")
                 if r.status < 200 or r.status >= 300:
                     raise RuntimeError(f"Bridge HTTP {r.status}: {resp[:300]}")
+                data = json.loads(resp)
+                if not isinstance(data, dict) or data.get("ok") is not True:
+                    raise RuntimeError("Bridge response missing ok=true")
+                if data.get("skipped") is True and data.get("reason") == "individual_history_404":
+                    return "history_404_skip"
+                if data.get("skipped") is True:
+                    raise RuntimeError("Unknown bridge skip reason")
                 print(f"[BRIDGE] {payload['stock_id']} -> HTTP {r.status}")
         except Exception as e:
             # handoff 失敗不能先 dedupe；下輪要能重試。
