@@ -31,10 +31,11 @@ def plan(now, db_path=DB, f10_path=F10):
     with connect_ro(f10_path) as f,connect_ro(db_path) as d:
         members={str(r[0]) for r in f.execute("SELECT symbol FROM member")}
         covered={str(s):str(day) for s,day in d.execute("SELECT symbol,covered_through FROM fetch_status")}
-    if not members or not set(covered).issubset(members):
-        raise ValueError("member/coverage identity mismatch")
+        watched={str(s):str(day) for s,day in d.execute("SELECT symbol,last_probe_day FROM suspension_watch")}
+    if not members or not set(covered).issubset(members) or not set(watched).issubset(members):
+        raise ValueError("member/coverage/watch identity mismatch")
     through=local.date().isoformat()
-    due=sorted(s for s in members if covered.get(s,"")<through)
+    due=sorted(s for s in members if covered.get(s,"")<through or (s in watched and watched[s]<through))
     return {"asof":(local.date()+dt.timedelta(days=1)).isoformat(),
             "through":through,"universe":len(members),"due":len(due),
             "already_covered":len(members)-len(due),"sample":due[:8]}
