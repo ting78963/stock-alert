@@ -111,7 +111,7 @@ def main():
                     done+=1;error=None;break
                 except (urllib.error.HTTPError,urllib.error.URLError,TimeoutError,ValueError,KeyError) as ex:
                     error=f"{type(ex).__name__}: {getattr(ex,'code','')} {ex}"
-                    if isinstance(ex,ValueError) or isinstance(ex,KeyError):break
+                    if isinstance(ex,(ValueError,KeyError)) or (isinstance(ex,urllib.error.HTTPError) and ex.code==404):break
                     if attempt<a.max_retries:
                         wait=max(a.delay,60*(2**min(attempt,3))) if isinstance(ex,urllib.error.HTTPError) and ex.code==429 else a.delay*(attempt+1)
                         print(f"[RETRY] {sym} attempt={attempt+1} wait={wait:.0f}s {type(ex).__name__}",flush=True)

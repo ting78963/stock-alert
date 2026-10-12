@@ -318,7 +318,7 @@ def f10_maintenance_loop():
         time.sleep(60)
 
 def daily_history_maintenance_loop():
-    """Opt-in sequential 15:30 maintenance: daily K -> F10, retry failed stage in 30 min."""
+    """Opt-in post-close maintenance: independent daily K / F10, retry failures in 5m."""
     import subprocess
     if os.environ.get("A_DAILY_HISTORY_MAINTENANCE_ENABLED","0").strip()!="1":
         print("[A DAILY HISTORY MAINT] disabled (default)",flush=True)
@@ -326,37 +326,50 @@ def daily_history_maintenance_loop():
     daily=BASE/"research"/"a_daily_incremental_maintenance_v1.py"
     f10=BASE/"f10_baseline_store_v1.py"
     completed_day=None
+    stage_done=set()
+    stage_day=None
     next_retry_at=0.0
     while True:
         n=now_tpe()
         day=n.date().isoformat()
+        if day!=stage_day:
+            stage_day=day
+            stage_done=set()
+            completed_day=None
+            next_retry_at=0.0
         if (n.hour,n.minute)>=(15,30) and completed_day!=day and time.monotonic()>=next_retry_at:
             try:
                 if not is_scheduled_open(n.date()):
                     completed_day=day
-                elif not daily.is_file() or not f10.is_file():
-                    print("[SEQUENTIAL MAINT] script missing; retry in 30m",flush=True)
-                    next_retry_at=time.monotonic()+1800
                 else:
-                    # Daily K is resumable; successful reruns use coverage and make zero API calls.
-                    tasks=(("DAILY_K",[sys.executable,str(daily),"--execute"]),
-                           ("F10",[sys.executable,str(f10),"--mode","update","--pause","0.15"]))
-                    for name,cmd in tasks:
+                    tasks=(("DAILY_K",daily,[sys.executable,str(daily),"--execute"]),
+                           ("F10",f10,[sys.executable,str(f10),"--mode","update","--pause","0.15"]))
+                    for name,script,cmd in tasks:
+                        if name in stage_done:
+                            continue
+                        if not script.is_file():
+                            print(f"[SEQUENTIAL MAINT] {name} script missing",flush=True)
+                            continue
                         print(f"[SEQUENTIAL MAINT] {name} start date={day}",flush=True)
-                        rc=subprocess.call(cmd,cwd=str(BASE),env=os.environ.copy())
-                        if rc!=0:
-                            print(f"[SEQUENTIAL MAINT] {name} incomplete rc={rc}; later stages blocked",flush=True)
-                            break
-                        print(f"[SEQUENTIAL MAINT] {name} completed",flush=True)
-                    else:
+                        try:
+                            rc=subprocess.call(cmd,cwd=str(BASE),env=os.environ.copy())
+                        except OSError as exc:
+                            print(f"[SEQUENTIAL MAINT] {name} launch failed {type(exc).__name__}: {exc}; other stage may proceed independently",flush=True)
+                            continue
+                        if rc==0:
+                            stage_done.add(name)
+                            print(f"[SEQUENTIAL MAINT] {name} completed",flush=True)
+                        else:
+                            print(f"[SEQUENTIAL MAINT] {name} incomplete rc={rc}; other stage may proceed independently",flush=True)
+                    if len(stage_done)==len(tasks):
                         completed_day=day
                         print(f"[SEQUENTIAL MAINT] ALL COMPLETED date={day}",flush=True)
-                        time.sleep(60)
-                        continue
-                    next_retry_at=time.monotonic()+1800
+                    else:
+                        print(f"[SEQUENTIAL MAINT] PENDING stages={','.join(name for name,_,_ in tasks if name not in stage_done)}; retry in 5m",flush=True)
+                        next_retry_at=time.monotonic()+300
             except BaseException as exc:
-                next_retry_at=time.monotonic()+1800
-                print(f"[SEQUENTIAL MAINT] FAIL {type(exc).__name__}: {exc}; retry in 30m",flush=True)
+                next_retry_at=time.monotonic()+300
+                print(f"[SEQUENTIAL MAINT] FAIL {type(exc).__name__}: {exc}; retry in 5m",flush=True)
         time.sleep(60)
 
 def self_test():
