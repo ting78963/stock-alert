@@ -31,10 +31,11 @@ def plan(now, db_path=DB, f10_path=F10):
     with connect_ro(f10_path) as f,connect_ro(db_path) as d:
         members={str(r[0]) for r in f.execute("SELECT symbol FROM member")}
         covered={str(s):str(day) for s,day in d.execute("SELECT symbol,covered_through FROM fetch_status")}
-    if not members or not set(covered).issubset(members):
-        raise ValueError("member/coverage identity mismatch")
+        watched={str(s):str(day) for s,day in d.execute("SELECT symbol,last_probe_day FROM suspension_watch")}
+    if not members or not set(covered).issubset(members) or not set(watched).issubset(members):
+        raise ValueError("member/coverage/watch identity mismatch")
     through=local.date().isoformat()
-    due=sorted(s for s in members if covered.get(s,"")<through)
+    due=sorted(s for s in members if covered.get(s,"")<through or (s in watched and watched[s]<through))
     return {"asof":(local.date()+dt.timedelta(days=1)).isoformat(),
             "through":through,"universe":len(members),"due":len(due),
             "already_covered":len(members)-len(due),"sample":due[:8]}
@@ -46,6 +47,8 @@ def main():
     p.add_argument("--f10",type=Path,default=F10)
     p.add_argument("--builder",type=Path,default=BUILDER)
     p.add_argument("--delay",type=float,default=1.0)
+    p.add_argument("--confirmed-suspended",default="2067,3625,3632,6167,6173",
+                   help="Operator-confirmed initial watch list; persist in staging DB")
     p.add_argument("--now",help="Testing only: timezone-aware ISO timestamp; --execute forbids it")
     a=p.parse_args()
     if a.delay<1:raise SystemExit("STOP: delay must be >=1 second")
@@ -67,7 +70,7 @@ def main():
     with lock.open("w") as fd:
         try:fcntl.flock(fd.fileno(),fcntl.LOCK_EX|fcntl.LOCK_NB)
         except BlockingIOError:raise SystemExit("STOP: another daily maintenance process is running")
-        cmd=[sys.executable,str(a.builder),"--asof",info["asof"],"--delay",str(a.delay),"--db",str(a.db),"--f10",str(a.f10)]
+        cmd=[sys.executable,str(a.builder),"--asof",info["asof"],"--delay",str(a.delay),"--db",str(a.db),"--f10",str(a.f10),"--confirmed-suspended",a.confirmed_suspended]
         rc=subprocess.call(cmd)
         if rc:raise SystemExit(f"STOP: daily builder incomplete rc={rc}; next run resumes")
         print("PASS: daily incremental builder finished",flush=True)

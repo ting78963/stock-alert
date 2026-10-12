@@ -25,6 +25,12 @@ def dbopen(path):
     CREATE TABLE IF NOT EXISTS fetch_status(
       symbol TEXT PRIMARY KEY,covered_through TEXT NOT NULL,
       last_success_utc TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS suspension_meta(
+      key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS suspension_watch(
+      symbol TEXT PRIMARY KEY, confirmed_source TEXT NOT NULL,
+      confirmed_at_utc TEXT NOT NULL, last_probe_day TEXT NOT NULL DEFAULT '',
+      last_probe_result TEXT NOT NULL DEFAULT '');
     CREATE TABLE IF NOT EXISTS fetch_error(
       symbol TEXT PRIMARY KEY, error TEXT NOT NULL,last_error_utc TEXT NOT NULL);
     """)
@@ -55,6 +61,43 @@ def parse(symbol,reply,start,end):
         out[day]=row
     return list(out.values())
 
+def twse_suspension_status(symbol, day, timeout=12):
+    """Confirm a TWSE trading halt only from the published effective date range.
+
+    TWTAWU uses Code, TradingHaltDate and TradingResumptionDate; dates are
+    compact ROC YYYMMDD. Missing/malformed data is UNKNOWN, never confirmed.
+    """
+    url="https://openapi.twse.com.tw/v1/exchangeReport/TWTAWU"
+    req=urllib.request.Request(url,headers={"User-Agent":"stock-alert-suspension-watch/1"})
+    try:
+        with urllib.request.urlopen(req,timeout=timeout) as response:
+            data=json.load(response)
+    except (urllib.error.URLError,TimeoutError,ValueError):
+        return None
+    if not isinstance(data,list):
+        return None
+    def roc_date(value):
+        value=str(value).strip()
+        if not value:return None
+        if len(value)!=7 or not value.isascii() or not value.isdigit():
+            raise ValueError("invalid ROC YYYMMDD date")
+        return dt.date(int(value[:3])+1911,int(value[3:5]),int(value[5:7]))
+    for item in data:
+        if not isinstance(item,dict) or "Code" not in item:
+            return None
+        if str(item["Code"]).strip()!=symbol:
+            continue
+        if "TradingHaltDate" not in item or "TradingResumptionDate" not in item:
+            return None
+        try:
+            began=roc_date(item["TradingHaltDate"])
+            resumed=roc_date(item["TradingResumptionDate"])
+        except ValueError:
+            return None
+        if began and began<=day and (resumed is None or day<resumed):
+            return "twse-twtawu"
+    return None
+
 def main():
     p=argparse.ArgumentParser()
     p.add_argument("--asof",required=True,help="Exclusive YYYY-MM-DD, usually next market date")
@@ -65,6 +108,7 @@ def main():
     p.add_argument("--db",type=Path,default=OUT)
     p.add_argument("--f10",type=Path,default=F10)
     p.add_argument("--limit",type=int,default=0,help="0=all; use 2 for smoke test")
+    p.add_argument("--confirmed-suspended",default="",help="Comma-separated manually verified suspended symbols; no auto-classification from 404")
     p.add_argument("--dry-run",action="store_true",help="Print planned requests; no network and no database writes")
     a=p.parse_args()
     if a.delay<1 or a.history_calendar_days<170 or a.max_retries<0:
@@ -87,18 +131,46 @@ def main():
         return
     db=dbopen(a.db)
     try:
+        confirmed={x.strip() for x in a.confirmed_suspended.split(",") if x.strip()}
+        if confirmed and not confirmed.issubset(set(symbols)):
+            raise SystemExit("STOP: confirmed suspended identity outside member universe")
+        # Seed only once: a resumed symbol must never be re-added on the next run.
+        if not db.execute("SELECT 1 FROM suspension_meta WHERE key='initial_seed_v1'").fetchone():
+            with db:
+                for sym in sorted(confirmed):
+                    db.execute("INSERT OR IGNORE INTO suspension_watch(symbol,confirmed_source,confirmed_at_utc) VALUES(?,?,?)",
+                               (sym,"operator-confirmed",dt.datetime.now(dt.timezone.utc).isoformat()))
+                db.execute("INSERT INTO suspension_meta(key,value) VALUES('initial_seed_v1',?)",
+                           (dt.datetime.now(dt.timezone.utc).isoformat(),))
         total=len(symbols); done=0; failed=0; skipped=0
         for index,sym in enumerate(symbols[:a.limit or None],1):
             existing=db.execute("SELECT covered_through FROM fetch_status WHERE symbol=?",(sym,)).fetchone()
-            if existing and existing[0]>=end.isoformat():
+            watched=db.execute("SELECT last_probe_day FROM suspension_watch WHERE symbol=?",(sym,)).fetchone()
+            if existing and existing[0]>=end.isoformat() and not watched:
                 skipped+=1;continue
             fetch_start=max(start,dt.date.fromisoformat(existing[0])+dt.timedelta(days=1)) if existing else start
-            if fetch_start>end:skipped+=1;continue
+            if fetch_start>end and not watched:skipped+=1;continue
+            if fetch_start>end:fetch_start=end
+            if watched and watched[0]==end.isoformat():
+                skipped+=1;continue
             error=None
             for attempt in range(a.max_retries+1):
                 try:
                     reply=fetch(sym,fetch_start.isoformat(),end.isoformat(),key,a.timeout)
                     rows=parse(sym,reply,fetch_start.isoformat(),end.isoformat())
+                    # A successful HTTP response without a new valid candle is not a resumption.
+                    resumed=bool(watched and any(r[1]==end.isoformat() and r[6]>0 for r in rows))
+                    if watched and not resumed:
+                        # Preserve valid older bars returned during the daily probe.
+                        with db:
+                            for row in rows:
+                                old=db.execute("SELECT open,high,low,close,volume_zhang FROM daily_ohlcv WHERE symbol=? AND day=?",row[:2]).fetchone()
+                                if old is not None and any(abs(float(x)-float(y))>1e-6 for x,y in zip(old,row[2:])):
+                                    raise ValueError("existing OHLCV conflict "+str(row[:2]))
+                                db.execute("INSERT OR IGNORE INTO daily_ohlcv VALUES(?,?,?,?,?,?,?)",row)
+                            db.execute("UPDATE suspension_watch SET last_probe_day=?,last_probe_result=? WHERE symbol=?",
+                                       (end.isoformat(),"no_new_candle",sym))
+                        done+=1;error=None;break
                     with db:
                         for row in rows:
                             old=db.execute("SELECT open,high,low,close,volume_zhang FROM daily_ohlcv WHERE symbol=? AND day=?",row[:2]).fetchone()
@@ -108,6 +180,7 @@ def main():
                         db.execute("INSERT INTO fetch_status VALUES(?,?,?) ON CONFLICT(symbol) DO UPDATE SET covered_through=excluded.covered_through,last_success_utc=excluded.last_success_utc",
                             (sym,end.isoformat(),dt.datetime.now(dt.timezone.utc).isoformat()))
                         db.execute("DELETE FROM fetch_error WHERE symbol=?",(sym,))
+                        if resumed: db.execute("DELETE FROM suspension_watch WHERE symbol=?",(sym,))
                     done+=1;error=None;break
                 except (urllib.error.HTTPError,urllib.error.URLError,TimeoutError,ValueError,KeyError) as ex:
                     error=f"{type(ex).__name__}: {getattr(ex,'code','')} {ex}"
@@ -118,13 +191,32 @@ def main():
                         time.sleep(wait)
                 finally:
                     time.sleep(a.delay)
+            if error and not watched and error.startswith("HTTPError: 404 "):
+                source=twse_suspension_status(sym,end,a.timeout)
+                if source:
+                    with db:
+                        db.execute("INSERT OR IGNORE INTO suspension_watch(symbol,confirmed_source,confirmed_at_utc,last_probe_day,last_probe_result) VALUES(?,?,?,?,?)",
+                                   (sym,source,dt.datetime.now(dt.timezone.utc).isoformat(),end.isoformat(),"http404"))
+                        db.execute("DELETE FROM fetch_error WHERE symbol=?",(sym,))
+                    print(f"[SUSPENSION WATCH] {sym} official TWSE confirmation; daily watch activated",flush=True)
+                    watched=(end.isoformat(),)
+                    error=None
+                    done+=1
+            if error and watched and error.startswith("HTTPError: 404 "):
+                with db:
+                    db.execute("UPDATE suspension_watch SET last_probe_day=?,last_probe_result=? WHERE symbol=?",
+                               (end.isoformat(),"http404",sym))
+                print(f"[SUSPENSION WATCH] {sym} daily probe HTTP 404; remains watched",flush=True)
+                error=None
+                done+=1
             if error:
                 failed+=1
                 with db:db.execute("INSERT INTO fetch_error VALUES(?,?,?) ON CONFLICT(symbol) DO UPDATE SET error=excluded.error,last_error_utc=excluded.last_error_utc",
                     (sym,error[:400],dt.datetime.now(dt.timezone.utc).isoformat()))
                 print(f"[FAIL] {index}/{total} {sym} {error}",flush=True)
             elif index%25==0:print(f"[PROGRESS] {index}/{total} done={done} skipped={skipped} failed={failed}",flush=True)
-        print(json.dumps({"status":"COMPLETE" if failed==0 else "INCOMPLETE","universe":total,"processed":done,"skipped":skipped,"failed":failed,"database":str(a.db),"request_checked_through":end.isoformat(),"note":"Successful query coverage only, not proof of per-day trades or calendar completeness. Staging only; A/B/LINE unchanged"},ensure_ascii=False))
+        watch_pending=db.execute("SELECT COUNT(*) FROM suspension_watch").fetchone()[0]
+        print(json.dumps({"status":"INCOMPLETE" if failed else ("WATCH_PENDING" if watch_pending else "COMPLETE"),"universe":total,"processed":done,"skipped":skipped,"failed":failed,"suspension_watch_pending":watch_pending,"database":str(a.db),"request_checked_through":end.isoformat(),"note":"Successful query coverage only, not proof of per-day trades or calendar completeness. Staging only; A/B/LINE unchanged"},ensure_ascii=False))
         if failed:raise SystemExit(2)
     finally:db.close()
 
