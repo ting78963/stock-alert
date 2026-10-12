@@ -123,7 +123,13 @@ def main():
                     # A successful HTTP response without a new valid candle is not a resumption.
                     resumed=bool(watched and any(r[1]==end.isoformat() and r[6]>0 for r in rows))
                     if watched and not resumed:
+                        # Preserve valid older bars returned during the daily probe.
                         with db:
+                            for row in rows:
+                                old=db.execute("SELECT open,high,low,close,volume_zhang FROM daily_ohlcv WHERE symbol=? AND day=?",row[:2]).fetchone()
+                                if old is not None and any(abs(float(x)-float(y))>1e-6 for x,y in zip(old,row[2:])):
+                                    raise ValueError("existing OHLCV conflict "+str(row[:2]))
+                                db.execute("INSERT OR IGNORE INTO daily_ohlcv VALUES(?,?,?,?,?,?,?)",row)
                             db.execute("UPDATE suspension_watch SET last_probe_day=?,last_probe_result=? WHERE symbol=?",
                                        (end.isoformat(),"no_new_candle",sym))
                         done+=1;error=None;break
