@@ -24,10 +24,11 @@ def verify_a_history(snapshot_day, db_path="/var/data/stock-alert/shared_history
         conn=sqlite3.connect(f"file:{db}?mode=ro",uri=True,timeout=5)
         try:
             status=conn.execute("SELECT symbol,covered_through FROM fetch_status").fetchall()
+            suspended={row[0] for row in conn.execute("SELECT symbol FROM suspension_watch")}
             count=conn.execute("SELECT COUNT(DISTINCT symbol) FROM daily_ohlcv").fetchone()[0]
         finally: conn.close()
         if not status: raise AHistoryPreflightError("fetch_status empty")
-        bad=[s for s,covered in status if not covered or str(covered)[:10]<required]
+        bad=[s for s,covered in status if s not in suspended and (not covered or str(covered)[:10]<required)]
         if bad: raise AHistoryPreflightError(f"SQLite watermark incomplete count={len(bad)} sample={bad[:5]}")
         if count<len(status): raise AHistoryPreflightError(f"daily stock count {count} < status count {len(status)}")
         return required
