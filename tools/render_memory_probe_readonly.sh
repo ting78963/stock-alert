@@ -20,7 +20,8 @@ for ((i=0;i<samples;i++)); do
     pid="${dir##*/}"
     [[ -r "$dir/cmdline" && -r "$dir/status" ]] || continue
     cmd="$(tr '\0' ' ' < "$dir/cmdline" 2>/dev/null || true)"
-    [[ "$cmd" == *python* ]] || continue
+    exe="$(readlink "$dir/exe" 2>/dev/null || true)"
+    [[ "$exe" == *python* ]] || continue
     role=other_python
     [[ "$cmd" == *production_worker_v1.py* ]] && role=B_main
     [[ "$cmd" == *fugle_a_scanner_v2_4.py* ]] && role=A_scanner
