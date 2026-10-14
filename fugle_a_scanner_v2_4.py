@@ -128,13 +128,8 @@ def append_event(obj: Dict[str, Any]) -> None:
 
 
 def append_queue_shadow(d: str, obj: Dict[str, Any]) -> None:
-    """Outcome-blind shadow audit only. Never controls production ordering."""
-    daydir = SHADOW_AUDIT_ROOT / d
-    daydir.mkdir(parents=True, exist_ok=True)
-    p = daydir / "queue_shadow_audit.jsonl"
-    row = {"ts": now_tw().isoformat(timespec="microseconds"), **obj}
-    with p.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    """Shadow audit disabled. Production logic unchanged."""
+    return
 
 
 def record_a_scan_mother_identity(d: str, symbol: str) -> None:
