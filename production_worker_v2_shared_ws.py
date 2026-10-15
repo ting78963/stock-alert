@@ -65,17 +65,23 @@ def f14_ensure_day(day):
         # Same lifecycle lock: exactly one rollover bootstrap; no half-switched DONE/CLAIM state.
         f14_bootstrap(day)
 
-def retire_runner(k,r=None):
+def retire_runner(k,r=None,reason="line"):
     sid=k.split("|",1)[1]
-    if r is not None:r.retired=True
     with _lock:
         if r is not None and _runners.get(k) is not r: return
+        if r is not None:r.retired=True
         q=_queues.pop(k,None);_runners.pop(k,None);_launching.discard(k);_subscribed.discard(sid)
         _last_ws_minute.pop(k,None);_last_ws_fingerprint.pop(k,None);_last_overflow_log.pop(k,None)
     if q is not None:
-        try:q.put_nowait(None)
-        except Exception:pass
-    print(f"[B RETIRE] {k} successful LINE -> runtime released",flush=True)
+        with q.mutex:
+            dropped=len(q.queue)
+            q.queue.clear()
+            q.unfinished_tasks-=dropped
+            if q.unfinished_tasks<0:raise RuntimeError("B retirement queue accounting underflow")
+            q.queue.append(None)
+            q.unfinished_tasks+=1
+            q.not_empty.notify()
+    print(f"[B RETIRE] {k} reason={reason}; stop requested",flush=True)
 def key(day,sid): return f"{day}|{str(sid).zfill(4)}"
 def ws_fingerprint(row): return (row["minute"],row["open"],row["high"],row["low"],row["close"],row["volume"])
 
@@ -93,12 +99,17 @@ def preflight():
 
 def runner_module(): return runpy.run_path(str(BR),run_name="__shared_b_runner__")
 
+def b_time_expired(now=None):
+    n=now or now_tpe()
+    return (n.hour,n.minute)>=(13,31)
+
 def worker_loop(k,r,q):
     while True:
         item=q.get()
-        if item is None:return
         try:
+            if item is None:return
             with r.lock:
+                if getattr(r,"retired",False) or b_time_expired():continue
                 a,c,d=r.merge([item],"ws")
                 if r.first_ws_candle is None:r.first_ws_candle=item["minute"]
                 r.last_ws_candle=item["minute"]
@@ -106,11 +117,14 @@ def worker_loop(k,r,q):
             with _lock:
                 if k in _runners and not getattr(r,"retired",False):
                     _last_ws_minute[k]=item["minute"];_last_ws_fingerprint[k]=ws_fingerprint(item)
+                elif getattr(r,"retired",False):continue
                 else:return
         except BaseException as e:
             print(f"[B FAIL CLOSED] {k} {type(e).__name__}: {e}; runner disabled",flush=True)
             with _lock:_runners.pop(k,None);_queues.pop(k,None)
             return
+        finally:
+            q.task_done()
 
 def launch_b(payload,dry_run=False):
     for x in ("stock_id","date","discovered_at"):
@@ -118,6 +132,8 @@ def launch_b(payload,dry_run=False):
     sid=str(payload["stock_id"]).zfill(4); day=str(payload["date"])[:10]; disc=str(payload["discovered_at"]); stock_name=str(payload.get("name") or payload.get("stock_name") or "").strip(); k=key(day,sid)
     f14_ensure_day(day)
     with _lock:
+        if not dry_run and b_time_expired():
+            return {"ok":True,"session_closed":True,"launched":False,"key":k}
         if k in _f14_done:
             print(f"[F14 SKIP DONE] {k} before Runner construction",flush=True)
             return {"ok":True,"already_done":True,"launched":False,"key":k}
@@ -138,6 +154,9 @@ def launch_b(payload,dry_run=False):
             return {"ok":True,"already_done":True,"launched":False,"key":k,"line_completed_during_startup":True}
         q=queue.Queue(maxsize=2000)
         with _lock:
+            if b_time_expired():
+                _launching.discard(k)
+                return {"ok":True,"session_closed":True,"launched":False,"key":k}
             _runners[k]=r;_queues[k]=q;_launching.discard(k)
         threading.Thread(target=worker_loop,args=(k,r,q),daemon=True).start()
         subscribe_symbol(sid)
@@ -192,7 +211,9 @@ def route_message(msg):
             day=dt.strftime("%Y-%m-%d"); minute=dt.strftime("%H:%M:00")
         except:return
         k=key(day,sid)
-        with _lock:q=_queues.get(k)
+        with _lock:
+            if b_time_expired():return
+            q=_queues.get(k)
         if q is None:return
         row={"date":day,"stock_id":sid,"minute":minute,"open":x["open"],"high":x["high"],"low":x["low"],"close":x["close"],"volume":x["volume"]}
         # Coalesce repeated Fugle revisions of the same stock+minute. B consumes
@@ -239,7 +260,7 @@ def shared_ws_loop():
         for k,r in rs:
             try:
                 with r.lock:
-                    if getattr(r,"retired",False):continue
+                    if getattr(r,"retired",False) or b_time_expired():continue
                     r.rest_reconcile("reconnect")
             except BaseException as e:print(f"[B RECONCILE FAIL CLOSED] {k}: {e}",flush=True)
         time.sleep(backoff);backoff=min(backoff*2,30)
@@ -249,8 +270,11 @@ def clock_loop():
         with _lock:rs=list(_runners.items())
         for k,r in rs:
             try:
+                if b_time_expired():
+                    retire_runner(k,r,reason="13:31")
+                    continue
                 with r.lock:
-                    if getattr(r,"retired",False):continue
+                    if getattr(r,"retired",False) or b_time_expired():continue
                     r.evaluate_completed("shared_clock_completed_minute")
             except BaseException as e:print(f"[B CLOCK FAIL CLOSED] {k}: {e}",flush=True)
         time.sleep(1)
