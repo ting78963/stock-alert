@@ -85,7 +85,8 @@ def _b_stop_queue_after_line(q):
         if q.unfinished_tasks==0:q.all_tasks_done.notify_all()
     return dropped
 
-def retire_runner(k,r=None):
+def retire_runner(k,r=None,reason="line"):
+    """Common B retirement: LINE success or 13:31 timeout; never mark F14 here."""
     sid=k.split("|",1)[1]
     if r is not None:r.retired=True
     with _lock:
@@ -94,8 +95,8 @@ def retire_runner(k,r=None):
         _last_ws_minute.pop(k,None);_last_ws_fingerprint.pop(k,None);_last_overflow_log.pop(k,None)
     if q is not None:
         dropped=_b_stop_queue_after_line(q)
-        print(f"[B LINE STOP REQUESTED] {k} queued_ws_discarded={dropped}; thread exit pending",flush=True)
-    print(f"[B RETIRE] {k} successful LINE -> registry removed; thread exit not yet verified",flush=True)
+        print(f"[B STOP REQUESTED] {k} reason={reason} queued_ws_discarded={dropped}",flush=True)
+    print(f"[B RETIRE] {k} reason={reason}; registry removed; worker exit requested",flush=True)
 def key(day,sid): return f"{day}|{str(sid).zfill(4)}"
 def ws_fingerprint(row): return (row["minute"],row["open"],row["high"],row["low"],row["close"],row["volume"])
 
@@ -149,6 +150,8 @@ def worker_loop(k,r,q):
             if item is None:return
             try:
                 with r.lock:
+                    if getattr(r,"retired",False) or b_time_expired():
+                        continue
                     a,c,d=r.merge([item],"ws")
                     if r.first_ws_candle is None:r.first_ws_candle=item["minute"]
                     r.last_ws_candle=item["minute"]
@@ -176,7 +179,7 @@ def launch_b(payload,dry_run=False):
     sid=str(payload["stock_id"]).zfill(4); day=str(payload["date"])[:10]; disc=str(payload["discovered_at"]); stock_name=str(payload.get("name") or payload.get("stock_name") or "").strip(); k=key(day,sid)
     f14_ensure_day(day)
     with _lock:
-        if not dry_run and not b_session_admission(day):
+        if not dry_run and (not b_session_admission(day) or b_time_expired()):
             print(f"[B EOD ADMISSION CLOSED] {k}; no new runner",flush=True)
             return {"ok":True,"session_closed":True,"launched":False,"key":k}
         if k in _f14_done:
@@ -199,7 +202,7 @@ def launch_b(payload,dry_run=False):
             return {"ok":True,"already_done":True,"launched":False,"key":k,"line_completed_during_startup":True}
         q=queue.Queue(maxsize=2000)
         with _lock:
-            if not b_session_admission(day):
+            if not b_session_admission(day) or b_time_expired():
                 _launching.discard(k)
                 print(f"[B EOD INFLIGHT REJECTED] {k}; startup completed after close",flush=True)
                 return {"ok":True,"session_closed":True,"launched":False,"key":k}
@@ -264,7 +267,7 @@ def route_message(msg):
         # Queue lookup, revision coalescing and publish are atomic with EOD close.
         # Lock order: _lock -> q.mutex; never acquire r.lock here.
         with _lock:
-            if k in _b_eod_closing:return
+            if k in _b_eod_closing or b_time_expired():return
             q=_queues.get(k)
             if q is None:return
             if _last_ws_minute.get(k)==minute and _last_ws_fingerprint.get(k)==ws_fingerprint(row):return
@@ -307,18 +310,26 @@ def shared_ws_loop():
         for k,r in rs:
             try:
                 with r.lock:
-                    if getattr(r,"retired",False):continue
+                    if getattr(r,"retired",False) or b_time_expired():continue
                     r.rest_reconcile("reconnect")
             except BaseException as e:print(f"[B RECONCILE FAIL CLOSED] {k}: {e}",flush=True)
         time.sleep(backoff);backoff=min(backoff*2,30)
+
+def b_time_expired(now=None):
+    n=now or now_tpe()
+    return (n.hour,n.minute)>=(13,31)
 
 def clock_loop():
     while True:
         with _lock:rs=list(_runners.items())
         for k,r in rs:
             try:
+                if b_time_expired():
+                    # Never hold r.lock while retiring; LINE callback can retire inside evaluation.
+                    retire_runner(k,r,reason="13:31")
+                    continue
                 with r.lock:
-                    if getattr(r,"retired",False):continue
+                    if getattr(r,"retired",False) or b_time_expired():continue
                     r.evaluate_completed("shared_clock_completed_minute")
             except BaseException as e:print(f"[B CLOCK FAIL CLOSED] {k}: {e}",flush=True)
         time.sleep(1)
