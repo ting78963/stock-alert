@@ -22,7 +22,6 @@ class DrainController:
     def __init__(self):
         self._lock=threading.RLock()
         self._closing=set()
-        self._inflight={}
     def admit(self,key,q,item):
         with self._lock:
             if key in self._closing:return False
