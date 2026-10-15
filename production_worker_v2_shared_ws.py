@@ -93,6 +93,13 @@ def preflight():
 
 def runner_module(): return runpy.run_path(str(BR),run_name="__shared_b_runner__")
 
+# EOD v1 research integration: strict session admission, independent of A/VCP ordering.
+def b_session_admission(day, now=None):
+    n=now or now_tpe()
+    if str(day) != n.date().isoformat():
+        return False
+    return (n.hour,n.minute) < (13,30) and (n.hour,n.minute) >= (9,0)
+
 def worker_loop(k,r,q):
     while True:
         item=q.get()
@@ -118,6 +125,9 @@ def launch_b(payload,dry_run=False):
     sid=str(payload["stock_id"]).zfill(4); day=str(payload["date"])[:10]; disc=str(payload["discovered_at"]); stock_name=str(payload.get("name") or payload.get("stock_name") or "").strip(); k=key(day,sid)
     f14_ensure_day(day)
     with _lock:
+        if not b_session_admission(day):
+            print(f"[B EOD ADMISSION CLOSED] {k}; no new runner",flush=True)
+            return {"ok":True,"session_closed":True,"launched":False,"key":k}
         if k in _f14_done:
             print(f"[F14 SKIP DONE] {k} before Runner construction",flush=True)
             return {"ok":True,"already_done":True,"launched":False,"key":k}
@@ -138,6 +148,10 @@ def launch_b(payload,dry_run=False):
             return {"ok":True,"already_done":True,"launched":False,"key":k,"line_completed_during_startup":True}
         q=queue.Queue(maxsize=2000)
         with _lock:
+            if not b_session_admission(day):
+                _launching.discard(k)
+                print(f"[B EOD INFLIGHT REJECTED] {k}; startup completed after close",flush=True)
+                return {"ok":True,"session_closed":True,"launched":False,"key":k}
             _runners[k]=r;_queues[k]=q;_launching.discard(k)
         threading.Thread(target=worker_loop,args=(k,r,q),daemon=True).start()
         subscribe_symbol(sid)
