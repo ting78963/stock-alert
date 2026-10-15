@@ -16,6 +16,7 @@ LINE_SEND=os.environ.get("TREND_LINE_SEND","0").strip().lower() in {"1","true","
 STATE_ROOT=Path(os.environ.get("PRODUCTION_STATE_DIR",str(BASE/"_production_output")))
 _lock=threading.RLock(); _runners={}; _queues={}; _launching=set(); _subscribed=set(); _ws_app=None; _ws_ready=False
 _last_ws_minute={}; _last_ws_fingerprint={}; _last_overflow_log={}
+_worker_threads={}  # Research only: thread handles for verifiable EOD join
 _f14_done=set(); _f14_day=None; _f14_path=None
 
 def now_tpe(): return datetime.now(TPE)
@@ -103,21 +104,25 @@ def b_session_admission(day, now=None):
 def worker_loop(k,r,q):
     while True:
         item=q.get()
-        if item is None:return
         try:
-            with r.lock:
-                a,c,d=r.merge([item],"ws")
-                if r.first_ws_candle is None:r.first_ws_candle=item["minute"]
-                r.last_ws_candle=item["minute"]
-                r.evaluate_completed("shared_websocket_completed_minute")
-            with _lock:
-                if k in _runners and not getattr(r,"retired",False):
-                    _last_ws_minute[k]=item["minute"];_last_ws_fingerprint[k]=ws_fingerprint(item)
-                else:return
-        except BaseException as e:
-            print(f"[B FAIL CLOSED] {k} {type(e).__name__}: {e}; runner disabled",flush=True)
-            with _lock:_runners.pop(k,None);_queues.pop(k,None)
-            return
+            if item is None:return
+            try:
+                with r.lock:
+                    a,c,d=r.merge([item],"ws")
+                    if r.first_ws_candle is None:r.first_ws_candle=item["minute"]
+                    r.last_ws_candle=item["minute"]
+                    r.evaluate_completed("shared_websocket_completed_minute")
+                with _lock:
+                    if k in _runners and not getattr(r,"retired",False):
+                        _last_ws_minute[k]=item["minute"];_last_ws_fingerprint[k]=ws_fingerprint(item)
+                    else:return
+            except BaseException as e:
+                print(f"[B FAIL CLOSED] {k} {type(e).__name__}: {e}; runner disabled",flush=True)
+                with _lock:_runners.pop(k,None);_queues.pop(k,None)
+                return
+        finally:
+            # Every consumed item, including sentinel and failures, is accounted for.
+            q.task_done()
 
 def launch_b(payload,dry_run=False):
     for x in ("stock_id","date","discovered_at"):
@@ -153,7 +158,10 @@ def launch_b(payload,dry_run=False):
                 print(f"[B EOD INFLIGHT REJECTED] {k}; startup completed after close",flush=True)
                 return {"ok":True,"session_closed":True,"launched":False,"key":k}
             _runners[k]=r;_queues[k]=q;_launching.discard(k)
-        threading.Thread(target=worker_loop,args=(k,r,q),daemon=True).start()
+        t=threading.Thread(target=worker_loop,args=(k,r,q),name=f"b-runner-{sid}",daemon=True)
+        with _lock:
+            _worker_threads[k]=t
+        t.start()
         subscribe_symbol(sid)
         print(f"[B START] {k} shared-WS LINE={'ON' if LINE_SEND else 'DRY'}",flush=True)
         return {"ok":True,"duplicate":False,"launched":True,"key":k,"shared_ws":True}
