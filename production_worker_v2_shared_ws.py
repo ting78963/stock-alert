@@ -125,7 +125,7 @@ def launch_b(payload,dry_run=False):
     sid=str(payload["stock_id"]).zfill(4); day=str(payload["date"])[:10]; disc=str(payload["discovered_at"]); stock_name=str(payload.get("name") or payload.get("stock_name") or "").strip(); k=key(day,sid)
     f14_ensure_day(day)
     with _lock:
-        if not b_session_admission(day):
+        if not dry_run and not b_session_admission(day):
             print(f"[B EOD ADMISSION CLOSED] {k}; no new runner",flush=True)
             return {"ok":True,"session_closed":True,"launched":False,"key":k}
         if k in _f14_done:
