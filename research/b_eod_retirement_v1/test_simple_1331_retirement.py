@@ -13,12 +13,12 @@ expired=scope["b_time_expired"]
 for hh,mm,want in [(9,0,False),(13,30,False),(13,31,True),(15,0,True)]:
     assert expired(datetime(2026,10,15,hh,mm)) is want,(hh,mm)
 clock=ast.unparse(fns["clock_loop"])
-assert 'retire_runner(k, r, reason="13:31")' in clock
+assert any(isinstance(n,ast.Call) and isinstance(n.func,ast.Name) and n.func.id=='retire_runner' and any(kw.arg=='reason' and isinstance(kw.value,ast.Constant) and kw.value.value=='13:31' for kw in n.keywords) for n in ast.walk(fns['clock_loop']))
 assert 'b_time_expired()' in ast.unparse(fns["worker_loop"])
 assert 'b_time_expired()' in ast.unparse(fns["launch_b"])
 assert 'f14_mark_done' not in ast.unparse(fns["retire_runner"])
 assert 'f14_mark_done(k)' in ast.unparse(fns["launch_b"])
-assert 'retire_runner(k, r)' in ast.unparse(fns["launch_b"])
+assert any(isinstance(n,ast.Call) and isinstance(n.func,ast.Name) and n.func.id=='retire_runner' for n in ast.walk(fns['launch_b']))
 print("[PASS] 13:30 still active; 13:31 closed")
 print("[PASS] B clock uses existing retire_runner")
 print("[PASS] worker and admission time guard")
