@@ -17,6 +17,7 @@ STATE_ROOT=Path(os.environ.get("PRODUCTION_STATE_DIR",str(BASE/"_production_outp
 _lock=threading.RLock(); _runners={}; _queues={}; _launching=set(); _subscribed=set(); _ws_app=None; _ws_ready=False
 _last_ws_minute={}; _last_ws_fingerprint={}; _last_overflow_log={}
 _worker_threads={}  # Research only: thread handles for verifiable EOD join
+_b_eod_closing=set()  # B-only per-stock queue admission barrier
 _f14_done=set(); _f14_day=None; _f14_path=None
 
 def now_tpe(): return datetime.now(TPE)
@@ -214,26 +215,26 @@ def route_message(msg):
             day=dt.strftime("%Y-%m-%d"); minute=dt.strftime("%H:%M:00")
         except:return
         k=key(day,sid)
-        with _lock:q=_queues.get(k)
-        if q is None:return
         row={"date":day,"stock_id":sid,"minute":minute,"open":x["open"],"high":x["high"],"low":x["low"],"close":x["close"],"volume":x["volume"]}
-        # Coalesce repeated Fugle revisions of the same stock+minute. B consumes
-        # completed-minute state; exact duplicates can be dropped, but a changed
-        # same-minute OHLCV revision must reach Runner.merge() for reconciliation.
+        # Queue lookup, revision coalescing and publish are atomic with EOD close.
+        # Lock order: _lock -> q.mutex; never acquire r.lock here.
         with _lock:
+            if k in _b_eod_closing:return
+            q=_queues.get(k)
+            if q is None:return
             if _last_ws_minute.get(k)==minute and _last_ws_fingerprint.get(k)==ws_fingerprint(row):return
-        with q.mutex:
-            for i in range(len(q.queue)-1,-1,-1):
-                z=q.queue[i]
-                if isinstance(z,dict) and z.get("minute")==minute:
-                    q.queue[i]=row
-                    return
-        try:q.put_nowait(row)
-        except queue.Full:
-            now=time.monotonic(); last=_last_overflow_log.get(k,0.0)
-            if now-last>=5.0:
-                _last_overflow_log[k]=now
-                print(f"[B FAIL CLOSED] {k} queue overflow size={q.qsize()}; NO PRODUCTION SIGNAL",flush=True)
+            with q.mutex:
+                for i in range(len(q.queue)-1,-1,-1):
+                    z=q.queue[i]
+                    if isinstance(z,dict) and z.get("minute")==minute:
+                        q.queue[i]=row
+                        return
+            try:q.put_nowait(row)
+            except queue.Full:
+                now=time.monotonic(); last=_last_overflow_log.get(k,0.0)
+                if now-last>=5.0:
+                    _last_overflow_log[k]=now
+                    print(f"[B FAIL CLOSED] {k} queue overflow size={q.qsize()}; NO PRODUCTION SIGNAL",flush=True)
         return
 
 def shared_ws_loop():
