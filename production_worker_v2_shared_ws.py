@@ -67,6 +67,24 @@ def f14_ensure_day(day):
         # Same lifecycle lock: exactly one rollover bootstrap; no half-switched DONE/CLAIM state.
         f14_bootstrap(day)
 
+def _b_stop_queue_after_line(q):
+    """LINE-confirmed B only: discard queued WS updates and enqueue exit sentinel.
+
+    The active worker item is not touched; Queue unfinished_tasks remains exact.
+    Never blocks inside the LINE callback, which may run on the worker itself.
+    """
+    with q.mutex:
+        dropped=len(q.queue)
+        q.queue.clear()
+        q.unfinished_tasks-=dropped
+        if q.unfinished_tasks<0:
+            raise RuntimeError("B queue unfinished_tasks underflow")
+        q.queue.append(None)
+        q.unfinished_tasks+=1
+        q.not_empty.notify()
+        if q.unfinished_tasks==0:q.all_tasks_done.notify_all()
+    return dropped
+
 def retire_runner(k,r=None):
     sid=k.split("|",1)[1]
     if r is not None:r.retired=True
@@ -75,9 +93,9 @@ def retire_runner(k,r=None):
         q=_queues.pop(k,None);_runners.pop(k,None);_launching.discard(k);_subscribed.discard(sid)
         _last_ws_minute.pop(k,None);_last_ws_fingerprint.pop(k,None);_last_overflow_log.pop(k,None)
     if q is not None:
-        try:q.put_nowait(None)
-        except Exception:pass
-    print(f"[B RETIRE] {k} successful LINE -> runtime released",flush=True)
+        dropped=_b_stop_queue_after_line(q)
+        print(f"[B LINE STOP REQUESTED] {k} queued_ws_discarded={dropped}; thread exit pending",flush=True)
+    print(f"[B RETIRE] {k} successful LINE -> registry removed; thread exit not yet verified",flush=True)
 def key(day,sid): return f"{day}|{str(sid).zfill(4)}"
 def ws_fingerprint(row): return (row["minute"],row["open"],row["high"],row["low"],row["close"],row["volume"])
 
@@ -138,7 +156,12 @@ def worker_loop(k,r,q):
                 with _lock:
                     if k in _runners and not getattr(r,"retired",False):
                         _last_ws_minute[k]=item["minute"];_last_ws_fingerprint[k]=ws_fingerprint(item)
-                    else:return
+                    else:
+                        # Successful LINE retirement: consume the queued stop
+                        # sentinel rather than exiting with unfinished queue work.
+                        if getattr(r,"retired",False):
+                            continue
+                        return
             except BaseException as e:
                 print(f"[B FAIL CLOSED] {k} {type(e).__name__}: {e}; runner disabled",flush=True)
                 with _lock:_runners.pop(k,None);_queues.pop(k,None)
