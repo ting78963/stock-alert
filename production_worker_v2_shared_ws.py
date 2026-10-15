@@ -402,7 +402,10 @@ def self_test():
     q1=queue.Queue();q2=queue.Queue()
     _queues["2026-09-29|3714"]=q1;_queues["2026-09-29|2330"]=q2
     synthetic={"data":{"symbol":"3714","date":"2026-09-29T10:23:00+08:00","open":10,"high":11,"low":9,"close":10.5,"volume":100}}
-    route_message(json.dumps(synthetic))
+    # Synthetic routing test is clock-independent; production 13:31 gate stays unchanged.
+    from unittest.mock import patch
+    with patch.dict(route_message.__globals__, {"b_time_expired": lambda now=None: False}):
+        route_message(json.dumps(synthetic))
     assert q1.qsize()==1 and q2.qsize()==0
     got=q1.get_nowait();assert got["stock_id"]=="3714" and got["minute"]=="10:23:00"
     _queues.clear()
