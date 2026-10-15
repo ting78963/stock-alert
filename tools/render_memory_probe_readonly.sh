@@ -57,11 +57,11 @@ for ((i=0;i<samples;i++)); do
     threads="$(awk '/^Threads:/{print $2}' "$dir/status" 2>/dev/null)"
     cmd="${cmd//,/;}"
     cmd="${cmd//\"/\"\"}"
-    printf '%s,%s,%s,%s,%s,%s,%s,"%s",%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' "$ts" "$role" "$pid" "${pp:-NA}" "${rss:-NA}" "${hwm:-NA}" "${threads:-NA}" "$cmd" "$current" "$peak" "$limit" "$oom" "$anon" "$file" "$slab" "$kernel" "$inactive_file" "$active_file" "$maxevents" "$oomevents" >> "$outfile"
+    printf '%s,%s,%s,%s,%s,%s,%s,"%s",%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' "$ts" "$role" "$pid" "${pp:-NA}" "${rss:-NA}" "${hwm:-NA}" "${threads:-NA}" "$cmd" "$current" "$peak" "$limit" "$oom" "$anon" "$file" "$slab" "$kernel" "$inactive_file" "$active_file" "$maxevents" "$oomevents" >> "$outfile"
     found=1
   done
   if ((found==0)); then
-    printf '%s,none,NA,NA,NA,NA,NA,"",%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' "$ts" "$current" "$peak" "$limit" "$oom" "$anon" "$file" "$slab" "$kernel" "$inactive_file" "$active_file" "$maxevents" "$oomevents" >> "$outfile"
+    printf '%s,none,NA,NA,NA,NA,NA,"",%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' "$ts" "$current" "$peak" "$limit" "$oom" "$anon" "$file" "$slab" "$kernel" "$inactive_file" "$active_file" "$maxevents" "$oomevents" >> "$outfile"
   fi
   if ((i+1<samples)); then sleep "$interval"; fi
 done
