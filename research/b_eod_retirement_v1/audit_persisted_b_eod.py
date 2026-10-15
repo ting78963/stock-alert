@@ -14,7 +14,7 @@ def run(root,day):
     for folder in sorted(base.iterdir()):
         if not folder.is_dir():continue
         sid=folder.name.zfill(4)
-        state=folder/"state.json"
+        state=folder/"runner_state.json"
         issues=[]; st={}
         if not state.is_file():issues.append("missing_state")
         else:
