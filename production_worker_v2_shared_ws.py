@@ -102,6 +102,28 @@ def b_session_admission(day, now=None):
         return False
     return (n.hour,n.minute) < (13,30) and (n.hour,n.minute) >= (9,0)
 
+def b_eod_begin_close(k):
+    """Atomic per-B WS admission barrier; no A/VCP/new-A coupling."""
+    with _lock:
+        if k not in _runners or k not in _queues:
+            return False
+        _b_eod_closing.add(k)
+        return True
+
+def b_eod_queue_drained(k):
+    """Nonblocking observation only; worker thread exit is a separate gate."""
+    with _lock:
+        q=_queues.get(k)
+        if q is None:return False
+        with q.mutex:
+            return q.unfinished_tasks==0 and not q.queue
+
+def b_eod_thread_exited(k):
+    """Never infer exit from registry removal alone."""
+    with _lock:
+        t=_worker_threads.get(k)
+        return t is not None and not t.is_alive()
+
 def worker_loop(k,r,q):
     while True:
         item=q.get()
