@@ -41,7 +41,19 @@ class Tests(unittest.TestCase):
 
     def test_self_test_dry_run_not_blocked(self):
         node = self.functions["launch_b"]
-        self.assertIn("not dry_run and not b_session_admission(day)",ast.unparse(node))
+        # Inspect boolean structure, not ast.unparse() whitespace/parentheses.
+        guards = [n.test for n in ast.walk(node) if isinstance(n, ast.If)
+                  and isinstance(n.test, ast.BoolOp) and isinstance(n.test.op, ast.And)]
+        def is_not_name(x, name):
+            return isinstance(x, ast.UnaryOp) and isinstance(x.op, ast.Not) and isinstance(x.operand, ast.Name) and x.operand.id == name
+        def is_not_admission(x):
+            return (isinstance(x, ast.UnaryOp) and isinstance(x.op, ast.Not)
+                    and isinstance(x.operand, ast.Call)
+                    and isinstance(x.operand.func, ast.Name)
+                    and x.operand.func.id == "b_session_admission")
+        self.assertTrue(any(len(g.values) == 2 and is_not_name(g.values[0], "dry_run")
+                            and is_not_admission(g.values[1]) for g in guards),
+                        "live admission must be gated while historical dry_run bypasses it")
 
 if __name__=="__main__":
     print("RESEARCH ONLY | AST TEST | NO PRODUCTION IMPORT | NO API | NO LINE")
