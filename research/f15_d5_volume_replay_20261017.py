@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""F15 D5 v3: offline archive audit and volume-only comparison. No network/import side effects.
+"""F15 D5 v4: offline archive audit and volume-only comparison. No network/import side effects.
 
 Schema checked against f15_trajectory_store.py / f15_eod_signal_report.py.
 Minute M completion at M+1 follows B completed_cutoff; this is a MODEL,
 not evidence of historical arrival. No actual handoff/availability conclusions.
-Missing rows are never filled. Explicit volume=0 rows are observed zero volume;
+Source rows are never changed. A separate hypothetical no-new-trades grid may
+carry cumulative volume across unknown gaps. Explicit volume=0 rows are observed zero volume;
 the archive schema has no evidence mechanism proving an absent row was zero.
 """
 import argparse
@@ -183,21 +184,73 @@ def compare(record):
                 completed_bar_model_category=complete_category,
                 completed_bar_model_advance_minutes=complete_delta)
 
+def assumption_compare(record):
+    """Independent scenario, NOT proof of zero trades or live availability.
+
+    At label T use observed cumulative through T, carrying only earlier values.
+    At decision clock T the completion model uses through T-1, never bar T.
+    Initial cumulative=0 before the first observed bar is also an assumption.
+    Every clock minute is evaluated, even when a threshold falls without a bar.
+    """
+    cutoff=tm(record['recognition_label'])
+    observed=dict(record['bars'])
+    cumulative=0.0; previous=0.0; grid=[]; timeline=[]
+    for t in range(540,cutoff+1):
+        if t in observed:
+            cumulative=observed[t]
+        grid.append((t,cumulative))
+        timeline.append(dict(minute_label=fmt(t),observed_bar=t in observed,
+            volume_status='OBSERVED' if t in observed else 'ASSUMED_NO_NEW_TRADES_UNVERIFIED',
+            label_model_cumulative=cumulative,
+            completed_model_available_through=fmt(t-1) if t > 540 else None,
+            completed_model_cumulative=previous,
+            thresholds={k:next((v for start,v in reversed(rule) if t >= start),None)
+                        for k,rule in RULES.items()}))
+        previous=cumulative
+    # Reuse v3 comparison math on a fresh grid; raw records remain untouched.
+    comparison=compare(dict(bars=grid,recognition_label=record['recognition_label']))
+    return dict(**comparison, timeline=timeline,
+        assumption='UNKNOWN_ABSENT_MINUTES_HAVE_NO_NEW_TRADES',
+        initial_cumulative_policy='ASSUME_ZERO_BEFORE_FIRST_OBSERVED_BAR',
+        missing_minutes_proven_zero=False,
+        has_unknown_missing_minutes=bool(record['unknown_missing_minutes']),
+        uncertainty='HYPOTHETICAL_VOLUME_ONLY_NOT_HANDOFF_API_AVAILABILITY_OR_TRADE_SIGNAL')
+
+
+def model_summary(rows, completed=False):
+    category_key='completed_bar_model_category' if completed else 'category'
+    delta_key='completed_bar_model_advance_minutes' if completed else 'advance_label_minutes'
+    categories=tuple('D5_ONLY_BY_RECOGNITION_CLOCK_MODEL' if completed and k ==
+                     'D5_ONLY_BY_RECOGNITION_LABEL' else k for k in CATEGORIES)
+    counts=Counter(r[category_key] for r in rows)
+    require(set(counts) <= set(categories) and sum(counts.values()) == len(rows),
+            'MODEL_CATEGORY_PARTITION_FAILURE')
+    deltas=[r[delta_key] for r in rows if r[delta_key] is not None]
+    return dict(n=len(rows),counts={k:counts[k] for k in categories},paired_n=len(deltas),
+                paired_median_advance_minutes_including_same=statistics.median(deltas) if deltas else None)
+
+
 def load(path):
     data=path.read_bytes()
     return json.loads(data.decode('utf-8')), hashlib.sha256(data).hexdigest()
 
 def audit(root):
-    result=dict(version=3, scope='ARCHIVED_F15_DELIVERED_SIGNALS_VOLUME_ONLY',
+    result=dict(version=4, scope='ARCHIVED_F15_DELIVERED_SIGNALS_VOLUME_ONLY',
                 source_status='ARCHIVE_INTERNAL_CONSISTENCY_ONLY',
                 rule_spec_status='IMPLEMENTED_SCHEDULE_ONLY_NO_INDEPENDENT_D5_SPEC',
                 independent_source_completeness='UNVERIFIED_NO_RAW_API_OR_EXTERNAL_EVENT_INVENTORY',
                 actual_availability_conclusion='BLOCKED_NO_ARRIVAL_OR_REVISION_PROVENANCE',
                 handoff_conclusion='BLOCKED_NOT_AN_A_REPLAY',
+                trading_signal_conclusion='BLOCKED_RESEARCH_VOLUME_ONLY',
                 time_policy='LABEL <= recognition; completion MODEL M+1 <= recognition clock; thresholds at decision clock',
                 event_time_policy='Same-day HH:MM[:SS], compared as integer seconds; HH:MM means :00 per B nt()',
                 archived_delay_policy='Validate legacy F15 normt/seconds field separately; exact delay recomputed from event seconds',
                 event_semantics_limit='live_known_time=max(discovery, recognition) per B producer, NOT arrival or emission clock; feed-through is data cursor',
+                strict_v3_policy='eligible/exclusions/summary retain unchanged v3 complete-sample semantics',
+                missing_no_new_trades_scenario=dict(
+                    status='PENDING_SOURCE_AUDIT', eligible=[], exclusions=[],
+                    policy='Independent hypothetical scenario; gaps are NOT proven zero; initial cumulative assumed zero',
+                    uncertainty='NOT_ACTUAL_HANDOFF_API_AVAILABILITY_OR_TRADING_SIGNAL'),
                 files=[], manifests=[], exclusions=[], eligible=[], blocking_errors=[])
     def failure(path, reason):
         result['blocking_errors'].append(dict(path=str(path),reason=str(reason)))
@@ -224,6 +277,11 @@ def audit(root):
                 key=(day.name,r['identity']['stock_id'],r['identity']['signal_class'],r['recognition_label'])
                 require(key not in seen, 'DUPLICATE_IDENTITY'); seen.add(key)
                 entry.update({k:v for k,v in r.items() if k != 'bars'})
+                scenario=result['missing_no_new_trades_scenario']
+                if r['identity']['stock_id'] == '4906':
+                    scenario['exclusions'].append(dict(**entry,reasons=['POLICY_EXCLUDE_4906']))
+                else:
+                    scenario['eligible'].append(dict(**entry, **assumption_compare(r)))
                 reasons=[]
                 if r['unknown_missing_minutes']:
                     reasons.append('UNKNOWN_MISSING_MINUTES')
@@ -236,10 +294,13 @@ def audit(root):
             except (ValueError,OSError,TypeError,KeyError) as ex:
                 entry['reasons']=[str(ex)]; result['exclusions'].append(entry)
                 failure(p,ex)
+                result['missing_no_new_trades_scenario']['exclusions'].append(dict(entry))
             result['files'].append(entry)
     # No cohort statistics at all if source membership/identity validation failed.
     if result['blocking_errors']:
         result['status']='BLOCKED_SOURCE_AUDIT'; result['eligible']=[]
+        scenario=result['missing_no_new_trades_scenario']
+        scenario['status']='BLOCKED_SOURCE_AUDIT'; scenario['eligible']=[]
     else:
         result['status']=('AUDITED_SUBSET_LABEL_COMPARISON_ONLY' if result['eligible']
                           else 'NO_ELIGIBLE_SIGNALS_NO_COMPARISON')
@@ -249,6 +310,16 @@ def audit(root):
             eligible=len(result['eligible']),excluded=len(result['exclusions']),
             paired_n=len(deltas), paired_median_label_advance_including_same=statistics.median(deltas) if deltas else None)
         require(sum(counts.values()) == len(result['eligible']), 'CATEGORY_PARTITION_FAILURE')
+        result['strict_v3_completed_bar_model_summary']=model_summary(result['eligible'],True)
+        scenario=result['missing_no_new_trades_scenario']
+        scenario['status']=('HYPOTHETICAL_COMPARISON_ONLY' if scenario['eligible'] else 'NO_ELIGIBLE_SIGNALS_NO_COMPARISON')
+        scenario['label_model_summary']=model_summary(scenario['eligible'])
+        scenario['completed_bar_model_summary']=model_summary(scenario['eligible'],True)
+        scenario['unknown_missing_minutes_total']=sum(len(r['unknown_missing_minutes']) for r in scenario['eligible'])
+        scenario['signals_with_unknown_missing_minutes']=sum(r['has_unknown_missing_minutes'] for r in scenario['eligible'])
+        scenario['missing_minutes_by_location']={
+            key:sum(len(r[key]) for r in scenario['eligible'])
+            for key in ('missing_open','missing_internal','missing_tail')}
     return result
 
 def self_test():
@@ -367,10 +438,92 @@ def self_test():
                 p.write_text(json.dumps(self.seconds_fixture('13:12:07')),encoding='utf-8')
                 (day/'manifest.json').write_text(json.dumps(dict(schema=SCHEMA,date=day.name,files=[p.name],count=1)),encoding='utf-8')
                 r=audit(root)
-                self.assertEqual(r['version'],3)
+                self.assertEqual(r['version'],4)
                 self.assertEqual(r['blocking_errors'],[])
                 self.assertEqual(r['summary']['eligible'],1)
                 self.assertEqual(r['eligible'][0]['delay_seconds_exact'],14527)
+        def hypothetical(self,bars,cutoff):
+            present={t for t,_ in bars}
+            return assumption_compare(dict(bars=bars,recognition_label=fmt(cutoff),
+                unknown_missing_minutes=[fmt(t) for t in range(540,cutoff+1) if t not in present]))
+        def test_gap_threshold_drops_every_minute(self):
+            for boundary,volume in [(550,1700),(560,1400),(570,1100),(580,1000)]:
+                r=self.hypothetical([(540,volume)],boundary)
+                self.assertEqual(r['label_hits']['D5'],fmt(boundary))
+                self.assertEqual(r['completed_bar_model_hits']['D5'],fmt(boundary))
+                self.assertEqual(len(r['timeline']),boundary-540+1)
+                self.assertFalse(r['timeline'][-1]['observed_bar'])
+            r=self.hypothetical([(540,2000)],550)
+            self.assertEqual(r['label_hits']['OLD'],'09:10')
+            self.assertEqual(r['completed_bar_model_hits']['OLD'],'09:10')
+        def test_interval_trading_and_consecutive_gaps(self):
+            # Synthetic interval trading pattern; no assertion about actual disposition status.
+            r=self.hypothetical([(540,500),(545,1000),(550,1500),(555,2000)],560)
+            self.assertEqual(r['label_hits']['D5'],'09:15')
+            self.assertEqual(r['completed_bar_model_hits']['D5'],'09:16')
+            self.assertEqual(r['label_hits']['OLD'],'09:15')
+            self.assertEqual([z['label_model_cumulative'] for z in r['timeline'][1:5]],[500]*4)
+            self.assertFalse(r['missing_minutes_proven_zero'])
+        def test_assumption_completion_no_future_volume(self):
+            r=self.hypothetical([(550,1700),(551,9000)],550)
+            self.assertEqual(r['label_hits']['D5'],'09:10')
+            self.assertIsNone(r['completed_bar_model_hits']['D5'])
+            self.assertEqual(r['timeline'][-1]['completed_model_cumulative'],0)
+            r=self.hypothetical([(549,1700)],550)
+            self.assertEqual(r['completed_bar_model_hits']['D5'],'09:10')
+            self.assertEqual(r['timeline'][-1]['completed_model_available_through'],'09:09')
+        def test_open_and_pre_recognition_gaps(self):
+            r=self.hypothetical([(542,1800)],550)
+            self.assertEqual(r['timeline'][0]['label_model_cumulative'],0)
+            self.assertEqual(r['timeline'][1]['label_model_cumulative'],0)
+            self.assertEqual(r['timeline'][-1]['label_model_cumulative'],1800)
+            self.assertEqual(r['label_hits']['D5'],'09:10')
+            self.assertEqual(r['completed_bar_model_hits']['D5'],'09:10')
+            self.assertEqual(self.hypothetical([(550,1700)],549)['label_hits']['D5'],None)
+        def test_dense_scenario_matches_v3_both_models(self):
+            for volume in (0,999,1000,1400,1700,2000,4000):
+                bars=[(t,volume) for t in range(540,581)]
+                record=dict(bars=bars,recognition_label='09:40',unknown_missing_minutes=[])
+                strict=compare(record); scenario=assumption_compare(record)
+                for k,v in strict.items(): self.assertEqual(scenario[k],v)
+                for completed in (False,True):
+                    summary=model_summary([scenario],completed)
+                    self.assertEqual(sum(summary['counts'].values()),1)
+                self.assertFalse(scenario['has_unknown_missing_minutes'])
+        def test_scenario_separation_hash_and_fail_closed(self):
+            with tempfile.TemporaryDirectory() as tmp:
+                root=Path(tmp); day=root/'2026-10-13'; day.mkdir()
+                x=self.fixture(); x['trajectory_raw_1m']=[dict(minute='09:02',volume=1800,cum_volume=1800)]
+                p=day/'5230_B_0910.json'; p.write_text(json.dumps(x),encoding='utf-8')
+                original=p.read_bytes(); digest=hashlib.sha256(original).hexdigest()
+                mf=day/'manifest.json'; m=dict(schema=SCHEMA,date=day.name,files=[p.name],count=1)
+                mf.write_text(json.dumps(m),encoding='utf-8')
+                r=audit(root); scenario=r['missing_no_new_trades_scenario']
+                self.assertEqual(r['summary']['eligible'],0)
+                self.assertEqual(r['summary']['excluded'],1)
+                self.assertEqual(scenario['label_model_summary']['n'],1)
+                self.assertEqual(scenario['eligible'][0]['sha256'],digest)
+                self.assertEqual(scenario['eligible'][0]['missing_open'],['09:00','09:01'])
+                self.assertEqual(scenario['eligible'][0]['label_hits']['D5'],'09:10')
+                self.assertEqual(p.read_bytes(),original)
+                m['count']=2; mf.write_text(json.dumps(m),encoding='utf-8')
+                blocked=audit(root)['missing_no_new_trades_scenario']
+                self.assertEqual(blocked['status'],'BLOCKED_SOURCE_AUDIT')
+                self.assertEqual(blocked['eligible'],[])
+                self.assertNotIn('label_model_summary',blocked)
+        def test_scenario_excludes_4906_and_preserves_complete(self):
+            with tempfile.TemporaryDirectory() as tmp:
+                root=Path(tmp); day=root/'2026-10-13'; day.mkdir(); names=[]
+                expected=compare(record_audit(day.name,'5230_B_0910.json',self.fixture()))
+                for sid in ('5230','4906'):
+                    x=self.fixture(); x['identity']['stock_id']=sid; x['production_event_snapshot']['stock_id']=sid
+                    p=day/f'{sid}_B_0910.json'; p.write_text(json.dumps(x),encoding='utf-8'); names.append(p.name)
+                (day/'manifest.json').write_text(json.dumps(dict(schema=SCHEMA,date=day.name,files=names,count=2)),encoding='utf-8')
+                r=audit(root); scenario=r['missing_no_new_trades_scenario']
+                self.assertEqual(r['summary']['eligible'],1)
+                self.assertEqual(scenario['label_model_summary']['n'],1)
+                self.assertEqual(scenario['exclusions'][0]['reasons'],['POLICY_EXCLUDE_4906'])
+                for k,v in expected.items(): self.assertEqual(r['eligible'][0][k],v)
         def test_partition(self):
             cases=[(None,None,'NO_D5'),(None,550,CATEGORIES[3]),(550,550,'SAME'),(579,550,'EARLY_1_TO_29'),(580,550,'EARLY_30_PLUS')]
             self.assertEqual({classify(a,b)[0] for a,b,_ in cases},set(CATEGORIES))
