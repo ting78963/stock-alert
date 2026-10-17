@@ -26,7 +26,7 @@ def write(name,rows):
 if not ROOT.is_dir():stop("missing F15 trajectory root")
 days=sorted(p for p in ROOT.iterdir() if p.is_dir() and p.name.startswith("20"))
 if not days:stop("no F15 day")
-rows=[];seen=set();audit=[];excluded=0
+rows=[];seen=set();audit=[];excluded=0;incomplete=[]
 for day in days:
  mf=day/"manifest.json"
  if not mf.is_file():stop("manifest missing "+day.name)
@@ -55,7 +55,9 @@ for day in days:
    cum+=v
    if abs(cum-reported)>max(.1,cum*.0001):stop("cumulative mismatch "+str(key))
    bars.append((t,cum));last=t
-  if bars[0][0]>541 or bars[-1][0]<rec:stop("insufficient minute coverage "+str(key))
+  if bars[0][0]>541 or bars[-1][0]<rec:
+   incomplete.append(dict(date=day.name,stock_id=sid,signal_class=cls,recognition_time=fmt(rec),first_bar=fmt(bars[0][0]),last_bar=fmt(bars[-1][0]),reason="INSUFFICIENT_COVERAGE"))
+   continue
   discovered=x.get("causal_anchor",{}).get("discovered_at")
   if not discovered:stop("missing discovered_at "+str(key))
   disc=tm(discovered)
@@ -73,9 +75,11 @@ if not rows:stop("no eligible signals")
 counts=Counter(r["category"] for r in rows)
 OUT.mkdir(parents=True,exist_ok=True)
 write("signal_details.csv",rows);write("source_audit.csv",audit)
+if incomplete:write("incomplete_coverage.csv",incomplete)
 summary=[dict(category=k,count=counts[k]) for k in ["SAME","EARLY_1_TO_29","EARLY_30_PLUS","D5_ONLY_BEFORE_B","NO_D5"]]
 write("summary.csv",summary)
-print("AUDIT PASS | dates",len(days),"signals",len(rows),"excluded_4906",excluded)
+print("AUDIT PARTIAL | dates",len(days),"eligible_signals",len(rows),"excluded_4906",excluded,"incomplete_coverage",len(incomplete))
+for x in incomplete:print("EXCLUDED_INCOMPLETE",x)
 for r in summary:print(r["category"],r["count"])
 delta=[r["advance_minutes"] for r in rows if isinstance(r["advance_minutes"],int)]
 print("PAIRED_MEDIAN_ADVANCE_MIN",statistics.median(delta) if delta else "NA")
