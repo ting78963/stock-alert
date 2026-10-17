@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""F15 D5 v2: offline archive audit and volume-only comparison. No network/import side effects.
+"""F15 D5 v3: offline archive audit and volume-only comparison. No network/import side effects.
 
 Schema checked against f15_trajectory_store.py / f15_eod_signal_report.py.
 Minute M completion at M+1 follows B completed_cutoff; this is a MODEL,
@@ -38,6 +38,23 @@ def tm(value):
     h, m = map(int, value[:5].split(':'))
     require(0 <= m < 60 and 540 <= h*60+m <= 810, 'TIME_OUTSIDE_SESSION')
     return h*60+m
+
+def event_seconds(value):
+    """HH:MM or HH:MM:SS, same-day clock; never discard nonzero seconds.
+
+    Unlike bar labels, discovery can occur after the trading session.
+    HH:MM is interpreted as :00, matching B nt(); no subsecond inference.
+    """
+    require(isinstance(value, str) and re.fullmatch(r'\d{2}:\d{2}(:\d{2})?', value),
+            'INVALID_EVENT_TIME: ' + repr(value))
+    parts = list(map(int, value.split(':')))
+    h, m = parts[:2]; second = parts[2] if len(parts) == 3 else 0
+    require(0 <= h < 24 and 0 <= m < 60 and 0 <= second < 60, 'EVENT_TIME_OUTSIDE_DAY')
+    return h*3600 + m*60 + second
+
+def event_fmt(value):
+    return f'{value//3600:02d}:{value//60%60:02d}:{value%60:02d}'
+
 
 def fmt(value):
     return None if value is None else f'{value//60:02d}:{value%60:02d}'
@@ -93,7 +110,8 @@ def record_audit(day, filename, x):
     sid, cls = i.get('stock_id'), i.get('signal_class')
     require(isinstance(sid,str) and re.fullmatch(r'\d{4}',sid) and cls in ('P1','A','B','C'),
             'INVALID_SIGNAL_IDENTITY')
-    rec = tm(i.get('recognition_time')); disc = tm(a.get('discovered_at'))
+    rec = tm(i.get('recognition_time')); rec_seconds = rec*60
+    disc = event_seconds(a.get('discovered_at'))
     require(i.get('date') == day and filename == f'{sid}_{cls}_{fmt(rec).replace(":", "")}.json',
             'IDENTITY_DATE_OR_FILENAME')
     require(e.get('schema') == ('b_signal_event_v2' if cls == 'P1' else 'b_signal_event_v1'),
@@ -103,12 +121,22 @@ def record_audit(day, filename, x):
             'EVENT_IDENTITY_MISMATCH')
     require(e.get('source') == 'Fugle' and e.get('line_sent') is True,
             'EVENT_SOURCE_OR_DELIVERY_UNVERIFIED')
-    require(tm(e.get('discovered_at')) == disc, 'DISCOVERY_MISMATCH')
-    require(tm(e.get('live_known_time')) == max(rec,disc), 'LIVE_KNOWN_MISMATCH')
-    require(tm(e.get('signal_emitted_at_feed_through')) >= rec, 'FEED_THROUGH_BEFORE_RECOGNITION')
-    require(type(e.get('late_discovery')) is bool and e['late_discovery'] == (disc > rec)
-            and a.get('late_discovery') == e['late_discovery'], 'LATE_DISCOVERY_MISMATCH')
-    require(a.get('delay_seconds') == (max(0,disc-rec)*60), 'DELAY_MISMATCH')
+    require(event_seconds(e.get('discovered_at')) == disc, 'DISCOVERY_MISMATCH')
+    live = event_seconds(e.get('live_known_time'))
+    feed = event_seconds(e.get('signal_emitted_at_feed_through'))
+    require(live == max(rec_seconds,disc), 'LIVE_KNOWN_MISMATCH')
+    # Feed-through is a data cursor, not emission wall clock: it may precede discovery.
+    require(feed >= rec_seconds, 'FEED_THROUGH_BEFORE_RECOGNITION')
+    require(type(e.get('late_discovery')) is bool and e['late_discovery'] == (disc > rec_seconds)
+            and type(a.get('late_discovery')) is bool
+            and a['late_discovery'] == e['late_discovery'], 'LATE_DISCOVERY_MISMATCH')
+    exact_delay = max(0,disc-rec_seconds)
+    # f15.secs() calls normt()[:5]. Validate this legacy field against its
+    # actual producer; NEVER use it for event ordering or exact delay reporting.
+    legacy_delay = exact_delay - disc % 60 if disc > rec_seconds else 0
+    archived_delay = a.get('delay_seconds')
+    require(type(archived_delay) in (int,float) and math.isfinite(archived_delay)
+            and archived_delay == legacy_delay, 'ARCHIVED_GENERATOR_DELAY_MISMATCH')
     raw = x.get('trajectory_raw_1m')
     require(isinstance(raw,list) and raw, 'MISSING_BARS')
     bars=[]; cumulative=0.0; last=539; zeros=[]
@@ -123,8 +151,15 @@ def record_audit(day, filename, x):
             zeros.append(fmt(t))
     present={t for t,_ in bars}
     missing=[t for t in range(540,rec+1) if t not in present]
-    return dict(identity=i, recognition_label=fmt(rec), discovered_at=fmt(disc),
-                event_live_known_time=fmt(max(rec,disc)),
+    return dict(identity=i, recognition_label=fmt(rec), discovered_at=event_fmt(disc),
+                event_time_raw={k:e.get(k) for k in ('discovered_at','live_known_time','signal_emitted_at_feed_through')},
+                event_live_known_time=event_fmt(live),
+                signal_emitted_at_feed_through=event_fmt(feed),
+                delay_seconds_exact=exact_delay,
+                archived_delay_seconds=archived_delay,
+                archived_delay_policy='F15_GENERATOR_TRUNCATES_SECONDS_NOT_EXACT_DELAY',
+                archived_delay_difference_seconds=exact_delay-archived_delay,
+                feed_through_semantics='DATA_CURSOR_NOT_EMISSION_WALL_CLOCK',
                 recognition_bar_complete_model=fmt(rec+1),
                 first_bar=fmt(bars[0][0]), last_bar=fmt(bars[-1][0]),
                 missing_open=[fmt(t) for t in missing if t < bars[0][0]],
@@ -153,13 +188,16 @@ def load(path):
     return json.loads(data.decode('utf-8')), hashlib.sha256(data).hexdigest()
 
 def audit(root):
-    result=dict(version=2, scope='ARCHIVED_F15_DELIVERED_SIGNALS_VOLUME_ONLY',
+    result=dict(version=3, scope='ARCHIVED_F15_DELIVERED_SIGNALS_VOLUME_ONLY',
                 source_status='ARCHIVE_INTERNAL_CONSISTENCY_ONLY',
                 rule_spec_status='IMPLEMENTED_SCHEDULE_ONLY_NO_INDEPENDENT_D5_SPEC',
                 independent_source_completeness='UNVERIFIED_NO_RAW_API_OR_EXTERNAL_EVENT_INVENTORY',
                 actual_availability_conclusion='BLOCKED_NO_ARRIVAL_OR_REVISION_PROVENANCE',
                 handoff_conclusion='BLOCKED_NOT_AN_A_REPLAY',
                 time_policy='LABEL <= recognition; completion MODEL M+1 <= recognition clock; thresholds at decision clock',
+                event_time_policy='Same-day HH:MM[:SS], compared as integer seconds; HH:MM means :00 per B nt()',
+                archived_delay_policy='Validate legacy F15 normt/seconds field separately; exact delay recomputed from event seconds',
+                event_semantics_limit='live_known_time=max(discovery, recognition) per B producer, NOT arrival or emission clock; feed-through is data cursor',
                 files=[], manifests=[], exclusions=[], eligible=[], blocking_errors=[])
     def failure(path, reason):
         result['blocking_errors'].append(dict(path=str(path),reason=str(reason)))
@@ -278,6 +316,61 @@ def self_test():
             x=self.fixture()
             with self.assertRaises(AuditError): record_audit('2026-10-14','5230_B_0910.json',x)
             with self.assertRaises(AuditError): record_audit('2026-10-13','9999_B_0910.json',x)
+        def seconds_fixture(self, discovered, live=None):
+            x=self.fixture(); e=x['production_event_snapshot']; a=x['causal_anchor']
+            seconds=event_seconds(discovered); rec=tm(x['identity']['recognition_time'])*60
+            e['discovered_at']=a['discovered_at']=discovered
+            e['live_known_time']=live or event_fmt(max(seconds,rec))
+            e['late_discovery']=a['late_discovery']=seconds > rec
+            a['delay_seconds']=max(0,seconds-rec-seconds%60)
+            return x
+        def test_event_parser_seconds(self):
+            self.assertEqual(event_seconds('13:12:07'),47527)
+            self.assertEqual(event_seconds('09:10'),33000)
+            self.assertEqual(event_fmt(event_seconds('13:31:59')),'13:31:59')
+            for bad in ('13:12:60','24:00:00','09:60:00','9:10:07','09:10:07junk',None):
+                with self.assertRaises(AuditError): event_seconds(bad)
+            with self.assertRaises(AuditError): tm('13:12:07')
+        def test_nonzero_seconds_delay(self):
+            for discovery,expected,archived in [('09:10:07',7,0),('09:11:01',61,60),
+                                                ('13:12:07',14527,14520),('09:09:59',0,0),
+                                                ('09:10:00',0,0)]:
+                r=record_audit('2026-10-13','5230_B_0910.json',self.seconds_fixture(discovery))
+                self.assertEqual(r['delay_seconds_exact'],expected)
+                self.assertEqual(r['archived_delay_seconds'],archived)
+                self.assertEqual(r['discovered_at'],discovery)
+            # Early discovery is valid; live-known stays at recognition label.
+            r=record_audit('2026-10-13','5230_B_0910.json',self.seconds_fixture('09:09:59'))
+            self.assertEqual(r['event_live_known_time'],'09:10:00')
+        def test_seconds_ordering_and_legacy_delay(self):
+            x=self.seconds_fixture('09:10:07','09:10:00')
+            with self.assertRaisesRegex(AuditError,'LIVE_KNOWN_MISMATCH'):
+                record_audit('2026-10-13','5230_B_0910.json',x)
+            x=self.seconds_fixture('09:10:07'); x['causal_anchor']['discovered_at']='09:10:08'
+            with self.assertRaisesRegex(AuditError,'DISCOVERY_MISMATCH'):
+                record_audit('2026-10-13','5230_B_0910.json',x)
+            x=self.seconds_fixture('09:10:07'); x['production_event_snapshot']['signal_emitted_at_feed_through']='09:09:59'
+            with self.assertRaisesRegex(AuditError,'FEED_THROUGH_BEFORE_RECOGNITION'):
+                record_audit('2026-10-13','5230_B_0910.json',x)
+            x=self.seconds_fixture('09:10:07'); x['causal_anchor']['delay_seconds']=7
+            with self.assertRaisesRegex(AuditError,'ARCHIVED_GENERATOR_DELAY_MISMATCH'):
+                record_audit('2026-10-13','5230_B_0910.json',x)
+            # Cursor is not an emission timestamp; earlier than discovery is legal.
+            x=self.seconds_fixture('13:12:07'); x['production_event_snapshot']['signal_emitted_at_feed_through']='09:10:01'
+            self.assertEqual(record_audit('2026-10-13','5230_B_0910.json',x)['delay_seconds_exact'],14527)
+            x=self.seconds_fixture('09:10:07'); x['identity']['recognition_time']='09:10:07'
+            with self.assertRaises(AuditError): record_audit('2026-10-13','5230_B_0910.json',x)
+        def test_realistic_seconds_integration(self):
+            with tempfile.TemporaryDirectory() as tmp:
+                root=Path(tmp); day=root/'2026-10-13'; day.mkdir()
+                p=day/'5230_B_0910.json'
+                p.write_text(json.dumps(self.seconds_fixture('13:12:07')),encoding='utf-8')
+                (day/'manifest.json').write_text(json.dumps(dict(schema=SCHEMA,date=day.name,files=[p.name],count=1)),encoding='utf-8')
+                r=audit(root)
+                self.assertEqual(r['version'],3)
+                self.assertEqual(r['blocking_errors'],[])
+                self.assertEqual(r['summary']['eligible'],1)
+                self.assertEqual(r['eligible'][0]['delay_seconds_exact'],14527)
         def test_partition(self):
             cases=[(None,None,'NO_D5'),(None,550,CATEGORIES[3]),(550,550,'SAME'),(579,550,'EARLY_1_TO_29'),(580,550,'EARLY_30_PLUS')]
             self.assertEqual({classify(a,b)[0] for a,b,_ in cases},set(CATEGORIES))
