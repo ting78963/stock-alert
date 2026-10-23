@@ -1343,7 +1343,7 @@ class StrongSelector:
         last20 = [b.close for b in bars[-20:]]
         ma20 = sum(last20) / len(last20) if last20 else 0
         above_ma20 = ma20 > 0 and price >= ma20
-        if chg >= 3 and above_ma20:
+        if chg >= 2.5 and above_ma20:
             result["source"] = "NO_VCP"
             result["ma20"] = round(ma20, 2)
             return result
@@ -2164,7 +2164,7 @@ class Scanner:
                     chg = float(s.get("change_rate") or 0)
                     price = float(s.get("close") or 0)
                     ma20 = sum(b.close for b in bars[-20:]) / 20 if len(bars) >= 20 else 0
-                    if len(bars) >= 20 and chg >= 3 and ma20 > 0 and price >= ma20:
+                    if len(bars) >= 20 and chg >= 2.5 and ma20 > 0 and price >= ma20:
                         hit = {
                             "code": symbol, "name": s.get("name") or symbol,
                             "todayVol": today_vol, "volRatio": round(raw_vr5, 2),
@@ -2181,7 +2181,7 @@ class Scanner:
                         handed = self.handoff_hit(hit, snap_date)
                         print(f"[A F10 NO_VCP] symbol={symbol} handed={handed}", flush=True)
                     else:
-                        print(f"[A F10 NO_VCP] symbol={symbol} original MA20/3pct gate not met", flush=True)
+                        print(f"[A F10 NO_VCP] symbol={symbol} original MA20/2.5pct gate not met", flush=True)
                     continue
 
                 if not armed:
