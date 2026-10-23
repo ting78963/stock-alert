@@ -69,8 +69,13 @@ class Scanner:
   return True
 rows=[{"stock_id":s,"date":day,"name":s,"total_volume":v,"change_rate":3.,"close":103.} for s,v in [("7711",4000),("1809",4000),("2468",4000),("6179",4000)]]
 s=Scanner(rows)
-with contextlib.redirect_stdout(io.StringIO()):
+capture=io.StringIO()
+with contextlib.redirect_stdout(capture):
  first=s.scan_once()
+print('FIRST_SCAN_DIAGNOSTICS')
+print(capture.getvalue())
+print('ARM_STATE',s.state['volume_armed'])
+print('EVENTS',logs)
 assert s.sent==[("7711","VCP"),("1809","SURGE"),("2468","NO_VCP"),("6179","NO_VCP")],s.sent
 assert len(first)==4
 with contextlib.redirect_stdout(io.StringIO()):
