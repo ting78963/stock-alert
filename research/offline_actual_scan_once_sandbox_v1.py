@@ -24,7 +24,7 @@ class Adapter:
  def prepare_f10_cache_only(self,*args):pass
  def ticker(self,s):return {"market":"TSE","securityType":"01","industry":"26"}
  def daily_history_local_ready(self,*args):return [Bar() for _ in range(60)]
- def estimated_vr5_parts(self,*args):return (.5,1000.,1000.,[])
+ def estimated_vr5_parts(self,*args):return (.002,1000.,1000.,[])  # 4000 / .002 / 1000 = 2000: deliberately arm FLOW
 class Selector:
  def basic_code_ok(self,s):return len(s)==4 and s.isdigit()
  def meta_ok(self,meta):return True
