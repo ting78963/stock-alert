@@ -3,6 +3,9 @@ on:
   push:
     branches:
       - candidate/layered-a-20261021
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 jobs:
   isolated:
