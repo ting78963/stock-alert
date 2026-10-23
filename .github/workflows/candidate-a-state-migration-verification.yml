@@ -6,6 +6,9 @@ on:
     paths:
       - '.github/workflows/candidate-a-state-migration-verification.yml'
       - 'fugle_a_scanner_v2_4.py'
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 jobs:
   migration:
