@@ -1,0 +1,53 @@
+name: Candidate A state migration isolated verification
+on:
+  push:
+    branches:
+      - release/layered-a-clean-20261023
+    paths:
+      - '.github/workflows/candidate-a-state-migration-verification.yml'
+      - 'fugle_a_scanner_v2_4.py'
+  workflow_dispatch:
+jobs:
+  migration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test actual migration and rollback guard with temporary fixture
+        run: |
+          python - <<'PY'
+          import tempfile, json, pathlib
+          from fugle_a_scanner_v2_4 import initialize_state_paths, AuditStop
+          with tempfile.TemporaryDirectory() as t:
+              root=pathlib.Path(t); old=root/'legacy'; new=root/'durable'; old.mkdir()
+              state={'date':'2026-10-22','sent':['3714']}
+              (old/'state.json').write_text(json.dumps(state))
+              (old/'events.jsonl').write_text('{"event":"old"}\n')
+              first=initialize_state_paths(old,new)
+              assert first['mode']=='migrated_or_initialized'
+              assert (new/'state.json').read_text()==(old/'state.json').read_text()
+              assert (new/'events.jsonl').read_bytes()==(old/'events.jsonl').read_bytes()
+              assert (old/'state.json').exists()
+              assert not (new/'.a_state_migration_v1.lock').exists()
+              # After startup, old state may become stale; do not recopy it.
+              newer={'date':'2026-10-24','sent':['3714','3715']}
+              (new/'state.json').write_text(json.dumps(newer))
+              again=initialize_state_paths(old,new)
+              assert again['mode']=='marker_verified'
+              assert json.loads((new/'state.json').read_text())==newer
+              # Corrupt marker blocks startup rather than guessing.
+              (new/'.a_state_migration_v1.json').write_text('invalid')
+              try: initialize_state_paths(old,new)
+              except AuditStop as e: assert 'MARKER_INVALID' in str(e)
+              else: raise AssertionError('corrupt marker accepted')
+          with tempfile.TemporaryDirectory() as t:
+              root=pathlib.Path(t); old=root/'old'; new=root/'new'; old.mkdir();new.mkdir()
+              (old/'state.json').write_text('{"a":1}')
+              (new/'state.json').write_text('{"a":2}')
+              try: initialize_state_paths(old,new)
+              except AuditStop as e: assert 'MIGRATION_CONFLICT:state.json' in str(e)
+              else: raise AssertionError('conflicting states accepted')
+              assert not (new/'.a_state_migration_v1.json').exists()
+              assert (old/'state.json').read_text()=='{"a":1}'
+              assert (new/'state.json').read_text()=='{"a":2}'
+          print('PASS: migration copies, preserves old, avoids stale overwrite, fails closed')
+          PY
