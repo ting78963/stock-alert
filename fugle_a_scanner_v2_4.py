@@ -1959,7 +1959,11 @@ class Scanner:
                 hit.setdefault("name", next(
                     (row.get("name") for row in snaps if str(row.get("stock_id") or "") == symbol), symbol
                 ))
-                handed = self.handoff_hit(hit, snap_date)
+                try:
+                    handed = self.handoff_hit(hit, snap_date)
+                except RuntimeError as exc:
+                    handed = False
+                    print(f"[A VCP HANDOFF RETRY NEXT SCAN] symbol={symbol} error={exc}", flush=True)
                 attempted_symbols.add(symbol)
                 if handed:
                     selected.append(hit)
@@ -1983,7 +1987,11 @@ class Scanner:
                     "evgPct": metrics.get("evg_pct"), "surgeVariant": SURGE_VARIANT,
                     "timeSemantics": "SNAPSHOT_OBSERVATION; NOT_FIXED_M_PLUS_1",
                 }
-                handed = self.handoff_hit(hit, snap_date)
+                try:
+                    handed = self.handoff_hit(hit, snap_date)
+                except RuntimeError as exc:
+                    handed = False
+                    print(f"[A SURGE HANDOFF RETRY NEXT SCAN] symbol={symbol} error={exc}", flush=True)
                 attempted_symbols.add(symbol)
                 if handed:
                     selected.append(hit)
