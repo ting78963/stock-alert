@@ -1757,8 +1757,6 @@ class Scanner:
         symbol = hit["code"]
         if self.already_sent(snap_date, symbol):
             return False
-        if self.layered_a_enabled and symbol in self.state["layered_handoff_unknown"].get(snap_date, {}):
-            return False
         payload = {
             "stock_id": symbol,
             "date": snap_date,
@@ -1768,46 +1766,12 @@ class Scanner:
             "vol_ratio": hit["volRatio"],
             "change_pct": hit["chgPct"],
         }
-        if not self.layered_a_enabled:
-            self.bridge_send(payload)
-            self.mark_sent(snap_date, symbol, payload)
-            append_event({"ts": iso_now(), "type": "discovery", **payload})
-            return True
-
-        # Layered candidate only: an HTTP 2xx is not enough; require a recognized
-        # Worker business result. Any ambiguous side effect is durably quarantined.
-        try:
-            result = self.bridge_send(payload)
-        except Exception as exc:
-            result = {"transport_error": type(exc).__name__}
-        body = result.get("body") if isinstance(result, dict) else None
-        status = result.get("http_status") if isinstance(result, dict) else None
-        if isinstance(body, dict) and 200 <= int(status or 0) < 300:
-            if body.get("launched") is True or body.get("duplicate") is True:
-                disposition = "WORKER_OWNED"
-            elif body.get("already_done") is True:
-                disposition = "ALREADY_DONE"
-            elif body.get("session_closed") is True:
-                disposition = "SESSION_CLOSED"
-            else:
-                disposition = "UNKNOWN"
-        elif isinstance(body, dict) and int(status or 0) >= 400 and body.get("ok") is False:
-            disposition = "REJECTED"
-        else:
-            disposition = "UNKNOWN"
-        self.state["layered_handoff_result"].setdefault(snap_date, {})[symbol] = disposition
-        if disposition in {"WORKER_OWNED", "ALREADY_DONE"}:
-            self.mark_sent(snap_date, symbol, payload)
-            append_event({"ts": iso_now(), "type": "discovery", "worker_disposition": disposition, **payload})
-            return disposition == "WORKER_OWNED"
-        if disposition in {"UNKNOWN", "SESSION_CLOSED"}:
-            self.state["layered_handoff_unknown"].setdefault(snap_date, {})[symbol] = {
-                "disposition": disposition, "source": hit["source"],
-                "recorded_at": now_tw().isoformat(timespec="seconds"),
-                "reason": result.get("transport_error", "UNRECOGNIZED_WORKER_REPLY") if isinstance(result, dict) else "UNRECOGNIZED_WORKER_REPLY",
-            }
-        save_json_atomic(STATE_FILE, self.state)
-        return False
+        # Reuse legacy A handoff semantics for all routes:
+        # mark success only after bridge_send returns; failures remain retryable.
+        self.bridge_send(payload)
+        self.mark_sent(snap_date, symbol, payload)
+        append_event({"ts": iso_now(), "type": "discovery", **payload})
+        return True
 
     def bridge_send(self, payload: Dict[str, Any]) -> None:
         if not self.bridge_url:
@@ -2006,7 +1970,7 @@ class Scanner:
             for symbol, (status, _reason, metrics, row) in surge_decisions.items():
                 if (status != "PASS" or symbol in decided_symbols or symbol in attempted_symbols
                         or self.already_sent(snap_date, symbol)
-                        or symbol in self.state.get("layered_handoff_unknown", {}).get(snap_date, {})):
+                        ):
                     continue
                 metrics = metrics or {}
                 hit = {
