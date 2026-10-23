@@ -24,7 +24,7 @@ class Adapter:
  def prepare_f10_cache_only(self,*args):pass
  def ticker(self,s):return {"market":"TSE","securityType":"01","industry":"26"}
  def daily_history_local_ready(self,*args):return [Bar() for _ in range(60)]
- def estimated_vr5_parts(self,*args):return (.002,1000.,1000.,[])  # 4000 / .002 / 1000 = 2000: deliberately arm FLOW
+ def estimated_vr5_parts(self,*args):return (.8,3000.,3000.,[])  # 4000/.8/3000=1.6667: just over both FLOW arm thresholds
 class Selector:
  def basic_code_ok(self,s):return len(s)==4 and s.isdigit()
  def meta_ok(self,meta):return True
@@ -75,6 +75,7 @@ with contextlib.redirect_stdout(capture):
 print('FIRST_SCAN_DIAGNOSTICS')
 print(capture.getvalue())
 print('ARM_STATE',s.state['volume_armed'])
+assert all(1.5 <= x['estimated_vr5'] < 2.5 for x in s.state['volume_armed'][day].values()),'FLOW fixture must be realistic threshold-near, not extreme'
 print('EVENTS',logs)
 assert s.sent==[("7711","VCP"),("1809","SURGE"),("2468","NO_VCP"),("6179","NO_VCP")],s.sent
 assert len(first)==4
