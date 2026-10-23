@@ -39,7 +39,7 @@ for file in sorted((ROOT/"f15_eod/trajectory_v1"/DAY).glob("*.json")):
   if m:
    armed=m["estimated_vr5"]>=1.5 or m["evg1"]>=1.5
    if armed and firstarm is None:firstarm=tm
-   if armed and price>=ma20 and (price/prev-1)*100>=3 and firstprice is None:firstprice=tm
+   if armed and price>=ma20 and (price/prev-1)*100>=2.5 and firstprice is None:firstprice=tm
  status="UNKNOWN" if error else ("PRICE_GATE" if firstprice else "ARM_ONLY" if firstarm else "MOTHER_ONLY" if firstgate else "NO_MOTHER_GATE")
  counts[status]+=1
  print(f"{sym},{firstgate or ''},{firstarm or ''},{firstprice or ''},{tier or ''},{status},{error or 'METADATA_QUEUE_HANDOFF_NOT_REPLAYED'}")
