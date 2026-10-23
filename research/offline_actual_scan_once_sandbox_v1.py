@@ -14,7 +14,7 @@ ast.fix_missing_locations(mod)
 day="2026-10-22";clock=datetime.datetime(2026,10,22,9,35)
 logs=[]
 def noop(*args,**kwargs):pass
-ns={"List":list,"Dict":dict,"Any":object,"Tuple":tuple,"Optional":object,"time":time,"now_tw":lambda:clock,"iso_now":lambda:clock.isoformat(),"AuditStop":RuntimeError,"append_event":lambda e:logs.append(e),"append_queue_shadow":noop,"save_json_atomic":noop,"STATE_FILE":"in-memory-only","SURGE_VARIANT":"TEST","RAW_VR5_MIN":2.5,"ESTIMATED_VR5_MIN":1.5,"EVG_MIN_PCT":50,"F11_OFFLINE_STAGING_ENABLED":False}
+ns={"List":list,"Dict":dict,"Any":object,"Tuple":tuple,"Optional":object,"time":time,"now_tw":lambda:clock,"iso_now":lambda:clock.isoformat(),"AuditStop":RuntimeError,"append_event":lambda e:logs.append(e),"append_queue_shadow":noop,"record_a_scan_mother_identity":noop,"save_json_atomic":noop,"STATE_FILE":"in-memory-only","SURGE_VARIANT":"TEST","RAW_VR5_MIN":2.5,"ESTIMATED_VR5_MIN":1.5,"EVG_MIN_PCT":50,"F11_OFFLINE_STAGING_ENABLED":False}
 exec(compile(mod,url,"exec"),ns)
 class Bar:
  def __init__(self):self.volume_zhang=1000.;self.close=100.;self.date="2026-10-21"
