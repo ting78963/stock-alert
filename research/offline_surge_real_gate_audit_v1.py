@@ -13,7 +13,24 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 from unittest.mock import patch
 
-import fugle_a_scanner_v2_4 as a
+import sys
+import types
+import urllib.request
+
+# Load candidate A from pinned commit, not Render's production main checkout.
+CANDIDATE_SHA = "1587dccc3fef49ea47458173e832d145c50490d9"
+CANDIDATE_URL = (
+    "https://raw.githubusercontent.com/ting78963/stock-alert/"
+    + CANDIDATE_SHA + "/fugle_a_scanner_v2_4.py"
+)
+source = urllib.request.urlopen(CANDIDATE_URL, timeout=20).read().decode("utf-8")
+a = types.ModuleType("offline_candidate_a")
+a.__file__ = CANDIDATE_URL
+sys.modules[a.__name__] = a
+exec(compile(source, CANDIDATE_URL, "exec"), a.__dict__)
+if not hasattr(a.Scanner, "snapshot_surge_decision"):
+    raise SystemExit("STOP: pinned candidate A lacks SURGE gate")
+
 
 ROOT = Path("/var/data/stock-alert")
 CACHE = ROOT / "_research_output/f15_174_api_800_1000_v1/api_day_cache"
