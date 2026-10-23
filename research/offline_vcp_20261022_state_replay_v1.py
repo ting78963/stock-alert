@@ -18,7 +18,7 @@ def lookup_meta(s):
   if not path.is_file():continue
   try: obj=json.loads(path.read_text(encoding="utf-8"))
   except Exception:continue
-  for d in (obj,obj.get("data") if isinstance(obj,dict) else None,obj.get("metadata") if isinstance(obj,dict) else None):
+  for d in (obj,obj.get("data") if isinstance(obj,dict) else None,obj.get("metadata") if isinstance(obj,dict) else None,obj.get("symbols") if isinstance(obj,dict) else None):
    if isinstance(d,dict):
     x=d.get(s)
     if isinstance(x,dict):return x
