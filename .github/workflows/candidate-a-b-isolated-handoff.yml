@@ -1,0 +1,59 @@
+name: Candidate A to B isolated handoff
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+jobs:
+  bridge:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Verify actual B launch, dedupe, and LINE-completed guard without network
+        run: |
+          python - <<'PY'
+          import sys,types,tempfile,threading
+          from pathlib import Path
+          from unittest.mock import patch
+          gate=types.ModuleType('twse_session_gate_v1')
+          gate.is_scheduled_open=lambda day:True
+          group=types.ModuleType('group_limit_up')
+          group.monitor_loop=lambda *args,**kwargs:None
+          sys.modules['twse_session_gate_v1']=gate
+          sys.modules['group_limit_up']=group
+          import production_worker_v2_shared_ws as b
+          class FakeRunner:
+              constructions=0
+              def __init__(self,*args,**kwargs):
+                  type(self).constructions+=1
+                  self.lock=threading.RLock()
+                  self.retired=False
+              def rest_reconcile(self,*args):pass
+          def no_worker(*args):pass
+          with tempfile.TemporaryDirectory() as temp:
+              with patch.object(b,'STATE_ROOT',Path(temp)),patch.object(b,'runner_module',lambda:{'Runner':FakeRunner}),patch.object(b,'subscribe_symbol',lambda sid:None),patch.object(b,'worker_loop',no_worker),patch.object(b,'b_time_expired',lambda now=None:False):
+                  day='2026-10-23'
+                  b.f14_bootstrap(day)
+                  for i,source in enumerate(('VCP','SURGE','FLOW')):
+                      sid=str(3714+i)
+                      payload={'stock_id':sid,'date':day,'discovered_at':'09:30:00','source':source,'name':'TEST'}
+                      first=b.launch_b(payload)
+                      assert first['launched'] and first['ok'],(source,first)
+                      duplicate=b.launch_b(payload)
+                      assert duplicate['duplicate'] and not duplicate['launched'],(source,duplicate)
+                  assert FakeRunner.constructions==3,FakeRunner.constructions
+                  k=b.key(day,'3714')
+                  b.f14_mark_done(k)
+                  done=b.launch_b({'stock_id':'3714','date':day,'discovered_at':'09:31:00','source':'FLOW'})
+                  assert done['already_done'] and not done['launched'],done
+                  assert FakeRunner.constructions==3
+                  b._runners.clear();b._queues.clear();b._launching.clear()
+                  b.f14_bootstrap(day)
+                  persisted=b.launch_b({'stock_id':'3714','date':day,'discovered_at':'09:32:00','source':'VCP'})
+                  assert persisted['already_done'] and not persisted['launched'],persisted
+                  assert FakeRunner.constructions==3
+                  assert not b.LINE_SEND,'LINE sending must be disabled'
+          print('PASS: VCP/SURGE/FLOW -> real B launch_b; duplicate prevented; F14 LINE-completed state persisted across restart; zero LINE/network')
+          PY
