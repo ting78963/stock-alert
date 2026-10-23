@@ -1,0 +1,63 @@
+name: Candidate A rollback isolated rehearsal
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+jobs:
+  rollback:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rehearse latest-state rollback to legacy A without touching B
+        run: |
+          python - <<'PY'
+          import hashlib, json, shutil, tempfile
+          from pathlib import Path
+          from fugle_a_scanner_v2_4 import _MIGRATABLE_STATE_NAMES, initialize_state_paths
+
+          def digest(p):
+              return hashlib.sha256(p.read_bytes()).hexdigest()
+
+          with tempfile.TemporaryDirectory() as t:
+              root=Path(t)
+              old=root/'_production_output'/'fugle_a_scanner_v2'
+              new=root/'var'/'data'/'stock-alert'/'a_scanner_v2'
+              b=root/'var'/'data'/'stock-alert'/'f14_done'
+              old.mkdir(parents=True); b.mkdir(parents=True)
+              day='2026-10-22'
+              (old/'state.json').write_text(json.dumps({'discovered':{day:{'3714':{'source':'FLOW'}}}}))
+              (old/'vcp_breakout_track_v2.json').write_text('{}')
+              (old/'events.jsonl').write_text('old-event\\n')
+              (b/(day+'.json')).write_text(json.dumps({'schema':'f14_done_v1','date':day,'stock_ids':['3714']}))
+              b_before=digest(b/(day+'.json'))
+
+              # First candidate boot migrates old -> durable.
+              initialize_state_paths(old,new)
+              # Candidate runs and discovers another stock. Legacy is now stale.
+              newest={'discovered':{day:{'3714':{'source':'FLOW'},'3715':{'source':'VCP'}}}}
+              (new/'state.json').write_text(json.dumps(newest))
+              (new/'events.jsonl').write_text('old-event\\nnew-event\\n')
+              assert json.loads((old/'state.json').read_text())!=newest
+
+              # Simulated maintenance window: both A processes stopped.
+              # Back up BOTH sides before replacing any legacy file.
+              backup=root/'rollback_backup'
+              for label,src in [('legacy',old),('durable',new)]:
+                  shutil.copytree(src,backup/label)
+              # Restore newest durable A files to the old code's expected path.
+              for name in _MIGRATABLE_STATE_NAMES:
+                  src=new/name
+                  if src.is_file():
+                      shutil.copy2(src,old/name)
+              for name in _MIGRATABLE_STATE_NAMES:
+                  src=new/name
+                  if src.is_file():
+                      assert digest(src)==digest(old/name),name
+              assert json.loads((old/'state.json').read_text())==newest
+              assert (old/'events.jsonl').read_text().endswith('new-event\\n')
+              assert digest(b/(day+'.json'))==b_before, 'B F14 mutated'
+              assert digest(backup/'legacy'/'state.json')!=digest(old/'state.json')
+              assert digest(backup/'durable'/'state.json')==digest(old/'state.json')
+              print('PASS: latest A state restored to legacy path; backups preserved; B F14 unchanged')
+          PY
