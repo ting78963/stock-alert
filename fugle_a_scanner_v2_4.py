@@ -2287,7 +2287,7 @@ def run_self_test() -> None:
     assert hit["volRatio"] == 1.5, hit
 
     stock2 = dict(stock)
-    stock2["change_rate"] = 2.99
+    stock2["change_rate"] = 2.49
     hit2 = s.select_one(stock2, meta, bars, inject_snapshot_today=False)
     assert hit2 is None
 
