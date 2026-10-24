@@ -37,12 +37,14 @@ jobs:
           ]
           scanner=a.Scanner.__new__(a.Scanner)
           scanner.state={'discovered':{}}
+          scanner.layered_a_enabled=True
           scanner.bridge_url='mock://b'
           results=[]
           def bridge(payload):
               response=b.launch_b(payload)
               results.append({'symbol':payload['stock_id'],'source':payload['source'],'name':payload['name'],'b_launched':response.get('launched',False),'line_preview':'[模擬訊號] '+payload['stock_id']+' '+payload['name']+' / '+payload['source']+' / B已啟動'})
               assert response['ok'] and response['launched'],response
+              return {'http_status':200,'body':{'ok':True,'key':day+'|'+payload['stock_id'],'launched':True}}
           scanner.bridge_send=bridge
           with tempfile.TemporaryDirectory() as tmp:
               with patch.object(b,'STATE_ROOT',Path(tmp)),patch.object(b,'runner_module',lambda:{'Runner':FakeRunner}),patch.object(b,'subscribe_symbol',lambda sid:None),patch.object(b,'worker_loop',lambda *args:None),patch.object(b,'b_time_expired',lambda now=None:False),patch.object(a,'save_json_atomic'),patch.object(a,'append_event'):
