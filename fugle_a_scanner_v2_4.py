@@ -1768,7 +1768,18 @@ class Scanner:
         }
         # Reuse legacy A handoff semantics for all routes:
         # mark success only after bridge_send returns; failures remain retryable.
-        self.bridge_send(payload)
+        ack = self.bridge_send(payload)
+        if self.layered_a_enabled:
+            # In layered mode, HTTP transport success alone is not B acceptance.
+            # A dry bridge or a malformed/negative B response must stay retryable.
+            if not isinstance(ack, dict) or ack.get("http_status") != 200:
+                raise RuntimeError("B_HANDOFF_ACK_MISSING")
+            body = ack.get("body")
+            expected_key = f"{snap_date}|{str(symbol).zfill(4)}"
+            if not isinstance(body, dict) or body.get("ok") is not True or body.get("key") != expected_key:
+                raise RuntimeError("B_HANDOFF_ACK_INVALID")
+            if not any(body.get(k) is True for k in ("launched", "duplicate", "already_done")):
+                raise RuntimeError("B_HANDOFF_NOT_ACCEPTED")
         self.mark_sent(snap_date, symbol, payload)
         append_event({"ts": iso_now(), "type": "discovery", **payload})
         return True
