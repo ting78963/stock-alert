@@ -39,6 +39,7 @@ jobs:
           meta = {'market':'TSE','securityType':'01','industry':'26'}
           scanner = a.Scanner.__new__(a.Scanner)
           scanner.state = {'discovered':{}}
+          scanner.layered_a_enabled=False
           calls = []
           def bridge(payload):
               calls.append(payload)
