@@ -3,7 +3,7 @@
 Uses genuine candidate Scanner.scan_once, StrongSelector, SURGE/FLOW F10 and pinned VCP.
 Minute bars are F15-selected subset, not complete 5-second snapshots.
 """
-import contextlib,datetime,io,json,sqlite3,sys,tempfile,types,urllib.request,time,statistics,os
+import contextlib,datetime,io,json,sqlite3,sys,tempfile,types,urllib.request,time,statistics,os,traceback
 from collections import Counter
 from pathlib import Path
 from types import SimpleNamespace
@@ -114,6 +114,7 @@ with tempfile.TemporaryDirectory(prefix="a-real-replay-") as temp:
    with contextlib.redirect_stdout(io.StringIO()):scan.scan_once()
    timings.append((minute,(time.perf_counter()-tick)*1000,len(snaps)))
   except Exception as exc:
+   print("STRESS_EXCEPTION_TRACEBACK",traceback.format_exc(limit=15),flush=True)
    errors.append((minute,type(exc).__name__,str(exc)[:180]));break
  # Audit actual FLOW processing order against same-scan FIFO control rank.
  process=[q for q in queues if q.get("type")=="PROCESS_START"]
