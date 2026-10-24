@@ -1,0 +1,203 @@
+name: Candidate A isolated verification
+on:
+  push:
+    branches:
+      - candidate/layered-a-20261021
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+jobs:
+  isolated:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Compile candidate files
+        run: python -m py_compile fugle_a_scanner_v2_4.py vcp_a.py vcp_scan_once_adapter.py
+      - name: Execute real scanner self-test
+        run: python fugle_a_scanner_v2_4.py --self-test
+      - name: Verify failed bridge then retry then dedupe with real methods
+        run: |
+          python - <<'PY'
+          from datetime import datetime, timedelta
+          from zoneinfo import ZoneInfo
+          from unittest.mock import patch
+          import fugle_a_scanner_v2_4 as a
+          from vcp_scan_once_adapter import VcpScanOnceRuntime
+
+          now = datetime(2026,10,23,9,30,tzinfo=ZoneInfo("Asia/Taipei"))
+          runtime = VcpScanOnceRuntime(lambda: now)
+          day, symbol = now.date().isoformat(), '3714'
+          runtime.engine.state['vcp_near_watch'] = {day:{symbol:{
+              'armed_at':'09:25:00','pivot':100.0,
+              'pending_breakout':{'confirmed_at':'09:30:00','price':103.0,'volume':1200}
+          }}}
+          bars = [a.DailyBar((now.date()-timedelta(days=i)).isoformat(),100.0,1000.0) for i in range(60,0,-1)]
+          meta = {'market':'TSE','securityType':'01','industry':'26'}
+          scanner = a.Scanner.__new__(a.Scanner)
+          scanner.state = {'discovered':{}}
+          scanner.layered_a_enabled=False
+          calls = []
+          def bridge(payload):
+              calls.append(payload)
+              if len(calls)==1:
+                  raise RuntimeError('simulated bridge failure')
+          scanner.bridge_send = bridge
+          def evaluate(price,change):
+              row={'stock_id':symbol,'name':'TEST','date':day,'close':price,'change_rate':change,'total_volume':1200}
+              result=runtime.evaluate(row,bars,meta,1.2,4)
+              assert result['proposals'], 'pending VCP lost'
+              return result['proposals'][0]
+          with patch.object(runtime.engine.selector,'analyze_vcp',return_value={
+              'status':'tracking','justBroke':False,'pivot':100.0,
+              'breakoutTrack':{'isNew':False,'dayCount':2,'broken':False}
+          }), patch.object(a,'save_json_atomic'), patch.object(a,'append_event'):
+              first=evaluate(103.0,3.0)
+              try:
+                  scanner.handoff_hit(first,day)
+                  raise AssertionError('first bridge call should fail')
+              except RuntimeError as e:
+                  assert 'simulated bridge failure' in str(e)
+              assert not scanner.already_sent(day,symbol), 'failure incorrectly deduped'
+              second=evaluate(99.0,-1.0)
+              assert scanner.handoff_hit(second,day) is True, 'retry not delivered'
+              assert scanner.already_sent(day,symbol), 'success not deduped'
+              third=evaluate(99.0,-1.0)
+              assert scanner.handoff_hit(third,day) is False, 'duplicate delivered'
+          assert len(calls)==2, f'expected failure+success only, got {len(calls)}'
+          print('PASS: failed bridge -> pullback retry success -> no duplicate')
+          PY
+
+      - name: Verify real scan_once VCP precedence over SURGE on same stock
+        run: |
+          python - <<'PY'
+          from datetime import datetime, timedelta
+          from types import SimpleNamespace
+          from unittest.mock import patch
+          import fugle_a_scanner_v2_4 as a
+          from zoneinfo import ZoneInfo
+          now=datetime(2026,10,23,9,30,tzinfo=ZoneInfo('Asia/Taipei'))
+          day=now.date().isoformat()
+          row={'stock_id':'3714','name':'TEST','date':day,'close':103.0,'change_rate':3.0,'total_volume':1200}
+          hit={'code':'3714','name':'TEST','source':'VCP','volRatio':1.2,'chgPct':3.0}
+          class Runtime:
+              def has_pending(self,*args): return False
+              def has_watch(self,*args): return False
+              def has_active_track(self,*args): return False
+              def evaluate(self,*args): return {'proposals':[hit],'vcp_state':{},'watch':{}}
+              def export_state(self): return {}
+          scanner=a.Scanner.__new__(a.Scanner)
+          scanner.layered_a_enabled=True
+          scanner.state={'discovered':{}}
+          scanner.selector=SimpleNamespace(basic_code_ok=lambda x:True)
+          scanner.adapter=SimpleNamespace(snapshot=lambda:[row],prepare_f10_cache_only=lambda *args:None)
+          scanner._layered_vcp_runtime=lambda:Runtime()
+          bars=[a.DailyBar((now.date()-timedelta(days=i)).isoformat(),100,1000) for i in range(60,0,-1)]
+          scanner._layered_vcp_inputs=lambda *args: ({},bars,None)
+          scanner.snapshot_surge_decision=lambda *args: ('PASS','OK',{'estimated_vr5':2.0})
+          scanner.apply_wait_data_results=lambda:None
+          delivered=[]
+          scanner.bridge_send=lambda payload:(delivered.append(payload),{'http_status':200,'body':{'ok':True,'key':day+'|'+payload['stock_id'],'launched':True}})[1]
+          with patch.object(a,'now_tw',return_value=now),patch.object(a,'save_json_atomic'),patch.object(a,'append_event'):
+              selected=scanner.scan_once()
+          assert len(delivered)==1,delivered
+          assert delivered[0]['source']=='VCP',delivered
+          assert len(selected)==1 and selected[0]['source']=='VCP',selected
+          print('PASS: same snapshot VCP+SURGE -> VCP only, no duplicate')
+          PY
+
+      - name: Verify real scan_once SURGE beats FLOW and failure never falls through
+        run: |
+          python - <<'PY'
+          from datetime import datetime, timedelta
+          from types import SimpleNamespace
+          from unittest.mock import patch
+          from zoneinfo import ZoneInfo
+          import fugle_a_scanner_v2_4 as a
+          now=datetime(2026,10,23,9,30,tzinfo=ZoneInfo('Asia/Taipei'))
+          day=now.date().isoformat()
+          row={'stock_id':'3714','name':'TEST','date':day,'close':103,'change_rate':3,'total_volume':5000}
+          bars=[a.DailyBar((now.date()-timedelta(days=i)).isoformat(),100,1000) for i in range(60,0,-1)]
+          class Runtime:
+              def has_pending(self,*args): return False
+              def has_watch(self,*args): return False
+              def has_active_track(self,*args): return False
+              def evaluate(self,*args): return {'proposals':[],'vcp_state':{},'watch':{}}
+              def export_state(self): return {}
+          for fail in (False,True):
+              scanner=a.Scanner.__new__(a.Scanner)
+              scanner.layered_a_enabled=True
+              scanner.state={'discovered':{},'queue_waiting':{},'volume_armed':{}}
+              flow_calls=[]
+              def flow_select(*args,**kwargs):
+                  flow_calls.append(True)
+                  return {'code':'3714','name':'TEST','source':'FLOW','volRatio':2,'chgPct':3}
+              scanner.selector=SimpleNamespace(basic_code_ok=lambda x:True,meta_ok=lambda x:True,select_one=flow_select,analyze_vcp=lambda *args,**kwargs:{'status':'not_formed'})
+              scanner.adapter=SimpleNamespace(snapshot=lambda:[row],prepare_f10_cache_only=lambda *args:None,ticker=lambda x:{},daily_history_local_ready=lambda *args:bars)
+              scanner._layered_vcp_runtime=lambda:Runtime()
+              scanner._layered_vcp_inputs=lambda *args: ({},bars,None)
+              scanner.snapshot_surge_decision=lambda *args: ('PASS','OK',{'estimated_vr5':2.0})
+              scanner.apply_wait_data_results=lambda:None
+              scanner.wait_data_worker=SimpleNamespace(submit=lambda *args:False)
+              sent=[]
+              def bridge(payload):
+                  sent.append(payload)
+                  if fail: raise RuntimeError('simulated SURGE bridge failure')
+                  return {'http_status':200,'body':{'ok':True,'key':day+'|'+payload['stock_id'],'launched':True}}
+              scanner.bridge_send=bridge
+              with patch.object(a,'now_tw',return_value=now),patch.object(a,'save_json_atomic'),patch.object(a,'append_event'),patch.object(a,'append_queue_shadow'),patch.object(a,'record_a_scan_mother_identity'):
+                  scanner.scan_once()
+              assert len(sent)==1 and sent[0]['source']=='SURGE',(fail,sent)
+              assert not flow_calls,(fail,flow_calls)
+              assert scanner.already_sent(day,'3714') is (not fail),(fail,scanner.state)
+          print('PASS: SURGE success/failure both suppress same-scan FLOW; failure remains retryable')
+          PY
+
+      - name: Verify VCP failed bridge blocks SURGE in same scan but retries next scan
+        run: |
+          python - <<'PY'
+          from datetime import datetime, timedelta
+          from types import SimpleNamespace
+          from unittest.mock import patch
+          from zoneinfo import ZoneInfo
+          import fugle_a_scanner_v2_4 as a
+          now=datetime(2026,10,23,9,30,tzinfo=ZoneInfo('Asia/Taipei'))
+          day=now.date().isoformat()
+          row={'stock_id':'3714','name':'TEST','date':day,'close':103,'change_rate':3,'total_volume':1200}
+          hit={'code':'3714','name':'TEST','source':'VCP','volRatio':1.2,'chgPct':3}
+          bars=[a.DailyBar((now.date()-timedelta(days=i)).isoformat(),100,1000) for i in range(60,0,-1)]
+          class Runtime:
+              def has_pending(self,*args): return True
+              def has_watch(self,*args): return True
+              def has_active_track(self,*args): return False
+              def evaluate(self,*args): return {'proposals':[hit],'vcp_state':{},'watch':{}}
+              def export_state(self): return {}
+          scanner=a.Scanner.__new__(a.Scanner)
+          scanner.layered_a_enabled=True
+          scanner.state={'discovered':{}}
+          scanner.selector=SimpleNamespace(basic_code_ok=lambda x:True)
+          scanner.adapter=SimpleNamespace(snapshot=lambda:[row],prepare_f10_cache_only=lambda *args:None)
+          scanner._layered_vcp_runtime=lambda:Runtime()
+          scanner._layered_vcp_inputs=lambda *args: ({},bars,None)
+          scanner.snapshot_surge_decision=lambda *args: ('PASS','OK',{'estimated_vr5':2.0})
+          scanner.apply_wait_data_results=lambda:None
+          delivered=[]
+          def bridge(payload):
+              delivered.append(payload)
+              if len(delivered)==1: raise RuntimeError('VCP simulated failure')
+              return {'http_status':200,'body':{'ok':True,'key':day+'|'+payload['stock_id'],'launched':True}}
+          scanner.bridge_send=bridge
+          with patch.object(a,'now_tw',return_value=now),patch.object(a,'save_json_atomic'),patch.object(a,'append_event'):
+              first=scanner.scan_once()
+              assert len(delivered)==1 and delivered[0]['source']=='VCP',delivered
+              assert not first and not scanner.already_sent(day,'3714'),first
+              second=scanner.scan_once()
+              assert len(delivered)==2 and all(x['source']=='VCP' for x in delivered),delivered
+              assert len(second)==1 and scanner.already_sent(day,'3714'),second
+              third=scanner.scan_once()
+              assert len(delivered)==2 and not third,delivered
+          print('PASS: VCP failed -> SURGE suppressed -> VCP next scan success -> deduped')
+          PY

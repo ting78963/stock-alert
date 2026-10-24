@@ -40,6 +40,7 @@ Fugle v1.0 mapping：
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -60,7 +61,22 @@ from zoneinfo import ZoneInfo
 
 TZ = ZoneInfo("Asia/Taipei")
 BASE = "https://api.fugle.tw/marketdata/v1.0/stock"
-OUTDIR = Path(__file__).resolve().parent / "_production_output" / "fugle_a_scanner_v2"
+LEGACY_OUTDIR = Path(__file__).resolve().parent / "_production_output" / "fugle_a_scanner_v2"
+
+
+def resolve_a_state_dir(legacy_outdir: Path, environ: Optional[Dict[str, str]] = None) -> Path:
+    """Use an explicit A_STATE_DIR, else the existing Worker state root, else legacy path."""
+    env = os.environ if environ is None else environ
+    explicit = str(env.get("A_STATE_DIR", "")).strip()
+    if explicit:
+        return Path(explicit).expanduser()
+    production_root = str(env.get("PRODUCTION_STATE_DIR", "")).strip()
+    if production_root:
+        return Path(production_root).expanduser() / "a_scanner_v2"
+    return Path(legacy_outdir)
+
+
+OUTDIR = resolve_a_state_dir(LEGACY_OUTDIR)
 STATE_FILE = OUTDIR / "state.json"
 TRACK_FILE = OUTDIR / "vcp_breakout_track_v2.json"
 CACHE_FILE = OUTDIR / "cache.json"
@@ -69,8 +85,8 @@ F11_METADATA_CACHE_FILE = Path("/var/data/stock-alert/a_f11_metadata_v1.json") i
 # Explicit staging opt-in; production defaults stay unchanged.
 F11_OFFLINE_STAGING_FILE = Path("/var/data/stock-alert/f11-staging/a_f11_staging_v1.json")
 F11_OFFLINE_STAGING_ENABLED = os.environ.get("A_F11_OFFLINE_STAGING", "") == "1"
-SHADOW_AUDIT_ROOT = Path("/var/data/stock-alert/a_queue_shadow_audit") if Path("/var/data").exists() else (OUTDIR / "a_queue_shadow_audit")
-A_SCAN_MOTHER_ROOT = Path("/var/data/stock-alert/a_scan_mother") if Path("/var/data").exists() else (OUTDIR / "a_scan_mother")
+SHADOW_AUDIT_ROOT = Path("/var/data/stock-alert/a_queue_shadow_audit") if Path("/var/data").exists() else (LEGACY_OUTDIR / "a_queue_shadow_audit")
+A_SCAN_MOTHER_ROOT = Path("/var/data/stock-alert/a_scan_mother") if Path("/var/data").exists() else (LEGACY_OUTDIR / "a_scan_mother")
 
 # 對應原網站 excludedKeywords：
 # 食品工業、造紙工業、建材營造、航運、觀光餐旅、金融保險、
@@ -88,6 +104,9 @@ REGULAR_VOLUME_MIN = 2_000 # 09:10+
 SCAN_INTERVAL_DEFAULT = 5.0
 OPEN_HM = (9, 0)
 CLOSE_HM = (13, 30)
+# Isolated candidate; never enabled in the formal entry point.
+LAYERED_A_ENABLED = os.environ.get("A_LAYERED_A_ENABLED", "") == "1"
+SURGE_VARIANT = "OLD_A_SNAPSHOT_DERIVED_SURGE_V1"
 
 
 class AuditStop(RuntimeError):
@@ -106,18 +125,158 @@ def ensure_outdir() -> None:
     OUTDIR.mkdir(parents=True, exist_ok=True)
 
 
-def load_json(path: Path, default: Any) -> Any:
+_MIGRATABLE_STATE_NAMES = (
+    "state.json",
+    "vcp_breakout_track_v2.json",
+    "cache.json",
+    "a_history_cache_v2_4.json",
+    "a_f11_metadata_v1.json",
+    "events.jsonl",
+)
+_AUTHORITATIVE_JSON_NAMES = frozenset(_MIGRATABLE_STATE_NAMES[:-1])
+_STATE_MIGRATION_MARKER = ".a_state_migration_v1.json"
+_STATE_MIGRATION_LOCK = ".a_state_migration_v1.lock"
+
+
+def _read_migration_value(path: Path) -> Any:
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        if path.name == "events.jsonl":
+            return path.read_bytes()
+        value = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(value, dict):
+            raise ValueError("expected JSON object")
+        return value
+    except Exception as exc:
+        raise AuditStop(f"A_STATE_MIGRATION_INVALID:{path.name}:{type(exc).__name__}") from exc
+
+
+def _atomic_write_bytes(path: Path, payload: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + f".migrate.{os.getpid()}.{threading.get_ident()}.tmp")
+    try:
+        with tmp.open("xb") as f:
+            f.write(payload)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
     except Exception:
+        # Deliberately leave any interrupted temporary artifact for inspection.
+        raise
+
+
+def initialize_state_paths(legacy_dir: Optional[Path] = None, target_dir: Optional[Path] = None) -> Dict[str, Any]:
+    """Initialize the A state root without overwriting or deleting legacy state.
+
+    First use copies only missing files, validates object-shaped JSON, and writes
+    a marker after all copies are durable. Conflicting or damaged state fails
+    closed. The legacy source is retained unchanged for rollback/reconciliation.
+    """
+    legacy = Path(legacy_dir or LEGACY_OUTDIR)
+    target = Path(target_dir or OUTDIR)
+    try:
+        target.mkdir(parents=True, exist_ok=True)
+    except Exception as exc:
+        raise AuditStop(f"A_STATE_TARGET_UNAVAILABLE:{type(exc).__name__}") from exc
+    if legacy.resolve() == target.resolve():
+        return {"mode": "legacy_in_place", "copied": [], "target": str(target)}
+
+    marker = target / _STATE_MIGRATION_MARKER
+    if marker.exists():
+        try:
+            data = json.loads(marker.read_text(encoding="utf-8"))
+            if data.get("version") != 1 or data.get("target_root") != str(target.resolve()):
+                raise ValueError("marker identity mismatch")
+        except Exception as exc:
+            raise AuditStop(f"A_STATE_MIGRATION_MARKER_INVALID:{type(exc).__name__}") from exc
+        if not (target / "state.json").is_file():
+            raise AuditStop("A_STATE_MISSING_AFTER_MIGRATION:manual_reconciliation_required")
+        # Do not recopy stale legacy files after the new root starts receiving updates.
+        for name in _MIGRATABLE_STATE_NAMES[:-1]:
+            p = target / name
+            if p.exists():
+                _read_migration_value(p)
+        return {"mode": "marker_verified", "copied": [], "target": str(target)}
+
+    if not (legacy / "state.json").is_file() and not (target / "state.json").is_file() and legacy.resolve() != target.resolve():
+        raise AuditStop("A_STATE_MISSING_INITIALIZATION_REQUIRED:preserve_or_reconcile_same_day_state")
+
+    lock = target / _STATE_MIGRATION_LOCK
+    try:
+        with lock.open("x", encoding="utf-8") as f:
+            f.write(f"pid={os.getpid()}\n")
+            f.flush()
+            os.fsync(f.fileno())
+    except FileExistsError as exc:
+        raise AuditStop("A_STATE_MIGRATION_LOCK_PRESENT:manual_review_required") from exc
+    copied: List[str] = []
+    hashes: Dict[str, str] = {}
+    try:
+        for name in _MIGRATABLE_STATE_NAMES:
+            src, dst = legacy / name, target / name
+            if not src.exists() and not dst.exists():
+                continue
+            source_value = _read_migration_value(src) if src.exists() else None
+            target_value = _read_migration_value(dst) if dst.exists() else None
+            if src.exists() and dst.exists():
+                if source_value != target_value:
+                    raise AuditStop(f"A_STATE_MIGRATION_CONFLICT:{name}")
+                payload = src.read_bytes()
+            elif src.exists():
+                payload = src.read_bytes()
+                _atomic_write_bytes(dst, payload)
+                copied.append(name)
+            else:
+                payload = dst.read_bytes()
+            hashes[name] = hashlib.sha256(payload).hexdigest()
+
+        marker_data = {
+            "version": 1,
+            "legacy_root": str(legacy.resolve()),
+            "target_root": str(target.resolve()),
+            "copied_files": copied,
+            "initial_file_sha256": hashes,
+            "note": "migration marker only; legacy files retained; no Render state was accessed by this code",
+        }
+        marker_payload = (json.dumps(marker_data, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode("utf-8")
+        _atomic_write_bytes(marker, marker_payload)
+        return {"mode": "migrated_or_initialized", "copied": copied, "target": str(target)}
+    except AuditStop:
+        raise
+    except Exception as exc:
+        raise AuditStop(f"A_STATE_MIGRATION_WRITE_FAILED:{type(exc).__name__}") from exc
+    finally:
+        try:
+            lock.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError:
+            # A surviving lock safely blocks automatic initialization next time.
+            pass
+
+
+def load_json(path: Path, default: Any) -> Any:
+    if not path.exists():
+        return default
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+        if path.name in _AUTHORITATIVE_JSON_NAMES and not isinstance(value, dict):
+            raise ValueError("expected JSON object")
+        return value
+    except Exception as exc:
+        if path.name in _AUTHORITATIVE_JSON_NAMES:
+            raise AuditStop(f"A_STATE_READ_FAILED:{path.name}:{type(exc).__name__}") from exc
         return default
 
 
 def save_json_atomic(path: Path, obj: Any) -> None:
     ensure_outdir()
     tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(obj, ensure_ascii=False, indent=2), encoding="utf-8")
-    tmp.replace(path)
+    payload = json.dumps(obj, ensure_ascii=False, indent=2).encode("utf-8")
+    with tmp.open("wb") as f:
+        f.write(payload)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
 
 
 def append_event(obj: Dict[str, Any]) -> None:
@@ -835,6 +994,99 @@ class FugleAdapter:
         return f10, avg5, prev1, n
 
 
+    def prepare_f10_cache_only(self, symbols: List[str], snapshot_date: str) -> None:
+        """Prime the existing OLD-A estimator cache using one read-only SQLite connection.
+
+        Missing/incomplete histories stay unavailable; this method never calls Fugle.
+        The existing estimated_vr5_parts() remains the only metric calculator.
+        """
+        if not hasattr(self, "_estvr5_cache"):
+            self._estvr5_cache = {}
+        ready = {}
+        unresolved = []
+        for symbol in dict.fromkeys(str(x) for x in symbols):
+            key = f"estvr5|{symbol}|{snapshot_date}"
+            ram = self._estvr5_cache.get(key)
+            persisted = self.history_cache.get(key)
+            if isinstance(ram, list) and len(ram) >= 10:
+                ready[symbol] = True
+            elif isinstance(persisted, list) and len(persisted) >= 10:
+                self._estvr5_cache[key] = persisted
+                ready[symbol] = True
+            else:
+                ready[symbol] = False
+                unresolved.append(symbol)
+        self._surge_f10_ready = ready
+        if not unresolved:
+            return
+        db_path = (
+            Path(os.environ.get("PRODUCTION_STATE_DIR")) / "f10_baseline_v1.sqlite3"
+            if os.environ.get("PRODUCTION_STATE_DIR")
+            else (Path("/var/data/stock-alert/f10_baseline_v1.sqlite3")
+                  if Path("/var/data").exists()
+                  else OUTDIR.parent / "f10_baseline_v1.sqlite3")
+        )
+        if not db_path.is_file():
+            return
+        try:
+            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=1)
+            try:
+                for symbol in unresolved:
+                    rows = conn.execute(
+                        "SELECT day,full,pts_json FROM f10_day WHERE symbol=? AND day<? ORDER BY day DESC LIMIT 10",
+                        (symbol, snapshot_date),
+                    ).fetchall()
+                    if len(rows) != 10:
+                        continue
+                    days = [{"date": str(day), "full": float(full),
+                             "pts": [(str(tm), float(vol)) for tm, vol in json.loads(points)]}
+                            for day, full, points in reversed(rows)]
+                    self._estvr5_cache[f"estvr5|{symbol}|{snapshot_date}"] = days
+                    ready[symbol] = True
+            finally:
+                conn.close()
+        except (OSError, sqlite3.Error, TypeError, ValueError, KeyError):
+            self._surge_f10_ready = {symbol: False for symbol in ready}
+            return
+        self._surge_f10_ready = ready
+
+    def has_complete_f10_cache_only(self, symbol: str, snapshot_date: str) -> bool:
+        """True only when the existing estimated_vr5_parts path cannot fall back to HTTP."""
+        readiness = getattr(self, "_surge_f10_ready", None)
+        if isinstance(readiness, dict):
+            return readiness.get(symbol, False) is True
+        key = f"estvr5|{symbol}|{snapshot_date}"
+        ram = getattr(self, "_estvr5_cache", {}).get(key)
+        if isinstance(ram, list):
+            return len(ram) >= 10
+        persisted = self.history_cache.get(key)
+        # estimated_vr5_parts adopts persisted lists at >=5 rows, then falls
+        # through to daily_history/API when fewer than ten are present.
+        if isinstance(persisted, list) and len(persisted) >= 5:
+            return len(persisted) >= 10
+        db_path = (
+            Path(os.environ.get("PRODUCTION_STATE_DIR")) / "f10_baseline_v1.sqlite3"
+            if os.environ.get("PRODUCTION_STATE_DIR")
+            else (Path("/var/data/stock-alert/f10_baseline_v1.sqlite3")
+                  if Path("/var/data").exists()
+                  else OUTDIR.parent / "f10_baseline_v1.sqlite3")
+        )
+        if not db_path.is_file():
+            return False
+        try:
+            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=1)
+            try:
+                count = conn.execute(
+                    "SELECT COUNT(*) FROM f10_day WHERE symbol=? AND day<?",
+                    (symbol, snapshot_date),
+                ).fetchone()[0]
+            finally:
+                conn.close()
+            return int(count) >= 10
+        except (OSError, sqlite3.Error, TypeError, ValueError):
+            return False
+
+
 class StrongSelector:
     def __init__(self, track_path: Optional[Path] = TRACK_FILE):
         self.track_path = track_path
@@ -1091,7 +1343,7 @@ class StrongSelector:
         last20 = [b.close for b in bars[-20:]]
         ma20 = sum(last20) / len(last20) if last20 else 0
         above_ma20 = ma20 > 0 and price >= ma20
-        if chg >= 3 and above_ma20:
+        if chg >= 2.5 and above_ma20:
             result["source"] = "NO_VCP"
             result["ma20"] = round(ma20, 2)
             return result
@@ -1304,6 +1556,7 @@ class Scanner:
         self.adapter = adapter
         self.selector = StrongSelector()
         self.bridge_url = bridge_url
+        self.layered_a_enabled = LAYERED_A_ENABLED
         self.state = load_json(STATE_FILE, {"discovered": {}, "volume_armed": {}, "queue_waiting": {}})
         if not isinstance(self.state, dict):
             self.state = {}
@@ -1313,6 +1566,12 @@ class Scanner:
             self.state["volume_armed"] = {}
         if not isinstance(self.state.get("queue_waiting"), dict):
             self.state["queue_waiting"] = {}
+        if not isinstance(self.state.get("layered_handoff_unknown"), dict):
+            self.state["layered_handoff_unknown"] = {}
+        if not isinstance(self.state.get("layered_handoff_result"), dict):
+            self.state["layered_handoff_result"] = {}
+        if not isinstance(self.state.get("layered_vcp_state"), dict):
+            self.state["layered_vcp_state"] = {}
 
         # Historical-D MISS work is isolated from the A main scan.
         # Worker performs network I/O only; Scanner main thread owns cache mutation.
@@ -1399,6 +1658,53 @@ class Scanner:
     def already_sent(self, d: str, symbol: str) -> bool:
         return symbol in self.state["discovered"].get(d, {})
 
+    def snapshot_surge_decision(self, snapshot: Dict[str, Any], snapshot_date: str,
+                                now_dt: datetime) -> Tuple[str, str, Optional[Dict[str, Any]]]:
+        """Isolated OLD_A_SNAPSHOT_DERIVED_SURGE_V1 gate.
+
+        Reuses the old-A F10/EVG implementation, but refuses to call it unless
+        its ten-session input is already resident locally. This prevents the
+        old fallback path from adding per-symbol history HTTP requests.
+        The result is a separate snapshot-time variant; it is not fixed M+1.
+        """
+        symbol = str(snapshot.get("stock_id") or "")
+        day = str(snapshot.get("date") or "")[:10]
+        if not re.fullmatch(r"\d{4}", symbol) or day != snapshot_date:
+            return "UNKNOWN", "SNAPSHOT_IDENTITY_OR_DATE_INVALID", None
+        try:
+            volume = float(snapshot.get("total_volume"))
+            if not math.isfinite(volume) or volume < 0:
+                return "UNKNOWN", "SNAPSHOT_VOLUME_INVALID", None
+        except (TypeError, ValueError):
+            return "UNKNOWN", "SNAPSHOT_VOLUME_INVALID", None
+        if volume < 1000.0:
+            return "FAIL", "CUMULATIVE_LOTS_BELOW_1000", {"cumulative_lots": volume}
+        if not self.adapter.has_complete_f10_cache_only(symbol, snapshot_date):
+            return "UNKNOWN", "F10_CACHE_MISS_NO_HISTORY_FALLBACK", None
+        try:
+            f10, avg5, prev1, _days = self.adapter.estimated_vr5_parts(
+                symbol, snapshot_date, now_dt
+            )
+            if not all(math.isfinite(float(v)) and float(v) > 0 for v in (f10, avg5, prev1)):
+                return "UNKNOWN", "F10_METRIC_UNDEFINED", None
+            projected = volume / f10
+            evg5 = projected / avg5
+            evg_pct = (projected / prev1 - 1.0) * 100.0
+            evg1 = 1.0 + evg_pct / 100.0
+            metrics = {
+                "symbol": symbol, "date": day, "cumulative_lots": volume,
+                "estimated_vr5": evg5, "evg_pct": evg_pct, "evg1": evg1,
+                "f10_fraction": f10, "prior5_average_lots": avg5,
+                "previous_day_lots": prev1,
+                "variant": "OLD_A_SNAPSHOT_DERIVED_SURGE_V1",
+                "time_semantics": "SNAPSHOT_OBSERVATION; NOT_FIXED_M_PLUS_1",
+            }
+        except (AuditStop, OSError, sqlite3.Error, TypeError, ValueError, ZeroDivisionError) as exc:
+            return "UNKNOWN", f"F10_OR_EVG_UNAVAILABLE:{type(exc).__name__}", None
+        passed = evg5 >= 2.5 or evg1 >= 2.5
+        return ("PASS", "OR_A_THRESHOLD_MET", metrics) if passed else ("FAIL", "OR_A_THRESHOLD_NOT_MET", metrics)
+
+
     def armed_info(self, d: str, symbol: str) -> Optional[Dict[str, Any]]:
         x = self.state["volume_armed"].get(d, {}).get(symbol)
         return x if isinstance(x, dict) else None
@@ -1460,9 +1766,20 @@ class Scanner:
             "vol_ratio": hit["volRatio"],
             "change_pct": hit["chgPct"],
         }
-        # Only a completed per-symbol audit may reach here. Dedupe is written
-        # strictly after a successful bridge handoff (or explicit dry-run).
-        self.bridge_send(payload)
+        # Reuse legacy A handoff semantics for all routes:
+        # mark success only after bridge_send returns; failures remain retryable.
+        ack = self.bridge_send(payload)
+        if self.layered_a_enabled:
+            # In layered mode, HTTP transport success alone is not B acceptance.
+            # A dry bridge or a malformed/negative B response must stay retryable.
+            if not isinstance(ack, dict) or ack.get("http_status") != 200:
+                raise RuntimeError("B_HANDOFF_ACK_MISSING")
+            body = ack.get("body")
+            expected_key = f"{snap_date}|{str(symbol).zfill(4)}"
+            if not isinstance(body, dict) or body.get("ok") is not True or body.get("key") != expected_key:
+                raise RuntimeError("B_HANDOFF_ACK_INVALID")
+            if not any(body.get(k) is True for k in ("launched", "duplicate", "already_done")):
+                raise RuntimeError("B_HANDOFF_NOT_ACCEPTED")
         self.mark_sent(snap_date, symbol, payload)
         append_event({"ts": iso_now(), "type": "discovery", **payload})
         return True
@@ -1486,9 +1803,42 @@ class Scanner:
                 if r.status < 200 or r.status >= 300:
                     raise RuntimeError(f"Bridge HTTP {r.status}: {resp[:300]}")
                 print(f"[BRIDGE] {payload['stock_id']} -> HTTP {r.status}")
+                if self.layered_a_enabled:
+                    try:
+                        parsed = json.loads(resp)
+                    except Exception:
+                        parsed = None
+                    return {"http_status": r.status, "body": parsed}
         except Exception as e:
             # handoff 失敗不能先 dedupe；下輪要能重試。
             raise RuntimeError(f"Bridge handoff failed: {e}") from e
+
+    def _layered_vcp_runtime(self):
+        runtime = getattr(self, "vcp_scan_once_runtime", None)
+        if runtime is None:
+            from vcp_scan_once_adapter import VcpScanOnceRuntime
+            runtime = VcpScanOnceRuntime(now_tw, self.state.get("layered_vcp_state", {}))
+            self.vcp_scan_once_runtime = runtime
+        return runtime
+
+    def _layered_vcp_inputs(self, symbol: str, snap_date: str):
+        """Resolve metadata/daily bars locally only; no ticker/history HTTP fallback."""
+        adapter = self.adapter
+        meta = getattr(adapter, "meta_cache", {}).get(symbol)
+        if meta is None:
+            meta = getattr(adapter, "f11_metadata_cache", {}).get(symbol)
+        if not isinstance(meta, dict) or not self.selector.meta_ok(meta):
+            return None, None, "VCP_METADATA_NOT_READY"
+        try:
+            bars = adapter.daily_history_local_ready(symbol, snap_date)
+        except Exception as exc:
+            return meta, None, f"VCP_LOCAL_HISTORY_ERROR:{type(exc).__name__}"
+        if not isinstance(bars, list) or len(bars) < 60:
+            return meta, None, "VCP_PRIOR_60_DAILY_BARS_NOT_READY"
+        dates = [str(getattr(bar, "date", "")) for bar in bars]
+        if dates != sorted(set(dates)) or any(day >= snap_date for day in dates):
+            return meta, None, "VCP_HISTORY_IDENTITY_OR_CAUSAL_ORDER"
+        return meta, bars, None
 
     @staticmethod
     def liquidity_minimum(dt: datetime) -> Optional[float]:
@@ -1531,19 +1881,143 @@ class Scanner:
 
 
         vol_min = self.liquidity_minimum(now_dt)
-        if vol_min is None:
+        if vol_min is None and not self.layered_a_enabled:
             print("[A WARMUP] 09:00: EVG/EstimatedVR5 disabled until 09:01", flush=True)
             return []
+
+        # Pinned VCP watches start from 800 snapshot lots and remain independent
+        # of FLOW's rising/liquidity/ARM gates. Existing watches, pending retries,
+        # and active Pivot tracks continue even after any route has handed off.
+        vcp_decisions: Dict[str, Dict[str, Any]] = {}
+        layered_vcp_seconds = 0.0
+        if self.layered_a_enabled:
+            vcp_runtime = self._layered_vcp_runtime()
+            vcp_t0 = time.monotonic()
+            for row in snaps:
+                symbol = str(row.get("stock_id") or "")
+                if not self.selector.basic_code_ok(symbol):
+                    continue
+                volume = float(row.get("total_volume") or 0.0)
+                should_track = (
+                    volume >= 800
+                    or vcp_runtime.has_pending(snap_date, symbol)
+                    or vcp_runtime.has_watch(snap_date, symbol)
+                    or vcp_runtime.has_active_track(symbol)
+                )
+                if not should_track:
+                    continue
+                meta, bars, reason = self._layered_vcp_inputs(symbol, snap_date)
+                if reason:
+                    vcp_decisions[symbol] = {"status": "UNKNOWN", "reason": reason}
+                    append_event({"ts": iso_now(), "type": "vcp_unknown", "symbol": symbol,
+                                  "date": snap_date, "reason": reason,
+                                  "source_sha": "c1cc4c968c3288c32e167b52a01d34cc260cb02baac4ce7b6ef06f6f37298da7"})
+                    continue
+                prior5 = [float(bar.volume_zhang) for bar in bars[-5:] if float(bar.volume_zhang) >= 0]
+                if len(prior5) != 5 or sum(prior5) <= 0:
+                    reason = "VCP_PRIOR5_VOLUME_INVALID"
+                    vcp_decisions[symbol] = {"status": "UNKNOWN", "reason": reason}
+                    append_event({"ts": iso_now(), "type": "vcp_unknown", "symbol": symbol,
+                                  "date": snap_date, "reason": reason})
+                    continue
+                raw_vr5 = volume / (sum(prior5) / 5.0)
+                priority = self.queue_priority(raw_vr5, volume)
+                decision = vcp_runtime.evaluate(row, bars, meta, raw_vr5, priority)
+                vcp_decisions[symbol] = {
+                    "status": "PASS" if decision.get("proposals") else "FAIL",
+                    "reason": "PINNED_VCP_PENDING_OR_CONFIRMED_BREAKOUT" if decision.get("proposals") else "VCP_NOT_HANDOFF_READY",
+                    "hit": (decision.get("proposals") or [None])[0],
+                    "state": decision.get("vcp_state"), "watch": decision.get("watch"),
+                }
+                if decision.get("fire_event"):
+                    append_event({"ts": iso_now(), "type": "vcp_fire", **decision["fire_event"]})
+            layered_vcp_seconds = time.monotonic() - vcp_t0
+            self.state["layered_vcp_state"] = vcp_runtime.export_state()
+            save_json_atomic(STATE_FILE, self.state)
+
+        # SURGE is evaluated from the same snapshot before any FLOW-only price/liquidity gate.
+        # Prime cache-only F10 data once per scan; no per-symbol connection fanout or HTTP fallback.
+        surge_decisions: Dict[str, Tuple[str, str, Optional[Dict[str, Any]], Dict[str, Any]]] = {}
+        if self.layered_a_enabled and vol_min is not None:
+            surge_symbols = [str(row.get("stock_id") or "") for row in snaps
+                             if self.selector.basic_code_ok(str(row.get("stock_id") or ""))]
+            prepare = getattr(self.adapter, "prepare_f10_cache_only", None)
+            if callable(prepare):
+                prepare(surge_symbols, snap_date)
+            for row in snaps:
+                symbol = str(row.get("stock_id") or "")
+                if not self.selector.basic_code_ok(symbol) or self.already_sent(snap_date, symbol):
+                    continue
+                status, reason, metrics = self.snapshot_surge_decision(row, snap_date, now_dt)
+                surge_decisions[symbol] = (status, reason, metrics, row)
+                if status == "UNKNOWN":
+                    append_event({"ts": iso_now(), "type": "surge_unknown", "symbol": symbol,
+                                  "date": snap_date, "reason": reason, "variant": SURGE_VARIANT})
+
+        # Dispatch by route precedence, before FLOW preparation can consume the
+        # scan's handoff opportunity. FLOW's own prepared FIFO remains unchanged.
+        selected: List[Dict[str, Any]] = []
+        decided_symbols = set()
+        attempted_symbols = set()  # no second route may retry a rejected handoff in the same scan
+        if self.layered_a_enabled:
+            for symbol, decision in vcp_decisions.items():
+                hit = decision.get("hit")
+                if decision.get("status") != "PASS" or not isinstance(hit, dict):
+                    continue
+                if self.already_sent(snap_date, symbol):
+                    continue
+                hit = dict(hit)
+                hit.setdefault("name", next(
+                    (row.get("name") for row in snaps if str(row.get("stock_id") or "") == symbol), symbol
+                ))
+                try:
+                    handed = self.handoff_hit(hit, snap_date)
+                except RuntimeError as exc:
+                    handed = False
+                    print(f"[A VCP HANDOFF RETRY NEXT SCAN] symbol={symbol} error={exc}", flush=True)
+                attempted_symbols.add(symbol)
+                if handed:
+                    selected.append(hit)
+                    decided_symbols.add(symbol)
+                append_event({"ts": iso_now(), "type": "layered_vcp_handoff", "symbol": symbol,
+                              "date": snap_date, "handed": bool(handed), "disposition": "VCP_FIRST"})
+
+            for symbol, (status, _reason, metrics, row) in surge_decisions.items():
+                if (status != "PASS" or symbol in decided_symbols or symbol in attempted_symbols
+                        or self.already_sent(snap_date, symbol)
+                        ):
+                    continue
+                metrics = metrics or {}
+                hit = {
+                    "code": symbol, "name": row.get("name") or symbol,
+                    "todayVol": float(row.get("total_volume") or 0),
+                    "volRatio": round(float(metrics.get("estimated_vr5") or 0), 4),
+                    "chgPct": round(float(row.get("change_rate") or 0), 2),
+                    "price": float(row.get("close") or 0), "vcpInfo": None,
+                    "source": "SURGE", "estimatedVr5": metrics.get("estimated_vr5"),
+                    "evgPct": metrics.get("evg_pct"), "surgeVariant": SURGE_VARIANT,
+                    "timeSemantics": "SNAPSHOT_OBSERVATION; NOT_FIXED_M_PLUS_1",
+                }
+                try:
+                    handed = self.handoff_hit(hit, snap_date)
+                except RuntimeError as exc:
+                    handed = False
+                    print(f"[A SURGE HANDOFF RETRY NEXT SCAN] symbol={symbol} error={exc}", flush=True)
+                attempted_symbols.add(symbol)
+                if handed:
+                    selected.append(hit)
+                    decided_symbols.add(symbol)
 
         # Mother gates: common-stock/code universe + must be rising + time-dependent liquidity.
         candidates = [
             s for s in snaps
-            if self.selector.basic_code_ok(s["stock_id"])
+            if vol_min is not None
+            and self.selector.basic_code_ok(s["stock_id"])
             and float(s.get("change_rate") or 0) > 0
             and float(s.get("total_volume") or 0) >= vol_min
             and not self.already_sent(snap_date, s["stock_id"])
         ]
-        print(f"[A DIAG] first_gate_done candidates={len(candidates)} liquidity_min={vol_min:.0f}", flush=True)
+        print(f"[A DIAG] first_gate_done candidates={len(candidates)} liquidity_min={vol_min}", flush=True)
 
         # Phase 1: metadata/history audit + dynamic priority.
         #
@@ -1640,11 +2114,12 @@ class Scanner:
 
         # PRODUCTION CONTROL UNCHANGED: SPECIAL > Q1 > Q2 > Q3 > Q4; same-tier persistent FIFO.
         prepared.sort(key=lambda x: (x[0], x[1]))
-        selected: List[Dict[str, Any]] = []
 
         # Phase 2: one waiting queue; running work is non-preemptive.
         for idx, (priority, entered_at, s, meta, bars, raw_vr5) in enumerate(prepared, 1):
             symbol = s["stock_id"]
+            if self.layered_a_enabled and symbol in attempted_symbols:
+                continue
             today_vol = float(s.get("total_volume") or 0.0)
             append_queue_shadow(snap_date, {
                 "type": "PROCESS_START", "scan_id": scan_id, "symbol": symbol,
@@ -1700,7 +2175,7 @@ class Scanner:
                     chg = float(s.get("change_rate") or 0)
                     price = float(s.get("close") or 0)
                     ma20 = sum(b.close for b in bars[-20:]) / 20 if len(bars) >= 20 else 0
-                    if len(bars) >= 20 and chg >= 3 and ma20 > 0 and price >= ma20:
+                    if len(bars) >= 20 and chg >= 2.5 and ma20 > 0 and price >= ma20:
                         hit = {
                             "code": symbol, "name": s.get("name") or symbol,
                             "todayVol": today_vol, "volRatio": round(raw_vr5, 2),
@@ -1717,7 +2192,7 @@ class Scanner:
                         handed = self.handoff_hit(hit, snap_date)
                         print(f"[A F10 NO_VCP] symbol={symbol} handed={handed}", flush=True)
                     else:
-                        print(f"[A F10 NO_VCP] symbol={symbol} original MA20/3pct gate not met", flush=True)
+                        print(f"[A F10 NO_VCP] symbol={symbol} original MA20/2.5pct gate not met", flush=True)
                     continue
 
                 if not armed:
@@ -1728,18 +2203,39 @@ class Scanner:
                 s_for_select = dict(s)
                 armed_est = armed.get("estimated_vr5")
                 s_for_select["_volume_display_ratio"] = float(armed_est) if armed_est is not None else raw_vr5
-                hit = self.selector.select_one(s_for_select, meta, bars)
-                if hit:
-                    hit["rawVr5"] = round(raw_vr5, 4)
-                    hit["volumeTriggers"] = armed.get("reasons", [])
-                    hit["volumeArmedAt"] = armed.get("armed_at")
-                    hit["estimatedVr5"] = armed.get("estimated_vr5")
-                    hit["evgPct"] = armed.get("evg_pct")
-                    hit["queuePriority"] = "SPECIAL" if priority == 0 else f"Q{priority}"
-                    selected.append(hit)
-                    handed = self.handoff_hit(hit, snap_date)
-                    print(f"[A HANDOFF] symbol={symbol} handed={handed} source={hit['source']} "
-                          f"priority={hit['queuePriority']} estVR5={hit['estimatedVr5']} EVG={hit['evgPct']}", flush=True)
+                if self.layered_a_enabled and hasattr(self.selector, "analyze_vcp"):
+                    # Keep the original selector method byte-for-byte intact.
+                    # During the candidate FLOW pass, suppress only its embedded
+                    # VCP calculation; the pinned independent VCP pass above is
+                    # the sole VCP handoff authority.
+                    original_vcp = self.selector.analyze_vcp
+                    had_instance_override = "analyze_vcp" in getattr(self.selector, "__dict__", {})
+                    self.selector.analyze_vcp = lambda *_args, **_kwargs: {
+                        "status": "not_formed", "breakoutTrack": None
+                    }
+                    try:
+                        hit = self.selector.select_one(s_for_select, meta, bars)
+                    finally:
+                        if had_instance_override:
+                            self.selector.analyze_vcp = original_vcp
+                        else:
+                            del self.selector.analyze_vcp
+                else:
+                    hit = self.selector.select_one(s_for_select, meta, bars)
+                chosen = hit
+                if chosen:
+                    if chosen.get("source") != "SURGE":
+                        chosen["rawVr5"] = round(raw_vr5, 4)
+                        chosen["volumeTriggers"] = armed.get("reasons", [])
+                        chosen["volumeArmedAt"] = armed.get("armed_at")
+                        chosen["estimatedVr5"] = armed.get("estimated_vr5")
+                        chosen["evgPct"] = armed.get("evg_pct")
+                        chosen["queuePriority"] = "SPECIAL" if priority == 0 else f"Q{priority}"
+                    selected.append(chosen)
+                    handed = self.handoff_hit(chosen, snap_date)
+                    decided_symbols.add(symbol)
+                    print(f"[A HANDOFF] symbol={symbol} handed={handed} source={chosen['source']} "
+                          f"priority={chosen.get('queuePriority')} estVR5={chosen.get('estimatedVr5')} EVG={chosen.get('evgPct')}", flush=True)
                 else:
                     print(f"[A DIAG] candidate_done {idx}/{len(prepared)} symbol={symbol} "
                           f"anomaly=True structural=False", flush=True)
@@ -1791,7 +2287,7 @@ def run_self_test() -> None:
     assert hit["volRatio"] == 1.5, hit
 
     stock2 = dict(stock)
-    stock2["change_rate"] = 2.99
+    stock2["change_rate"] = 2.49
     hit2 = s.select_one(stock2, meta, bars, inject_snapshot_today=False)
     assert hit2 is None
 
@@ -1846,8 +2342,8 @@ def main() -> int:
         print("interval must be >= 1 second")
         return 2
 
-    ensure_outdir()
     try:
+        initialize_state_paths()
         key = fugle_key()
         adapter = FugleAdapter(key)
         scanner = Scanner(adapter, args.bridge_url)

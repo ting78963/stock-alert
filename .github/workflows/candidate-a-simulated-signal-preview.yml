@@ -1,0 +1,61 @@
+name: Candidate A simulated signal preview
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Simulate VCP SURGE FLOW through real A handoff and B launch
+        run: |
+          python - <<'PY'
+          import json,sys,types,tempfile,threading
+          from pathlib import Path
+          from unittest.mock import patch
+          gate=types.ModuleType('twse_session_gate_v1')
+          gate.is_scheduled_open=lambda day:True
+          group=types.ModuleType('group_limit_up')
+          group.monitor_loop=lambda *a,**k:None
+          sys.modules['twse_session_gate_v1']=gate
+          sys.modules['group_limit_up']=group
+          import fugle_a_scanner_v2_4 as a
+          import production_worker_v2_shared_ws as b
+
+          class FakeRunner:
+              def __init__(self,*args,**kwargs):
+                  self.lock=threading.RLock()
+                  self.retired=False
+              def rest_reconcile(self,*args): pass
+
+          day='2026-10-22'
+          examples=[
+              {'code':'3714','name':'模擬VCP','source':'VCP','volRatio':1.4,'chgPct':3.1},
+              {'code':'3715','name':'模擬SURGE','source':'SURGE','volRatio':2.8,'chgPct':4.2},
+              {'code':'3716','name':'模擬FLOW','source':'FLOW','volRatio':1.8,'chgPct':2.5},
+          ]
+          scanner=a.Scanner.__new__(a.Scanner)
+          scanner.state={'discovered':{}}
+          scanner.layered_a_enabled=True
+          scanner.bridge_url='mock://b'
+          results=[]
+          def bridge(payload):
+              response=b.launch_b(payload)
+              results.append({'symbol':payload['stock_id'],'source':payload['source'],'name':payload['name'],'b_launched':response.get('launched',False),'line_preview':'[模擬訊號] '+payload['stock_id']+' '+payload['name']+' / '+payload['source']+' / B已啟動'})
+              assert response['ok'] and response['launched'],response
+              return {'http_status':200,'body':{'ok':True,'key':day+'|'+payload['stock_id'],'launched':True}}
+          scanner.bridge_send=bridge
+          with tempfile.TemporaryDirectory() as tmp:
+              with patch.object(b,'STATE_ROOT',Path(tmp)),patch.object(b,'runner_module',lambda:{'Runner':FakeRunner}),patch.object(b,'subscribe_symbol',lambda sid:None),patch.object(b,'worker_loop',lambda *args:None),patch.object(b,'b_time_expired',lambda now=None:False),patch.object(a,'save_json_atomic'),patch.object(a,'append_event'):
+                  b.f14_bootstrap(day)
+                  for hit in examples:
+                      assert scanner.handoff_hit(hit,day)
+                      assert not scanner.handoff_hit(hit,day),'duplicate A handoff'
+                  assert len(results)==3
+                  assert len(b._runners)==3
+                  assert b.LINE_SEND is False,'LINE must stay disabled'
+          print('SIMULATED SIGNAL RESULTS (fictional stock/name, not market observations)')
+          for x in results:print(json.dumps(x,ensure_ascii=False))
+          print('PASS: 3 simulated signals, actual A handoff + B launch, dedupe, zero LINE')
+          PY
