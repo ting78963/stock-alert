@@ -140,13 +140,10 @@ with tempfile.TemporaryDirectory(prefix="a-real-replay-") as temp:
   p95=ms[min(len(ms)-1,int(0.95*(len(ms)-1)))]
   worst=sorted(timings,key=lambda x:x[1],reverse=True)[:5]
   print("TIMING_AUDIT",json.dumps({"scans":len(ms),"mean_ms":round(statistics.mean(ms),2),"median_ms":round(statistics.median(ms),2),"p95_ms":round(p95,2),"max_ms":round(ms[-1],2),"over_5000ms":sum(v>5000 for v in ms),"worst_5":[{"minute":m,"elapsed_ms":round(v,2),"symbols":n} for m,v,n in worst],"scope":"1200 synthetic symbol identities cloned from 9 real histories; stub snapshot/bridge; excludes network and actual full-market data"},ensure_ascii=False))
- print("FIFO_PROCESS_START")
- for q in process:
-  print(json.dumps({"scan":q["scan_id"],"symbol":q["symbol"],"priority":q["priority"],"entered_at":q["queue_entered_at"],"fifo_rank":q["control_fifo_rank"],"volume_rank":q["candidate_volume_rank"]},ensure_ascii=False))
+ print("FIFO_PROCESS_SAMPLE",json.dumps(process[:3],ensure_ascii=False))
  print("FIFO_AUDIT",json.dumps({"process_events":len(process),"scans_with_process":len(by_scan),"ordering_violations":violations,"unique_receipts":unique_receipts,"note":"Only observed PROCESS_START; does not prove FIFO under simultaneous competing same-tier candidates if none occurred"},ensure_ascii=False))
  con.close()
- print("date,minute,symbol,source")
- for minute,sym,route in receipts:print(f"{DAY},{minute},{sym},{route}")
+ print("RECEIPTS_SAMPLE",json.dumps(receipts[:3]))
  print("SUMMARY",json.dumps({"minute_snapshots":len(times),"symbols":len(data),"receipts":len(receipts),"routes":dict(Counter(r for _,_,r in receipts)),"candidate_errors":[e for e in events if e.get("type")=="candidate_error"][:12],"fatal":errors,"queue_process_events":sum(e.get("type")=="PROCESS_START" for e in queues),"scope":"Actual Scanner.scan_once, selector, pinned VCP, F10 and daily history; F15-selected 1m observations only, carry-forward for missing minute; historical metadata may not be as-of; no 5s snapshot, disk writes, API, bridge or LINE"},ensure_ascii=False))
  if errors or violations or not unique_receipts or any(e.get("type")=="candidate_error" for e in events):raise SystemExit("REPLAY_INCOMPLETE: see errors above")
  if any(t[1]>5000 for t in timings):raise SystemExit("STRESS_OVER_5S")
