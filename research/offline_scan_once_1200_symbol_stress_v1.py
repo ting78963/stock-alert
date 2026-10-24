@@ -39,6 +39,16 @@ with tempfile.TemporaryDirectory(prefix="a-real-replay-") as temp:
    for d in (o,o.get("symbols"),o.get("data"),o.get("metadata")):
     if isinstance(d,dict):meta.update({k:v for k,v in d.items() if isinstance(v,dict)})
  if any(s not in meta for s in data):raise SystemExit("STOP: F11 metadata missing for "+",".join(s for s in data if s not in meta))
+ # Select original histories with complete F10 curves, before cloning.
+ with sqlite3.connect(f"file:{ROOT/'f10_baseline_v1.sqlite3'}?mode=ro",uri=True) as f10:
+  eligible=[]
+  for sym in data:
+   with sqlite3.connect(f"file:{ROOT/'f10_baseline_v1.sqlite3'}?mode=ro",uri=True) as check:
+    rows=check.execute("SELECT full,pts_json FROM f10_day WHERE symbol=? AND day<? ORDER BY day DESC LIMIT 10",(sym,DAY)).fetchall()
+   if len(rows)==10 and all(float(full)>0 and bool(pts) for full,pts in rows):eligible.append(sym)
+ if not eligible:raise SystemExit("STOP: no complete F10 source symbols")
+ data={sym:data[sym] for sym in eligible}
+ print("STRESS_F10_SOURCES",json.dumps({"eligible":eligible,"excluded":9-len(eligible)}))
  target=int(os.environ.get("A_STRESS_SYMBOLS","1200"))
  if target<9 or target>2000:raise SystemExit("STOP: symbol count must be 9..2000")
  originals=list(data);alias={}
@@ -75,7 +85,7 @@ with tempfile.TemporaryDirectory(prefix="a-real-replay-") as temp:
    with sqlite3.connect(f"file:{ROOT/'f10_baseline_v1.sqlite3'}?mode=ro",uri=True) as c:
     rows=c.execute("SELECT full FROM f10_day WHERE symbol=? AND day<? ORDER BY day DESC LIMIT 10",(s,d)).fetchall()
    return len(rows)==10 and all(bool(x[0]) for x in rows)
-  def estimated_vr5_parts(self,*a):return mod.FugleAdapter.estimated_vr5_parts(self.real,*a)
+  def estimated_vr5_parts(self,s,*a):return mod.FugleAdapter.estimated_vr5_parts(self.real,alias.get(s,s),*a)
  class Worker:
   def submit(self,*a):return False
  scan=mod.Scanner.__new__(mod.Scanner)
