@@ -100,7 +100,7 @@ jobs:
           scanner.snapshot_surge_decision=lambda *args: ('PASS','OK',{'estimated_vr5':2.0})
           scanner.apply_wait_data_results=lambda:None
           delivered=[]
-          scanner.bridge_send=lambda payload:delivered.append(payload)
+          scanner.bridge_send=lambda payload:(delivered.append(payload),{'http_status':200,'body':{'ok':True,'key':day+'|'+payload['stock_id'],'launched':True}})[1]
           with patch.object(a,'now_tw',return_value=now),patch.object(a,'save_json_atomic'),patch.object(a,'append_event'):
               selected=scanner.scan_once()
           assert len(delivered)==1,delivered
@@ -146,6 +146,7 @@ jobs:
               def bridge(payload):
                   sent.append(payload)
                   if fail: raise RuntimeError('simulated SURGE bridge failure')
+                  return {'http_status':200,'body':{'ok':True,'key':day+'|'+payload['stock_id'],'launched':True}}
               scanner.bridge_send=bridge
               with patch.object(a,'now_tw',return_value=now),patch.object(a,'save_json_atomic'),patch.object(a,'append_event'),patch.object(a,'append_queue_shadow'),patch.object(a,'record_a_scan_mother_identity'):
                   scanner.scan_once()
@@ -187,6 +188,7 @@ jobs:
           def bridge(payload):
               delivered.append(payload)
               if len(delivered)==1: raise RuntimeError('VCP simulated failure')
+              return {'http_status':200,'body':{'ok':True,'key':day+'|'+payload['stock_id'],'launched':True}}
           scanner.bridge_send=bridge
           with patch.object(a,'now_tw',return_value=now),patch.object(a,'save_json_atomic'),patch.object(a,'append_event'):
               first=scanner.scan_once()
