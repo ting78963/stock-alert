@@ -39,7 +39,8 @@ class BSendFailOpen(unittest.TestCase):
                    event_id="test-event",STATE_DIR=ROOT)
         with tempfile.TemporaryDirectory() as tmp:
             scope["STATE_DIR"]=Path(tmp)
-            with patch.object(snapshot,"compute_indicators",side_effect=indicator):
+            config={"side_effect":indicator} if isinstance(indicator,BaseException) else {"return_value":indicator}
+            with patch.object(snapshot,"compute_indicators",**config):
                 exec(send_section(),scope)
                 scope["_send_section"]()
         return posted,scope
@@ -48,7 +49,8 @@ class BSendFailOpen(unittest.TestCase):
         from abc_buy_flex import abc_buy_flex
         posted,scope=self._run(RuntimeError("missing history"))
         self.assertEqual(len(posted),1)
-        self.assertEqual(posted[0],abc_buy_flex(scope["event"],"台塑"))
+        self.assertEqual(posted[0],abc_buy_flex({"stock_id":"1301","signal_class":"A",
+                                                  "recognition_time":"09:31:00"},"台塑"))
 
     def test_indicator_values_enrich_same_buy_card(self):
         posted,_=self._run({"osc":0.4,"osc_delta":0.2,"weekly_kd":"golden_cross"})
