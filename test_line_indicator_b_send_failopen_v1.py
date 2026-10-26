@@ -17,10 +17,9 @@ def send_section():
     stop=next(i for i,n in enumerate(runner.body[start:],start)
               if isinstance(n,ast.If) and isinstance(n.test,ast.UnaryOp)
               and isinstance(n.test.operand,ast.Name) and n.test.operand.id=="ok")
-    # Execute the original AST for the event creation + card assembly + send,
-    # with fake send and indicator dependencies, no live network.
-    return compile(ast.fix_missing_locations(ast.Module(body=runner.body[start:stop+1],
-                                                        type_ignores=[])),"b_runner.py","exec")
+    # Keep original statements inside a function: B has an early return on send failure.
+    section=ast.FunctionDef(name="_send_section",args=ast.arguments(posonlyargs=[],args=[],vararg=None,kwonlyargs=[],kw_defaults=[],kwarg=None,defaults=[]),body=runner.body[start:stop+1],decorator_list=[])
+    return compile(ast.fix_missing_locations(ast.Module(body=[section],type_ignores=[])),"b_runner.py","exec")
 
 class BSendFailOpen(unittest.TestCase):
     def _run(self,indicator):
@@ -42,6 +41,7 @@ class BSendFailOpen(unittest.TestCase):
             scope["STATE_DIR"]=Path(tmp)
             with patch.object(snapshot,"compute_indicators",side_effect=indicator):
                 exec(send_section(),scope)
+                scope["_send_section"]()
         return posted,scope
 
     def test_indicator_exception_still_posts_original_buy(self):
