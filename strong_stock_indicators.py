@@ -79,8 +79,8 @@ def macd(closes):
             "prev_hist":h[-2] if len(h)>1 else None,
             "histArr":h[-5:]}
 
-def calculate(bars, snapshot_close=None):
-    """Compute stock-screen labels. Snapshot only affects displayed OSC, not strong-buy."""
+def calculate(bars, snapshot_close=None, snapshot_date=None, today=None):
+    """Compute stock-screen labels. Snapshot only affects displayed OSC, not strong-buy.\n\n    Snapshot is used only when its date is today, matching stock/index.html.\n    """
     bars=sorted(bars,key=lambda x:str(x["date"]))
     if not bars:return {}
     day=ma_cross_day(bars);prep=ma_prepare(bars);wk=weekly_kd(bars)
