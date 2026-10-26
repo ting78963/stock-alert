@@ -103,7 +103,16 @@ def _evaluate(symbol,meta,line_token,group_id):
       "late_discovery":recognition<discovered,"source":"Fugle","line_sent":False,
       "prior_trading_date":pdate
     }
-    ok=_post_flex(abc_buy_flex(event,meta.get("name")),line_token,group_id)
+    # Presentation only: indicator failures must never block a valid BUY signal.
+    buy_card=abc_buy_flex(event,meta.get("name"))
+    try:
+        from line_indicator_snapshot_v1 import compute_indicators
+        from line_indicator_flex_preview_v1 import enrich_preview
+        indicators=compute_indicators(symbol,date,rows,cutoff)
+        buy_card=enrich_preview(buy_card,indicators)
+    except Exception as exc:
+        print(f"LINE INDICATOR SKIP {symbol} {type(exc).__name__}: {exc}",flush=True)
+    ok=_post_flex(buy_card,line_token,group_id)
     if not ok:return
     event["line_sent"]=True
     with _lock:_sent.add(event_id)
