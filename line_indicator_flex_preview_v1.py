@@ -24,12 +24,13 @@ def indicator_lines(indicators):
         arrow="━" if delta is None or delta==0 else ("▲" if delta>0 else "▼")
         color=GRAY if delta is None or delta==0 else (RED if delta>0 else GREEN)
         result.append(_text(f"OSC {osc:+.2f} {arrow}（盤中估算）",color))
+    strong_buy=indicators.get("strong_buy") is True
     wk=indicators.get("weekly_kd")
-    if wk=="prepare":result.append(_text("週KD✦ 準備黃金交叉"))
-    elif wk=="golden_cross":result.append(_text("週KD✦ 黃金交叉"))
+    if not strong_buy and wk=="prepare":result.append(_text("週KD✦ 準備黃金交叉"))
+    elif not strong_buy and wk=="golden_cross":result.append(_text("週KD✦ 黃金交叉"))
     ma=indicators.get("ma_cross_day")
-    if ma in (1,2,3,4,5):result.append(_text(f"5、20MA✦ 黃金交叉 Day{ma}"))
-    elif indicators.get("ma_prepare") is True:result.append(_text("5、20MA✦ 準備交叉"))
+    if not strong_buy and ma in (1,2,3,4,5):result.append(_text(f"5、20MA✦ 黃金交叉 Day{ma}"))
+    elif not strong_buy and indicators.get("ma_prepare") is True:result.append(_text("5、20MA✦ 準備交叉"))
     if indicators.get("ma20_first_above") is True:
         result.append(_text("20MA✦ 今日站上"))
     if indicators.get("strong_buy") is True:
