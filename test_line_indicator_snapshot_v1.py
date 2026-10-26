@@ -28,6 +28,8 @@ class SnapshotTests(unittest.TestCase):
             self.assertIn("weekly_kd", result)
             self.assertIn("ma_cross_day", result)
             self.assertIn("strong_buy", result)
+            self.assertIn("ma20_first_above", result)
+            self.assertIsInstance(result["ma20_first_above"], bool)
             self.assertEqual(compute_indicators("1301", today, minutes, "08:59:59", dbpath), {})
             self.assertEqual(compute_indicators("9999", today, minutes, "09:00:59", dbpath), {})
 
