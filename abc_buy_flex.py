@@ -56,7 +56,7 @@ def _metric(label, value):
         ],
     }
 
-def abc_buy_flex(event, name=None):
+def abc_buy_flex(event, name=None, indicators=None):
     """Locked production-facing BUY card for P1/A/B/C. Notification layer only."""
     code = str(event.get("stock_id") or event.get("symbol") or "")
     cls = str(event.get("signal_class") or event.get("abc") or "?").upper()
@@ -117,7 +117,7 @@ def abc_buy_flex(event, name=None):
         ]},
     ]
 
-    return {
+    flex = {
         "type": "flex",
         "altText": f"BUY SIGNAL｜{display_name} {code}｜{cls} {p['trait']}｜立即買進"[:400],
         "contents": {
@@ -125,6 +125,11 @@ def abc_buy_flex(event, name=None):
             "body": {"type": "box", "layout": "vertical", "paddingAll": "xl", "contents": contents},
         },
     }
+
+    if indicators:
+        from line_indicator_flex_preview_v1 import enrich_preview
+        return enrich_preview(flex, indicators)
+    return flex
 
 def format_buy_text(event, name=None):
     code = str(event.get("stock_id") or event.get("symbol") or "")
