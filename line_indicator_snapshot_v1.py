@@ -20,6 +20,6 @@ def compute_indicators(symbol, day, minute_rows, cutoff, db_path=None):
         "weekly_kd": weekly_kd_label(rows),
         "ma_cross_day": ma_cross_day(rows),
         "ma_prepare": ma_prepare(rows),
-        "strong_buy": strong_buy(rows),
+        "strong_buy": strong_buy(history),
     }
     return result
