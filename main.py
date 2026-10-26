@@ -16,7 +16,7 @@ app.register_blueprint(fugle_web_proxy_bp)
 TPE = ZoneInfo("Asia/Taipei")
 LINE_TOKEN = os.environ.get("LINE_TOKEN", "").strip()
 GROUP_ID = os.environ.get("GROUP_ID", "").strip()
-LIMIT_UP_GROUP_ID = os.environ.get("LIMIT_UP_GROUP_ID", "").strip()
+LINE_TO_ID = os.environ.get("LINE_TO_ID", "").strip()
 
 _group_limit_up_thread = None
 _b_thread = None
@@ -24,21 +24,21 @@ _b_thread = None
 def start_background_services():
     global _group_limit_up_thread, _b_thread
     # Keep legacy limit-up notifications isolated from the recognition group.
-    if LIMIT_UP_GROUP_ID and LINE_TOKEN:
+    if GROUP_ID and LINE_TOKEN:
         if _group_limit_up_thread is None or not _group_limit_up_thread.is_alive():
             _group_limit_up_thread = threading.Thread(
                 target=group_limit_up_monitor_loop,
-                args=(LINE_TOKEN, LIMIT_UP_GROUP_ID),
+                args=(LINE_TOKEN, GROUP_ID),
                 name="group-limit-up-runner", daemon=True,
             )
             _group_limit_up_thread.start()
             print("group limit-up notifier started", flush=True)
     else:
-        print("group limit-up notifier waiting for LIMIT_UP_GROUP_ID", flush=True)
-    if _b_thread is None or not _b_thread.is_alive():
+        print("group limit-up notifier waiting for original GROUP_ID", flush=True)
+    if LINE_TO_ID and LINE_TOKEN and (_b_thread is None or not _b_thread.is_alive()):
         _b_thread = threading.Thread(
             target=b_monitor_loop,
-            args=(LINE_TOKEN, GROUP_ID),
+            args=(LINE_TOKEN, LINE_TO_ID),
             name="abc-b-runner",
             daemon=True,
         )
@@ -289,7 +289,7 @@ def status():
         fugle_key_configured=bool(os.environ.get("FUGLE_API_KEY", "").strip()),
         line_configured=bool(LINE_TOKEN and GROUP_ID),
         legacy_trading_strategy="removed",
-        group_limit_up_notifier="enabled" if LINE_TOKEN and LIMIT_UP_GROUP_ID else "waiting_for_separate_group_id",
+        group_limit_up_notifier="enabled" if LINE_TOKEN and GROUP_ID else "waiting_for_original_group_id",
         b_engine=b_status(),
         scanner_a="blocked_until_fugle_snapshot_permission",
     )
