@@ -115,6 +115,17 @@ def main():
     e=load_event(path)
     if a.stock_name.strip():e["stock_name"]=a.stock_name.strip()
     flex=build_flex(e);spec=CARD[e["signal_class"]];name,sid=stock_display(e)
+    # Presentation-only. The existing signal, retry key, and LINE send remain unchanged.
+    try:
+        from fugle_adapter import intraday_1m
+        from line_indicator_snapshot_v1 import compute_indicators
+        from line_indicator_flex_preview_v1 import enrich_preview
+        cutoff=str(e["recognition_time"])[:5]+":59"
+        minutes=intraday_1m(str(e["stock_id"]),str(e["date"]))
+        indicators=compute_indicators(str(e["stock_id"]),str(e["date"]),minutes,cutoff)
+        flex=enrich_preview(flex,indicators)
+    except Exception as exc:
+        print(f"[LINE INDICATOR SKIP] {e['stock_id']} {type(exc).__name__}: {exc}",flush=True)
     print("="*110);print("LINE SIGNAL NOTIFIER v3 | A/B/C/P1 FLEX");print("="*110);print("Mode:","REAL SEND" if a.send else "DRY RUN");print("Event:",path);print("Stock:",f"{name} {sid}");print("Signal:",f"{e['signal_class']} | {spec['title']}");print("Recognition:",e["recognition_time"]);print("Retry key:",retry_key(e))
     if a.preview_json:print(json.dumps(flex,ensure_ascii=False,indent=2))
     if not a.send:print("\nDRY RUN PASS -> NO LINE SEND");return
