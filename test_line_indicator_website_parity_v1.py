@@ -1,6 +1,6 @@
 """Cross-language parity test against pinned original website JavaScript.
 
-Fetch original index.html from immutable commit during CI. Run extracted original
+Read pinned original website JavaScript from repository during CI. Run extracted original
 functions in Node, compare against Python on deterministic historical-like fixtures.
 No API keys, DB, LINE, or production state involved.
 """
@@ -54,6 +54,7 @@ process.stdout.write(JSON.stringify(result));
 """
         p=subprocess.run(["node","-e",js],input=json.dumps(fixtures),text=True,capture_output=True,check=True)
         results=json.loads(p.stdout)
+        self.assertEqual(len(results), len(fixtures))
         for i,(rows,actual) in enumerate(zip(fixtures,results)):
             with self.subTest(case=i):
                 py=macd([r["close"] for r in rows])
