@@ -253,6 +253,39 @@ def internal_b_attack_trace(symbol):
     except Exception as e:
         return jsonify(ok=False,stock_id=sid,error=type(e).__name__,detail=str(e)),500
 
+
+# Isolated one-shot visual test. Never invokes A/B, writes signal events, or changes dedupe state.
+_line_indicator_test_lock = threading.Lock()
+_line_indicator_test_sent = False
+
+@app.get("/audit/line-indicator-once-20261026-5e91b7")
+def audit_line_indicator_once():
+    global _line_indicator_test_sent
+    from line_signal_notifier_v3 import build_flex
+    from line_indicator_flex_preview_v1 import enrich_preview
+    if not LINE_TOKEN or not GROUP_ID:
+        return jsonify(ok=False,error="LINE_NOT_CONFIGURED"),500
+    with _line_indicator_test_lock:
+        if _line_indicator_test_sent:
+            return jsonify(ok=True,already_sent=True,test_only=True),200
+        event={"stock_id":"1301","stock_name":"台塑","signal_class":"A","recognition_time":"09:31:00"}
+        indicators={"osc":0.52,"osc_delta":0.14,"weekly_kd":"golden_cross",
+                    "ma_cross_day":2,"ma20_first_above":True,"strong_buy":True}
+        card=enrich_preview(build_flex(event),indicators)
+        card["altText"]="【測試訊號・模擬數值】"+card["altText"]
+        card["contents"]["body"]["contents"].insert(0,{"type":"text","text":"【測試訊號｜模擬資料｜非投資建議】",
+          "size":"sm","weight":"bold","color":"#B4232C","wrap":True})
+        try:
+            r=requests.post("https://api.line.me/v2/bot/message/push",
+                headers={"Authorization":f"Bearer {LINE_TOKEN}","Content-Type":"application/json"},
+                json={"to":GROUP_ID,"messages":[card]},timeout=10)
+            if 200<=r.status_code<300:
+                _line_indicator_test_sent=True
+            return jsonify(ok=200<=r.status_code<300,line_status=r.status_code,
+                           test_only=True,already_sent=False), (200 if 200<=r.status_code<300 else 502)
+        except Exception as exc:
+            return jsonify(ok=False,error=type(exc).__name__),500
+
 @app.get("/audit/p1-flex-6207-9f2c7a")
 def audit_p1_flex_6207():
     """Temporary fixed visual-only LINE Flex test. No recognition/state mutation."""
