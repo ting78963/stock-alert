@@ -1,0 +1,18 @@
+name: Isolated LINE indicator tests
+on:
+  push:
+    branches:
+      - feature/line-indicator-display-isolated-20261026
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Run isolated indicator regression tests
+        run: python -m unittest -v test_line_indicator_calculations_v1.py
