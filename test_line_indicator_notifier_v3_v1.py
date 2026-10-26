@@ -47,7 +47,7 @@ class NotifierV3Tests(unittest.TestCase):
                     output=io.StringIO()
                     with patch.object(sys,"argv",["notifier",str(path),"--preview-json"]), \
                          patch.object(notifier,"load_event",return_value=e.copy()), \
-                         patch.dict(sys.modules,{"fugle_adapter":types.SimpleNamespace(intraday_1m=lambda *args: [])}), \
+                         patch.dict(sys.modules,{"fugle_adapter":types.SimpleNamespace(intraday_1m=lambda *args,**kwargs: [])}), \
                          patch.object(snapshot,"compute_indicators",side_effect=indicator if isinstance(indicator,Exception) else None,return_value=indicator if isinstance(indicator,dict) else None), \
                          patch.object(notifier,"send",side_effect=AssertionError("must not send")), \
                          redirect_stdout(output):
@@ -70,7 +70,7 @@ class NotifierV3Tests(unittest.TestCase):
             path.write_text("{}",encoding="utf-8")
             with patch.object(sys,"argv",["notifier",str(path)]), \
                  patch.object(notifier,"load_event",return_value=e), \
-                 patch.dict(sys.modules,{"fugle_adapter":types.SimpleNamespace(intraday_1m=lambda *args: bars)}), \
+                 patch.dict(sys.modules,{"fugle_adapter":types.SimpleNamespace(intraday_1m=lambda *args,**kwargs: bars)}), \
                  patch.object(snapshot,"compute_indicators",side_effect=compute), \
                  redirect_stdout(io.StringIO()):
                 notifier.main()
