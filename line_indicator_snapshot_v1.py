@@ -14,6 +14,13 @@ def compute_indicators(symbol, day, minute_rows, cutoff, db_path=None):
     osc = macd([r["close"] for r in rows])
     current = osc["hist"]
     previous = osc["prev_hist"]
+    # Website: prior close below prior MA20, live price above intraday MA20.
+    # Snapshot has no browser localStorage, so this is the condition at signal time.
+    prior_closes = [float(r["close"]) for r in history]
+    live_close = float(rows[-1]["close"])
+    ma20_first_above = (len(prior_closes) >= 20
+                        and prior_closes[-1] < sum(prior_closes[-20:]) / 20
+                        and live_close >= (sum(prior_closes[-19:]) + live_close) / 20)
     result = {
         "osc": current,
         "osc_delta": round(current - previous, 4) if current is not None and previous is not None else None,
@@ -21,5 +28,6 @@ def compute_indicators(symbol, day, minute_rows, cutoff, db_path=None):
         "ma_cross_day": ma_cross_day(rows),
         "ma_prepare": ma_prepare(rows),
         "strong_buy": strong_buy(history),
+        "ma20_first_above": ma20_first_above,
     }
     return result
