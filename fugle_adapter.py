@@ -79,3 +79,25 @@ def previous_context(symbol,date,key=None):
     pv=float(y["volume"].clip(lower=0).sum())
     if pc<=0 or pv<=0:raise DataError("Invalid prior context")
     return pdate,pc,pv
+
+
+def historical_daily(symbol, end_date, days=240, key=None):
+    """Fetch bounded daily OHLC for display-only indicators; not AttackVR."""
+    key=key or api_key()
+    start=(pd.Timestamp(end_date)-pd.Timedelta(days=days)).strftime("%Y-%m-%d")
+    q=urllib.parse.urlencode({"timeframe":"D","from":start,"to":end_date,
+                              "fields":"open,high,low,close,volume","sort":"asc"})
+    o=_get(f"{BASE}/historical/candles/{symbol}?{q}",key)
+    if str(o.get("symbol"))!=str(symbol):
+        raise DataError("Fugle daily history identity mismatch")
+    out=[];seen=set()
+    for b in o.get("data",[]):
+        ds=pd.to_datetime(b["date"]).strftime("%Y-%m-%d")
+        if ds>end_date or ds in seen:continue
+        if any(b.get(k) is None for k in ("high","low","close")):continue
+        seen.add(ds)
+        out.append({"date":ds,"high":float(b["high"]),
+                    "low":float(b["low"]),"close":float(b["close"])})
+    out.sort(key=lambda x:x["date"])
+    if len(out)<35:raise DataError("Insufficient daily history for indicators")
+    return out
