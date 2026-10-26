@@ -252,7 +252,7 @@ def audit_line_indicator_recognition_once():
         if getattr(audit_line_indicator_recognition_once, "_sent", False):
             return jsonify(ok=True, already_sent=True)
         event = {"stock_id":"1301","stock_name":"台塑","signal_class":"A","recognition_time":"09:31:00"}
-        card = build_flex(event, "台塑")
+        card = build_flex(event)
         card = enrich_preview(card, {"osc":0.52,"osc_delta":0.14,"weekly_kd":"golden_cross","ma_cross_day":2,"ma20_first_above":True,"strong_buy":True})
         card["altText"] = "【測試訊號・模擬數值】台塑 1301｜非真實買進"
         body = card.get("contents", {}).get("body", {})
