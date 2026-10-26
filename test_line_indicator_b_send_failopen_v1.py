@@ -1,6 +1,7 @@
 """Isolated B send-site regression: indicators must never suppress BUY."""
 import ast
 import unittest
+import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -37,8 +38,10 @@ class BSendFailOpen(unittest.TestCase):
                    _post_flex=lambda card,*args: posted.append(card) or True,
                    _lock=__import__("threading").Lock(),_sent=set(),
                    event_id="test-event",STATE_DIR=ROOT)
-        with patch.object(snapshot,"compute_indicators",side_effect=indicator):
-            exec(send_section(),scope)
+        with tempfile.TemporaryDirectory() as tmp:
+            scope["STATE_DIR"]=Path(tmp)
+            with patch.object(snapshot,"compute_indicators",side_effect=indicator):
+                exec(send_section(),scope)
         return posted,scope
 
     def test_indicator_exception_still_posts_original_buy(self):
