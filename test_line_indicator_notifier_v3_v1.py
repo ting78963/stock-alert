@@ -3,6 +3,7 @@ import ast
 import io
 import json
 import sys
+import types
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -34,7 +35,6 @@ class NotifierV3Tests(unittest.TestCase):
                 self.assertEqual(sum(x.get("backgroundColor")=="#981B25"
                     for x in card["contents"]["body"]["contents"]),1)
     def test_actual_main_dryrun_success_and_indicator_failure(self):
-        from fugle_adapter import intraday_1m
         import line_indicator_snapshot_v1 as snapshot
         e={"stock_id":"1301","stock_name":"台塑","signal_class":"A",
            "recognition_time":"09:31:00","date":"2026-10-26"}
@@ -47,7 +47,7 @@ class NotifierV3Tests(unittest.TestCase):
                     output=io.StringIO()
                     with patch.object(sys,"argv",["notifier",str(path),"--preview-json"]), \
                          patch.object(notifier,"load_event",return_value=e.copy()), \
-                         patch("fugle_adapter.intraday_1m",return_value=[]), \
+                         patch.dict(sys.modules,{"fugle_adapter":types.SimpleNamespace(intraday_1m=lambda *args: [])}), \
                          patch.object(snapshot,"compute_indicators",side_effect=indicator if isinstance(indicator,Exception) else None,return_value=indicator if isinstance(indicator,dict) else None), \
                          patch.object(notifier,"send",side_effect=AssertionError("must not send")), \
                          redirect_stdout(output):
