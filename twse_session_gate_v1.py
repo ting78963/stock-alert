@@ -14,14 +14,14 @@ class SessionGateError(RuntimeError): pass
 
 def _ymd(x):
     s=str(x or "").strip().replace("/","-")
-    # Official API commonly exposes Gregorian date; tolerate ROC yyyMMdd-ish forms too.
-    for fmt in ("%Y-%m-%d","%Y%m%d"):
+    digits=''.join(ch for ch in s if ch.isdigit())
+    # Parse seven-digit ROC dates first: %Y%m%d misreads 1151026 as year 1151.
+    if len(digits)==7 and s.replace('-','').isdigit():
+        try: return date(int(digits[:3])+1911,int(digits[3:5]),int(digits[5:7]))
+        except ValueError: return None
+    for fmt in ('%Y-%m-%d','%Y%m%d'):
         try: return datetime.strptime(s,fmt).date()
         except ValueError: pass
-    if len(s)>=7 and s[:3].isdigit():
-        digits="".join(ch for ch in s if ch.isdigit())
-        if len(digits)==7:
-            return date(int(digits[:3])+1911,int(digits[3:5]),int(digits[5:7]))
     return None
 
 def fetch_schedule(timeout=10):
