@@ -2,7 +2,7 @@ name: One-shot LINE web test isolated
 on:
   push:
     branches:
-      - feature/web-line-single-test-20261026
+      - fix/line-test-recognition-destination-20261026
   pull_request:
     paths:
       - main.py
