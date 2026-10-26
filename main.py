@@ -236,6 +236,34 @@ def internal_b_attack_trace(symbol):
 _line_indicator_test_lock = threading.Lock()
 _line_indicator_test_sent = False
 
+@app.get("/audit/line-indicator-recognition-once-20261027-72d4af")
+def audit_line_indicator_recognition_once():
+    """One-shot simulated card exclusively to recognition system LINE destination."""
+    import threading
+    from line_signal_notifier_v3 import build_flex
+    from line_indicator_flex_preview_v1 import enrich_preview
+    if not hasattr(audit_line_indicator_recognition_once, "_lock"):
+        audit_line_indicator_recognition_once._lock = threading.Lock()
+    token = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "").strip()
+    to = os.environ.get("LINE_TO_ID", "").strip()
+    if not token or not to:
+        return jsonify(ok=False, error="RECOGNITION_LINE_NOT_CONFIGURED"), 503
+    with audit_line_indicator_recognition_once._lock:
+        if getattr(audit_line_indicator_recognition_once, "_sent", False):
+            return jsonify(ok=True, already_sent=True)
+        event = {"stock_id":"1301","stock_name":"台塑","signal_class":"A","recognition_time":"09:31:00"}
+        card = build_flex(event, "台塑")
+        card = enrich_preview(card, {"osc":0.52,"osc_delta":0.14,"weekly_kd":"golden_cross","ma_cross_day":2,"ma20_first_above":True,"strong_buy":True})
+        card["altText"] = "【測試訊號・模擬數值】台塑 1301｜非真實買進"
+        body = card.get("contents", {}).get("body", {})
+        if isinstance(body.get("contents"), list):
+            body["contents"].insert(0, {"type":"text","text":"⚠️ 測試通知・模擬數值・請勿交易","weight":"bold","color":"#CC0000","wrap":True})
+        response = requests.post("https://api.line.me/v2/bot/message/push", headers={"Authorization":f"Bearer {token}","Content-Type":"application/json"},json={"to":to,"messages":[card]},timeout=10)
+        if not 200 <= response.status_code < 300:
+            return jsonify(ok=False, line_status=response.status_code),502
+        audit_line_indicator_recognition_once._sent = True
+        return jsonify(ok=True,line_status=response.status_code,test_only=True)
+
 @app.get("/audit/line-indicator-once-20261026-5e91b7")
 def audit_line_indicator_once():
     return jsonify(ok=False,error="LEGACY_LINE_PUSH_DISABLED"),410
