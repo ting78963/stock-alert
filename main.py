@@ -273,6 +273,10 @@ def audit_line_indicator_once():
                     "ma_cross_day":2,"ma20_first_above":True,"strong_buy":True}
         card=enrich_preview(build_flex(event),indicators)
         card["altText"]="【測試訊號・模擬數值】"+card["altText"]
+        for node in card["contents"]["body"]["contents"]:
+            if node.get("type")=="box" and node.get("backgroundColor")=="#981B25":
+                for item in node.get("contents",[]):
+                    if item.get("type")=="text": item["text"]="測試通知・請勿交易"
         card["contents"]["body"]["contents"].insert(0,{"type":"text","text":"【測試訊號｜模擬資料｜非投資建議】",
           "size":"sm","weight":"bold","color":"#B4232C","wrap":True})
         try:
