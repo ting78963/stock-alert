@@ -1,6 +1,12 @@
 """Tests for production LINE notifier v3 card path (no actual send)."""
 import ast
+import io
+import json
+import sys
+import tempfile
 import unittest
+from contextlib import redirect_stdout
+from unittest.mock import patch
 from pathlib import Path
 import line_signal_notifier_v3 as notifier
 from line_indicator_flex_preview_v1 import enrich_preview
@@ -27,6 +33,28 @@ class NotifierV3Tests(unittest.TestCase):
                 self.assertEqual(enrich_preview(base,{}),base)
                 self.assertEqual(sum(x.get("backgroundColor")=="#981B25"
                     for x in card["contents"]["body"]["contents"]),1)
+    def test_actual_main_dryrun_success_and_indicator_failure(self):
+        from fugle_adapter import intraday_1m
+        import line_indicator_snapshot_v1 as snapshot
+        e={"stock_id":"1301","stock_name":"台塑","signal_class":"A",
+           "recognition_time":"09:31:00","date":"2026-10-26"}
+        with tempfile.TemporaryDirectory() as d:
+            path=Path(d)/"event.json"
+            path.write_text(json.dumps(e),encoding="utf-8")
+            for indicator,expected in [({"osc":0.5,"osc_delta":0.2},"OSC"),
+                                       (RuntimeError("missing history"),"LINE INDICATOR SKIP")]:
+                with self.subTest(expected=expected):
+                    output=io.StringIO()
+                    with patch.object(sys,"argv",["notifier",str(path),"--preview-json"]), \
+                         patch.object(notifier,"load_event",return_value=e.copy()), \
+                         patch("fugle_adapter.intraday_1m",return_value=[]), \
+                         patch.object(snapshot,"compute_indicators",side_effect=indicator if isinstance(indicator,Exception) else None,return_value=indicator if isinstance(indicator,dict) else None), \
+                         patch.object(notifier,"send",side_effect=AssertionError("must not send")), \
+                         redirect_stdout(output):
+                        notifier.main()
+                    self.assertIn(expected,output.getvalue())
+                    self.assertIn("DRY RUN PASS",output.getvalue())
+                    self.assertNotIn("line_sent",path.read_text(encoding="utf-8"))
     def test_production_runner_targets_notifier_v3(self):
         source=(ROOT/"fugle_b_live_runner_v2_p1_final.py").read_text(encoding="utf-8")
         self.assertIn('NOTIFIER=BASE/"line_signal_notifier_v3.py"',source)
