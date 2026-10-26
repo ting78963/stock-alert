@@ -29,7 +29,7 @@ class BSendFailOpen(unittest.TestCase):
         posted=[]
         scope=dict(date="2026-10-26",symbol="1301",cls="A",discovered="09:30:00",
                    recognition="09:31:00",live_known="09:31:00",
-                   a2={"a2_end":"09:30:00","a2_vr":2.0},vr=2.0,eh=3.0,
+                   a2={"a2_end":"09:30:00","a2_vr":2.0,"early_high_pct":3.0},vr=2.0,eh=3.0,
                    early={"early_price":100.0},pdate="2026-10-23",
                    _clock=lambda x:str(x)[:8],meta={"name":"台塑"},
                    rows=[],cutoff="09:31:59",line_token="fake",group_id="fake",
