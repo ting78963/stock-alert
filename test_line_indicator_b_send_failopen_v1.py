@@ -52,6 +52,16 @@ class BSendFailOpen(unittest.TestCase):
         self.assertEqual(posted[0],abc_buy_flex({"stock_id":"1301","signal_class":"A",
                                                   "recognition_time":"09:31:00"},"台塑"))
 
+    def test_all_buy_classes_keep_original_action(self):
+        from abc_buy_flex import abc_buy_flex
+        for cls in ("P1", "A", "B", "C"):
+            with self.subTest(cls=cls):
+                original=abc_buy_flex({"stock_id":"1301","signal_class":cls,
+                                       "recognition_time":"09:31:00"},"台塑")
+                self.assertEqual(original["type"],"flex")
+                self.assertEqual(sum(1 for x in original["contents"]["body"]["contents"]
+                                     if x.get("backgroundColor")=="#981B25"),1)
+
     def test_indicator_values_enrich_same_buy_card(self):
         posted,_=self._run({"osc":0.4,"osc_delta":0.2,"weekly_kd":"golden_cross"})
         self.assertEqual(len(posted),1)
