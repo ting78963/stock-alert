@@ -26,8 +26,9 @@ def audit(db_path, symbol, asof, min_days=90):
             if len(rows) < min_days:
                 return {"status": "BLOCKED", "reason": "INSUFFICIENT_DAYS",
                         "symbol": symbol, "rows": len(rows), "required": min_days}
-            if any(min(r[1:]) <= 0 or r[2] < max(r[1], r[3], r[4])
-                   or r[3] > min(r[1], r[2], r[4]) for r in rows):
+            if any(any(v is None or not isinstance(v, (int, float)) or v <= 0 for v in r[1:])
+                   or r[2] < max(r[1], r[4])
+                   or r[3] > min(r[1], r[4]) for r in rows):
                 return {"status": "BLOCKED", "reason": "INVALID_OHLC", "symbol": symbol}
             return {"status": "PASS", "symbol": symbol, "rows": len(rows),
                     "first_day": rows[-1][0], "last_day": rows[0][0],
