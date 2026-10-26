@@ -122,6 +122,9 @@ def main():
         from line_indicator_flex_preview_v1 import enrich_preview
         cutoff=str(e["recognition_time"])[:5]+":59"
         minutes=intraday_1m(str(e["stock_id"]),str(e["date"]))
+        # Fugle may return bars later than the recognition cutoff; never
+        # include future minutes or suppress all indicators because of them.
+        minutes=[bar for bar in minutes if str(bar["minute"])[:8] <= cutoff]
         indicators=compute_indicators(str(e["stock_id"]),str(e["date"]),minutes,cutoff)
         flex=enrich_preview(flex,indicators)
     except Exception as exc:
