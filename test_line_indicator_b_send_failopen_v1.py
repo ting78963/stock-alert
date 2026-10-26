@@ -58,5 +58,8 @@ class BSendFailOpen(unittest.TestCase):
         self.assertTrue(any("OSC" in str(x) for x in
                             posted[0]["contents"]["body"]["contents"]))
         self.assertEqual(posted[0]["type"],"flex")
+        self.assertEqual(posted[0]["contents"]["type"],"bubble")
+        self.assertEqual(sum(1 for x in posted[0]["contents"]["body"]["contents"]
+                             if x.get("backgroundColor")=="#981B25"),1)
 
 if __name__=="__main__":unittest.main()
