@@ -1,0 +1,21 @@
+name: One-shot LINE web test isolated
+on:
+  push:
+    branches:
+      - feature/web-line-single-test-20261026
+  pull_request:
+    paths:
+      - main.py
+      - line_indicator_flex_preview_v1.py
+      - test_line_indicator_web_once_v1.py
+      - .github/workflows/line-web-once-isolated.yml
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements.txt
+      - run: python -m unittest -v test_line_indicator_web_once_v1
