@@ -4,11 +4,12 @@ Fetch original index.html from immutable commit during CI. Run extracted origina
 functions in Node, compare against Python on deterministic historical-like fixtures.
 No API keys, DB, LINE, or production state involved.
 """
-import json, subprocess, unittest, urllib.request
+import json, subprocess, unittest
+from pathlib import Path
 from datetime import date,timedelta
 from line_indicator_calculations_v1 import macd,ma_cross_day,ma_prepare,weekly_kd_label,kd
 
-SOURCE="https://raw.githubusercontent.com/ting78963/stock/ad8f0b9a36065a7771577c1860a323f43b3b1bf3/index.html"
+SOURCE=Path(__file__).parent / "research" / "website_indicator_functions_pinned_v1.js"
 NAMES=["calcKD","calcMACD","calcMA5MA20CrossLabel","calcMA5MA20Prepare","calcWeeklyKDLabel"]
 
 def extract(src,name):
@@ -34,7 +35,7 @@ def fixture(n,variant):
 class WebsiteParity(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        with urllib.request.urlopen(SOURCE,timeout=20) as r:source=r.read().decode("utf-8")
+        source=SOURCE.read_text(encoding="utf-8")
         cls.js="\n".join(extract(source,n) for n in NAMES)
 
     def test_original_js_python_parity(self):
