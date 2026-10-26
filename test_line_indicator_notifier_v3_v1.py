@@ -55,6 +55,26 @@ class NotifierV3Tests(unittest.TestCase):
                     self.assertIn(expected,output.getvalue())
                     self.assertIn("DRY RUN PASS",output.getvalue())
                     self.assertNotIn("line_sent",path.read_text(encoding="utf-8"))
+    def test_main_filters_future_minutes_before_snapshot(self):
+        import types
+        import line_indicator_snapshot_v1 as snapshot
+        e={"stock_id":"1301","stock_name":"台塑","signal_class":"A",
+           "recognition_time":"09:31:00","date":"2026-10-26"}
+        captured=[]
+        bars=[{"minute":"09:30:00"},{"minute":"09:31:00"},{"minute":"09:32:00"}]
+        def compute(symbol,day,minutes,cutoff):
+            captured.extend(minutes)
+            return {}
+        with tempfile.TemporaryDirectory() as d:
+            path=Path(d)/"event.json"
+            path.write_text("{}",encoding="utf-8")
+            with patch.object(sys,"argv",["notifier",str(path)]), \
+                 patch.object(notifier,"load_event",return_value=e), \
+                 patch.dict(sys.modules,{"fugle_adapter":types.SimpleNamespace(intraday_1m=lambda *args: bars)}), \
+                 patch.object(snapshot,"compute_indicators",side_effect=compute), \
+                 redirect_stdout(io.StringIO()):
+                notifier.main()
+        self.assertEqual([r["minute"] for r in captured],["09:30:00","09:31:00"])
     def test_production_runner_targets_notifier_v3(self):
         source=(ROOT/"fugle_b_live_runner_v2_p1_final.py").read_text(encoding="utf-8")
         self.assertIn('NOTIFIER=BASE/"line_signal_notifier_v3.py"',source)
