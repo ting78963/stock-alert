@@ -39,17 +39,9 @@ def start_background_services():
 start_background_services()
 
 def send_line(msg: str) -> bool:
-    if not LINE_TOKEN or not GROUP_ID:
-        print("[LINE DISABLED] missing LINE_TOKEN/GROUP_ID", flush=True)
-        return False
-    r = requests.post(
-        "https://api.line.me/v2/bot/message/push",
-        headers={"Authorization": f"Bearer {LINE_TOKEN}", "Content-Type": "application/json"},
-        json={"to": GROUP_ID, "messages": [{"type": "text", "text": msg}]},
-        timeout=10,
-    )
-    print(f"LINE: {r.status_code}", flush=True)
-    return 200 <= r.status_code < 300
+    """Legacy limit-up sender permanently disabled; never consumes LINE quota."""
+    print("[LEGACY LINE DISABLED] limit-up push blocked", flush=True)
+    return False
 
 @app.get("/")
 def root():
@@ -107,20 +99,6 @@ def webhook():
                     print(f"LINE webhook reply: {r.status_code}", flush=True)
                 except Exception as e:
                     print(f"LINE webhook reply error: {type(e).__name__}: {e}", flush=True)
-            if not replied and GROUP_ID:
-                try:
-                    r = requests.post(
-                        "https://api.line.me/v2/bot/message/push",
-                        headers={
-                            "Authorization": f"Bearer {LINE_TOKEN}",
-                            "Content-Type": "application/json",
-                        },
-                        json={"to": GROUP_ID, "messages": [reply_message]},
-                        timeout=10,
-                    )
-                    print(f"LINE webhook push fallback: {r.status_code}", flush=True)
-                except Exception as e:
-                    print(f"LINE webhook push fallback error: {type(e).__name__}: {e}", flush=True)
     return "OK", 200
 
 @app.get("/groups")
@@ -260,56 +238,13 @@ _line_indicator_test_sent = False
 
 @app.get("/audit/line-indicator-once-20261026-5e91b7")
 def audit_line_indicator_once():
-    global _line_indicator_test_sent
-    from line_signal_notifier_v3 import build_flex
-    from line_indicator_flex_preview_v1 import enrich_preview
-    if not LINE_TOKEN or not GROUP_ID:
-        return jsonify(ok=False,error="LINE_NOT_CONFIGURED"),500
-    with _line_indicator_test_lock:
-        if _line_indicator_test_sent:
-            return jsonify(ok=True,already_sent=True,test_only=True),200
-        event={"stock_id":"1301","stock_name":"台塑","signal_class":"A","recognition_time":"09:31:00"}
-        indicators={"osc":0.52,"osc_delta":0.14,"weekly_kd":"golden_cross",
-                    "ma_cross_day":2,"ma20_first_above":True,"strong_buy":True}
-        card=enrich_preview(build_flex(event),indicators)
-        card["altText"]="【測試訊號・模擬數值】台塑 1301｜非真實買進"
-        for node in card["contents"]["body"]["contents"]:
-            if node.get("type")=="box" and node.get("backgroundColor")=="#981B25":
-                for item in node.get("contents",[]):
-                    if item.get("type")=="text": item["text"]="測試通知・請勿交易"
-        card["contents"]["body"]["contents"].insert(0,{"type":"text","text":"【測試訊號｜模擬資料｜非投資建議】",
-          "size":"sm","weight":"bold","color":"#B4232C","wrap":True})
-        try:
-            r=requests.post("https://api.line.me/v2/bot/message/push",
-                headers={"Authorization":f"Bearer {LINE_TOKEN}","Content-Type":"application/json"},
-                json={"to":GROUP_ID,"messages":[card]},timeout=10)
-            if 200<=r.status_code<300:
-                _line_indicator_test_sent=True
-            return jsonify(ok=200<=r.status_code<300,line_status=r.status_code,
-                           test_only=True,already_sent=False), (200 if 200<=r.status_code<300 else 502)
-        except Exception as exc:
-            return jsonify(ok=False,error=type(exc).__name__),500
+    return jsonify(ok=False,error="LEGACY_LINE_PUSH_DISABLED"),410
+
 
 @app.get("/audit/p1-flex-6207-9f2c7a")
 def audit_p1_flex_6207():
-    """Temporary fixed visual-only LINE Flex test. No recognition/state mutation."""
-    if not LINE_TOKEN or not GROUP_ID:
-        return jsonify(ok=False,error="LINE_NOT_CONFIGURED"),500
-    event={
-        "stock_id":"6207","stock_name":"雷科","signal_class":"P1",
-        "recognition_time":"09:28:00","live_known_time":"09:28:00",
-    }
-    msg=abc_buy_flex(event,"雷科")
-    try:
-        r=requests.post(
-            "https://api.line.me/v2/bot/message/push",
-            headers={"Authorization":f"Bearer {LINE_TOKEN}","Content-Type":"application/json"},
-            json={"to":GROUP_ID,"messages":[msg]},timeout=10,
-        )
-        return jsonify(ok=200<=r.status_code<300,line_status=r.status_code,
-                       test_only=True,stock_id="6207",name="雷科"), (200 if 200<=r.status_code<300 else 502)
-    except Exception as e:
-        return jsonify(ok=False,error=type(e).__name__,detail=str(e)),500
+    return jsonify(ok=False,error="LEGACY_LINE_PUSH_DISABLED"),410
+
 
 @app.get("/audit/flex-preview-all")
 def audit_flex_preview_all():
@@ -329,48 +264,13 @@ def audit_flex_preview_all():
 
 @app.get("/audit/flex-send-all-7c31")
 def audit_flex_send_all():
-    """Temporary fixed visual-only LINE test for P1/A/B/C. No recognition/state mutation."""
-    if not LINE_TOKEN or not GROUP_ID:
-        return jsonify(ok=False,error="LINE_NOT_CONFIGURED"),500
-    samples=[
-        ("6207","雷科","P1","09:28:00"),
-        ("3714","富采","A","10:28:00"),
-        ("3665","貿聯-KY","B","10:02:00"),
-        ("3231","緯創","C","09:45:00"),
-    ]
-    messages=[]
-    for sid,name,cls,t in samples:
-        event={"stock_id":sid,"stock_name":name,"signal_class":cls,
-               "recognition_time":t,"live_known_time":t}
-        messages.append(abc_buy_flex(event,name))
-    try:
-        r=requests.post(
-            "https://api.line.me/v2/bot/message/push",
-            headers={"Authorization":f"Bearer {LINE_TOKEN}","Content-Type":"application/json"},
-            json={"to":GROUP_ID,"messages":messages},timeout=10,
-        )
-        return jsonify(ok=200<=r.status_code<300,line_status=r.status_code,
-                       test_only=True,cards=["P1","A","B","C"]), (200 if 200<=r.status_code<300 else 502)
-    except Exception as e:
-        return jsonify(ok=False,error=type(e).__name__,detail=str(e)),500
+    return jsonify(ok=False,error="LEGACY_LINE_PUSH_DISABLED"),410
 
 
 @app.get("/audit/indicator-help-flex-4d82")
 def audit_indicator_help_flex():
-    """Temporary fixed visual-only LINE test for 指標說明."""
-    if not LINE_TOKEN or not GROUP_ID:
-        return jsonify(ok=False,error="LINE_NOT_CONFIGURED"),500
-    msg=indicator_help_flex()
-    try:
-        r=requests.post(
-            "https://api.line.me/v2/bot/message/push",
-            headers={"Authorization":f"Bearer {LINE_TOKEN}","Content-Type":"application/json"},
-            json={"to":GROUP_ID,"messages":[msg]},timeout=10,
-        )
-        return jsonify(ok=200<=r.status_code<300,line_status=r.status_code,
-                       test_only=True,card="indicator_help"), (200 if 200<=r.status_code<300 else 502)
-    except Exception as e:
-        return jsonify(ok=False,error=type(e).__name__,detail=str(e)),500
+    return jsonify(ok=False,error="LEGACY_LINE_PUSH_DISABLED"),410
+
 
 @app.get("/status")
 def status():

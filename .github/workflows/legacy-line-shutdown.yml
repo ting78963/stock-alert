@@ -1,0 +1,15 @@
+name: Legacy LINE push shutdown
+on:
+  push:
+    branches:
+      - fix/disable-legacy-limit-up-line-push-20261026
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements.txt
+      - run: python -m unittest -v test_disable_legacy_line_push_v1
