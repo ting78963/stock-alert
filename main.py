@@ -272,7 +272,7 @@ def audit_line_indicator_once():
         indicators={"osc":0.52,"osc_delta":0.14,"weekly_kd":"golden_cross",
                     "ma_cross_day":2,"ma20_first_above":True,"strong_buy":True}
         card=enrich_preview(build_flex(event),indicators)
-        card["altText"]="【測試訊號・模擬數值】"+card["altText"]
+        card["altText"]="【測試訊號・模擬數值】台塑 1301｜非真實買進"
         for node in card["contents"]["body"]["contents"]:
             if node.get("type")=="box" and node.get("backgroundColor")=="#981B25":
                 for item in node.get("contents",[]):
