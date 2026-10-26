@@ -258,13 +258,15 @@ def internal_b_attack_trace(symbol):
 _line_indicator_test_lock = threading.Lock()
 _line_indicator_test_sent = False
 
-@app.get("/audit/line-indicator-once-20261026-5e91b7")
+@app.get("/audit/line-indicator-recognition-once-20261026-72d4af")
 def audit_line_indicator_once():
     global _line_indicator_test_sent
     from line_signal_notifier_v3 import build_flex
     from line_indicator_flex_preview_v1 import enrich_preview
-    if not LINE_TOKEN or not GROUP_ID:
-        return jsonify(ok=False,error="LINE_NOT_CONFIGURED"),500
+    recognition_token=os.environ.get("LINE_CHANNEL_ACCESS_TOKEN","").strip()
+    recognition_to=os.environ.get("LINE_TO_ID","").strip()
+    if not recognition_token or not recognition_to:
+        return jsonify(ok=False,error="RECOGNITION_LINE_NOT_CONFIGURED"),503
     with _line_indicator_test_lock:
         if _line_indicator_test_sent:
             return jsonify(ok=True,already_sent=True,test_only=True),200
@@ -281,8 +283,8 @@ def audit_line_indicator_once():
           "size":"sm","weight":"bold","color":"#B4232C","wrap":True})
         try:
             r=requests.post("https://api.line.me/v2/bot/message/push",
-                headers={"Authorization":f"Bearer {LINE_TOKEN}","Content-Type":"application/json"},
-                json={"to":GROUP_ID,"messages":[card]},timeout=10)
+                headers={"Authorization":f"Bearer {recognition_token}","Content-Type":"application/json"},
+                json={"to":recognition_to,"messages":[card]},timeout=10)
             if 200<=r.status_code<300:
                 _line_indicator_test_sent=True
             return jsonify(ok=200<=r.status_code<300,line_status=r.status_code,
