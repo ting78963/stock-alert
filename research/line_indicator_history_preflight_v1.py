@@ -20,7 +20,7 @@ def audit(db_path, symbol, asof, min_days=90):
                 return {"status": "BLOCKED", "reason": "MISSING_COLUMNS", "columns": sorted(cols)}
             rows = db.execute(
                 "SELECT day,open,high,low,close FROM daily_ohlcv "
-                "WHERE symbol=? AND day<=? ORDER BY day DESC LIMIT ?",
+                "WHERE symbol=? AND day<? ORDER BY day DESC LIMIT ?",
                 (symbol, asof, min_days),
             ).fetchall()
             if len(rows) < min_days:
@@ -31,7 +31,7 @@ def audit(db_path, symbol, asof, min_days=90):
                 return {"status": "BLOCKED", "reason": "INVALID_OHLC", "symbol": symbol}
             return {"status": "PASS", "symbol": symbol, "rows": len(rows),
                     "first_day": rows[-1][0], "last_day": rows[0][0],
-                    "note": "Historical rows only; live price and source parity still require checks."}
+                    "note": "Completed historical days only (strictly before asof); live price and source parity still require checks."}
     except (sqlite3.Error, OSError) as exc:
         return {"status": "BLOCKED", "reason": type(exc).__name__, "detail": str(exc)}
 
