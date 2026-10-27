@@ -435,13 +435,9 @@ def main():
     threading.Thread(target=serve,daemon=True).start()
     threading.Thread(target=shared_ws_loop,daemon=True).start()
     threading.Thread(target=clock_loop,daemon=True).start()
-    threading.Thread(
-        target=group_limit_up_monitor_loop,
-        args=(os.environ.get("LINE_TOKEN", "").strip(), os.environ.get("GROUP_ID", "").strip()),
-        name="group-limit-up-monitor",
-        daemon=True,
-    ).start()
-    print("[GROUP LIMIT-UP] monitor started | source=TWSE MIS",flush=True)
+    # Limit-up notifications are owned exclusively by the web service.
+    # Do not start a second monitor in this recognition worker.
+    print("[GROUP LIMIT-UP] worker monitor disabled; web service is sole owner",flush=True)
     bridge=f"http://{HOST}:{PORT}/discovery"
     print("="*92);print("TREND PRODUCTION WORKER v2 | ONE SHARED WS | A=5s | P1/A/B/C | LINE="+("ON" if LINE_SEND else "DRY"));print("="*92)
     import subprocess
