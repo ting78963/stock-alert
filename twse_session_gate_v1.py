@@ -12,6 +12,9 @@ URL="https://openapi.twse.com.tw/v1/holidaySchedule/holidaySchedule"
 
 class SessionGateError(RuntimeError): pass
 
+# Extraordinary market-wide closure absent from the annual TWSE holiday calendar.
+EXTRAORDINARY_CLOSED_DAYS = frozenset({date(2026, 10, 23)})
+
 def _ymd(x):
     s=str(x or "").strip().replace("/","-")
     digits=''.join(ch for ch in s if ch.isdigit())
@@ -34,7 +37,7 @@ def fetch_schedule(timeout=10):
 
 def is_scheduled_open(day=None, rows=None):
     day=day or datetime.now(TPE).date()
-    if day.weekday()>=5: return False
+    if day.weekday()>=5 or day in EXTRAORDINARY_CLOSED_DAYS: return False
     rows=rows if rows is not None else fetch_schedule()
     # TWSE official schema uses Date=ROC yyyMMdd (e.g. 1150928).
     # Match the Date field explicitly; never infer a date by scanning arbitrary values.
