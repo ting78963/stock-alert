@@ -29,7 +29,10 @@ def verify_a_history(snapshot_day, db_path="/var/data/stock-alert/shared_history
         finally: conn.close()
         if not status: raise AHistoryPreflightError("fetch_status empty")
         bad=[s for s,covered in status if s not in suspended and (not covered or str(covered)[:10]<required)]
-        if bad: raise AHistoryPreflightError(f"SQLite watermark incomplete count={len(bad)} sample={bad[:5]}")
+        if bad:
+            from collections import Counter
+            distribution=Counter(str(covered)[:10] if covered else "missing" for sym,covered in status if sym not in suspended)
+            raise AHistoryPreflightError(f"required={required} snapshot={snapshot_day} SQLite watermark incomplete count={len(bad)} coverage={dict(distribution.most_common(8))} sample={bad[:5]}")
         if count<len(status): raise AHistoryPreflightError(f"daily stock count {count} < status count {len(status)}")
         return required
     except AHistoryPreflightError: raise
