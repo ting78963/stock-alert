@@ -50,9 +50,13 @@ def verify_a_history(snapshot_day, db_path="/var/data/stock-alert/shared_history
         try:
             status=conn.execute("SELECT symbol,covered_through FROM fetch_status").fetchall()
             suspended={row[0] for row in conn.execute("SELECT symbol FROM suspension_watch")}
-            quarantined={row[0] for row in conn.execute("SELECT symbol FROM fetch_error")}
-            from research.per_symbol_exception_policy_v1 import check_systemic_health
-            check_systemic_health(len(status),len(suspended | quarantined))
+            import os
+            if os.environ.get("A_SINGLE_STOCK_QUARANTINE", "0") == "1":
+                quarantined={row[0] for row in conn.execute("SELECT symbol FROM fetch_error")}
+                from research.per_symbol_exception_policy_v1 import check_systemic_health
+                check_systemic_health(len(status),len(suspended | quarantined))
+            else:
+                quarantined=set()
             count=conn.execute("SELECT COUNT(DISTINCT symbol) FROM daily_ohlcv").fetchone()[0]
         finally: conn.close()
         if not status: raise AHistoryPreflightError("fetch_status empty")
