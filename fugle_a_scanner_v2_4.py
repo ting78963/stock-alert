@@ -1866,6 +1866,21 @@ class Scanner:
     def scan_once(self) -> List[Dict[str, Any]]:
         started = time.monotonic()
         snaps = self.adapter.snapshot()
+        # Opt-in: filter recorded exceptions before VCP, SURGE and FLOW.
+        if os.environ.get("A_SINGLE_STOCK_QUARANTINE", "0") == "1":
+            from research.per_symbol_exception_policy_v1 import read_quarantined, check_systemic_health
+            db_path = os.environ.get("A_SHARED_DAILY_DB", "/var/data/stock-alert/shared_history_stage_v1.sqlite3")
+            quarantined = read_quarantined(db_path)
+            import sqlite3
+            with sqlite3.connect(Path(db_path).resolve().as_uri()+"?mode=ro", uri=True, timeout=3) as qdb:
+                suspended = {str(r[0]) for r in qdb.execute("SELECT symbol FROM suspension_watch")}
+                total = qdb.execute("SELECT COUNT(*) FROM fetch_status").fetchone()[0]
+            excluded = quarantined | suspended
+            check_systemic_health(total, len(excluded))
+            if excluded:
+                before = len(snaps)
+                snaps = [r for r in snaps if str(r.get("stock_id") or "") not in excluded]
+                print(f"[A QUARANTINE] excluded_symbols={len(excluded)} snapshot_removed={before-len(snaps)}", flush=True)
         print(f"[A DIAG] snapshot_done rows={len(snaps)}", flush=True)
         if not snaps:
             raise AuditStop("empty Fugle Snapshot")
