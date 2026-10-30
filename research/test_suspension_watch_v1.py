@@ -97,14 +97,15 @@ class WatchTests(unittest.TestCase):
                 self.assertEqual(db.execute("SELECT last_probe_day FROM suspension_watch WHERE symbol='2067'").fetchone()[0],day.isoformat())
             # Same day's scheduled probe must be skipped.
             run(lambda *args:self.fail("same-day API request was not skipped"))
-            # Next day: a valid current-day candle resumes and exits watch.
+            # Next day: a valid current-day candle is recorded, but remains quarantined for manual review.
             nextday=day+timedelta(days=1)
             argv[argv.index("--asof")+1]=(nextday+timedelta(days=1)).isoformat()
             def recovered(*args):
                 return {"symbol":"2067","data":[{"date":nextday.isoformat(),"open":10,"high":11,"low":9,"close":10.5,"volume":5000}]}
             run(recovered)
             with sqlite3.connect(dbpath) as db:
-                self.assertEqual(db.execute("SELECT COUNT(*) FROM suspension_watch").fetchone()[0],0)
+                self.assertEqual(db.execute("SELECT COUNT(*) FROM suspension_watch").fetchone()[0],1)
+                self.assertEqual(db.execute("SELECT last_probe_result FROM suspension_watch WHERE symbol='2067'").fetchone()[0],"READY_FOR_REVIEW")
                 self.assertEqual(db.execute("SELECT COUNT(*) FROM daily_ohlcv WHERE symbol='2067'").fetchone()[0],1)
                 self.assertEqual(db.execute("SELECT covered_through FROM fetch_status WHERE symbol='2067'").fetchone()[0],nextday.isoformat())
 
