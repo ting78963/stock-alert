@@ -142,6 +142,17 @@ def main():
                                (sym,"operator-confirmed",dt.datetime.now(dt.timezone.utc).isoformat()))
                 db.execute("INSERT INTO suspension_meta(key,value) VALUES('initial_seed_v1',?)",
                            (dt.datetime.now(dt.timezone.utc).isoformat(),))
+        # One-time operator confirmation for newly halted symbols. Use a
+        # versioned marker so the existing initial seed stays immutable and
+        # resumed stocks are not re-added on subsequent maintenance runs.
+        if not db.execute("SELECT 1 FROM suspension_meta WHERE key='operator_halts_20261030_v1'").fetchone():
+            newly_confirmed=confirmed.intersection({"5355","8176"})
+            with db:
+                for sym in sorted(newly_confirmed):
+                    db.execute("INSERT OR IGNORE INTO suspension_watch(symbol,confirmed_source,confirmed_at_utc) VALUES(?,?,?)",
+                               (sym,"operator-confirmed-2026-10-30",dt.datetime.now(dt.timezone.utc).isoformat()))
+                db.execute("INSERT INTO suspension_meta(key,value) VALUES('operator_halts_20261030_v1',?)",
+                           (dt.datetime.now(dt.timezone.utc).isoformat(),))
         total=len(symbols); done=0; failed=0; skipped=0
         for index,sym in enumerate(symbols[:a.limit or None],1):
             existing=db.execute("SELECT covered_through FROM fetch_status WHERE symbol=?",(sym,)).fetchone()
