@@ -31,3 +31,16 @@ def recover(symbol, missing_sessions, verified_bars):
     if not missing_sessions:
         return True
     return set(missing_sessions).issubset(set(verified_bars))
+
+def read_quarantined(db_path):
+    """Read only recorded single-stock fetch errors; never modify production DB."""
+    import sqlite3
+    from pathlib import Path
+    path=Path(db_path)
+    if not path.is_file():
+        raise SystemicHistoryFailure("history database missing")
+    try:
+        with sqlite3.connect(path.resolve().as_uri()+"?mode=ro",uri=True,timeout=3) as conn:
+            return frozenset(str(row[0]) for row in conn.execute("SELECT symbol FROM fetch_error"))
+    except sqlite3.Error as exc:
+        raise SystemicHistoryFailure(f"history exception registry unavailable: {exc}") from exc
