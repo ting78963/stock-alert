@@ -157,10 +157,11 @@ def main():
         for index,sym in enumerate(symbols[:a.limit or None],1):
             existing=db.execute("SELECT covered_through FROM fetch_status WHERE symbol=?",(sym,)).fetchone()
             watched=db.execute("SELECT last_probe_day FROM suspension_watch WHERE symbol=?",(sym,)).fetchone()
-            if existing and existing[0]>=end.isoformat() and not watched:
+            in_error=db.execute("SELECT 1 FROM fetch_error WHERE symbol=?",(sym,)).fetchone() is not None
+            if existing and existing[0]>=end.isoformat() and not watched and not in_error:
                 skipped+=1;continue
             fetch_start=max(start,dt.date.fromisoformat(existing[0])+dt.timedelta(days=1)) if existing else start
-            if fetch_start>end and not watched:skipped+=1;continue
+            if fetch_start>end and not watched and not in_error:skipped+=1;continue
             if fetch_start>end:fetch_start=end
             if watched and watched[0]==end.isoformat():
                 skipped+=1;continue
@@ -171,6 +172,11 @@ def main():
                     rows=parse(sym,reply,fetch_start.isoformat(),end.isoformat())
                     # A successful HTTP response without a new valid candle is not a resumption.
                     resumed=bool(watched and any(r[1]==end.isoformat() and r[6]>0 for r in rows))
+                    # Previously failed stocks stay quarantined until fresh verified
+                    # data actually arrives; an HTTP 200 with empty data is not recovery.
+                    had_fetch_error=db.execute("SELECT 1 FROM fetch_error WHERE symbol=?",(sym,)).fetchone() is not None
+                    if had_fetch_error and not watched and not any(r[1]==end.isoformat() for r in rows):
+                        raise ValueError("quarantined stock has no verified latest daily candle")
                     if watched and not resumed:
                         # Preserve valid older bars returned during the daily probe.
                         with db:

@@ -353,10 +353,12 @@ def daily_history_maintenance_loop():
     stage_done=set()
     stage_day=None
     next_retry_at=0.0
+    notified_day=None
     while True:
         n=now_tpe()
         day=n.date().isoformat()
         if day!=stage_day:
+            notified_day=None
             stage_day=day
             stage_done=set()
             completed_day=None
@@ -388,6 +390,28 @@ def daily_history_maintenance_loop():
                     if len(stage_done)==len(tasks):
                         completed_day=day
                         print(f"[SEQUENTIAL MAINT] ALL COMPLETED date={day}",flush=True)
+                        if notified_day!=day and os.environ.get("A_DAILY_MAINT_LINE_REPORT","0")=="1":
+                            try:
+                                import sqlite3, urllib.request, json
+                                dbpath="/var/data/stock-alert/shared_history_stage_v1.sqlite3"
+                                with sqlite3.connect("file:"+dbpath+"?mode=ro",uri=True,timeout=3) as conn:
+                                    total=conn.execute("SELECT COUNT(*) FROM fetch_status").fetchone()[0]
+                                    errors=conn.execute("SELECT symbol,error FROM fetch_error ORDER BY symbol").fetchall()
+                                    watched=conn.execute("SELECT symbol,last_probe_result FROM suspension_watch ORDER BY symbol").fetchall()
+                                isolated={str(x[0]):str(x[1]) for x in errors}
+                                isolated.update({str(x[0]):str(x[1]) for x in watched})
+                                summary=f"每日資料維護 {day}\n更新作業：{'完成'}\n歷史追蹤：{total} 檔\n隔離：{len(isolated)} 檔\n隔離名單：{','.join(sorted(isolated)) or '無'}"
+                                token=os.environ.get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get("LINE_TOKEN")
+                                destination=os.environ.get("GROUP_ID") or os.environ.get("LINE_TO_ID")
+                                if not token or not destination: raise RuntimeError("LINE credentials unavailable")
+                                body=json.dumps({"to":destination,"messages":[{"type":"text","text":summary[:4900]}]}).encode("utf-8")
+                                req=urllib.request.Request("https://api.line.me/v2/bot/message/push",data=body,headers={"Authorization":"Bearer "+token,"Content-Type":"application/json"},method="POST")
+                                with urllib.request.urlopen(req,timeout=10) as response:
+                                    if response.status!=200: raise RuntimeError("LINE push unsuccessful")
+                                notified_day=day
+                                print(f"[A DAILY MAINT LINE] sent day={day} isolated={len(isolated)}",flush=True)
+                            except Exception as exc:
+                                print(f"[A DAILY MAINT LINE] not sent: {type(exc).__name__}: {exc}",flush=True)
                     else:
                         print(f"[SEQUENTIAL MAINT] PENDING stages={','.join(name for name,_,_ in tasks if name not in stage_done)}; retry in 5m",flush=True)
                         next_retry_at=time.monotonic()+300
