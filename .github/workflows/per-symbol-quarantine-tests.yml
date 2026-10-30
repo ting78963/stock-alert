@@ -6,6 +6,7 @@ on:
       - 'tests/test_per_symbol_exception_policy_v1.py'
       - 'tests/test_quarantine_sqlite_v1.py'
       - 'a_history_preflight_v1.py'
+      - 'research/phase1_fugle_daily_builder_v1.py'
       - 'fugle_a_scanner_v2_4.py'
       - '.github/workflows/per-symbol-quarantine-tests.yml'
   workflow_dispatch:
