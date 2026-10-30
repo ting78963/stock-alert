@@ -392,8 +392,7 @@ def daily_history_maintenance_loop():
                                     watched=conn.execute("SELECT symbol,last_probe_result FROM suspension_watch ORDER BY symbol").fetchall()
                                 isolated={str(x[0]):str(x[1]) for x in errors}
                                 isolated.update({str(x[0]):str(x[1]) for x in watched})
-                                ready=[sym for sym,reason in isolated.items() if "READY_FOR_REVIEW" in reason]
-                                summary=f"每日資料維護 {day}\\n更新作業：{'完成' if rc==0 else '部分失敗，持續重試'}\\n歷史追蹤：{total} 檔\\n隔離：{len(isolated)} 檔\\n待人工確認：{','.join(ready) or '無'}\\n隔離名單：{','.join(sorted(isolated)) or '無'}"
+                                summary=f"每日資料維護 {day}\\n更新作業：{'完成' if rc==0 else '部分失敗，持續重試'}\\n歷史追蹤：{total} 檔\\n隔離：{len(isolated)} 檔\\n隔離名單：{','.join(sorted(isolated)) or '無'}"
                                 token=os.environ.get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get("LINE_TOKEN")
                                 destination=os.environ.get("GROUP_ID") or os.environ.get("LINE_TO_ID")
                                 if not token or not destination: raise RuntimeError("LINE credentials unavailable")
