@@ -171,6 +171,11 @@ def main():
                     rows=parse(sym,reply,fetch_start.isoformat(),end.isoformat())
                     # A successful HTTP response without a new valid candle is not a resumption.
                     resumed=bool(watched and any(r[1]==end.isoformat() and r[6]>0 for r in rows))
+                    # Previously failed stocks stay quarantined until fresh verified
+                    # data actually arrives; an HTTP 200 with empty data is not recovery.
+                    had_fetch_error=db.execute("SELECT 1 FROM fetch_error WHERE symbol=?",(sym,)).fetchone() is not None
+                    if had_fetch_error and not watched and not any(r[1]==end.isoformat() for r in rows):
+                        raise ValueError("quarantined stock has no verified latest daily candle")
                     if watched and not resumed:
                         # Preserve valid older bars returned during the daily probe.
                         with db:
