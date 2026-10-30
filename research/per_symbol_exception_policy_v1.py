@@ -44,3 +44,28 @@ def read_quarantined(db_path):
             return frozenset(str(row[0]) for row in conn.execute("SELECT symbol FROM fetch_error"))
     except sqlite3.Error as exc:
         raise SystemicHistoryFailure(f"history exception registry unavailable: {exc}") from exc
+
+def verified_recovery(rows, start_day, end_day, required_sessions):
+    """Verify every required market session has a valid bar; closures are excluded
+    by the caller's official session calendar, not inferred from missing bars.
+    """
+    from datetime import date
+    begin=date.fromisoformat(start_day)
+    end=date.fromisoformat(end_day)
+    if begin>end:
+        return False
+    expected={str(day) for day in required_sessions if start_day<=str(day)<=end_day}
+    if not expected or end_day not in expected:
+        return False
+    available=set()
+    for row in rows:
+        day=str(row[0])
+        if day not in expected:
+            continue
+        try:
+            op,hi,lo,cl,vol=(float(x) for x in row[1:6])
+        except (TypeError,ValueError):
+            continue
+        if min(op,hi,lo,cl)>0 and vol>=0 and hi>=max(op,cl,lo) and lo<=min(op,cl,hi):
+            available.add(day)
+    return expected.issubset(available)
