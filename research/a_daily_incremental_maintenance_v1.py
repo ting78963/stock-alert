@@ -49,7 +49,7 @@ def main():
     p.add_argument("--f10",type=Path,default=F10)
     p.add_argument("--builder",type=Path,default=BUILDER)
     p.add_argument("--delay",type=float,default=1.0)
-    p.add_argument("--confirmed-suspended",default="2067,3625,3632,6167,6173",
+    p.add_argument("--confirmed-suspended",default="2067,3625,3632,6167,6173,5355,8176",
                    help="Operator-confirmed initial watch list; persist in staging DB")
     p.add_argument("--now",help="Testing only: timezone-aware ISO timestamp; --execute forbids it")
     a=p.parse_args()
