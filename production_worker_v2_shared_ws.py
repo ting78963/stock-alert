@@ -401,8 +401,8 @@ def daily_history_maintenance_loop():
                                 isolated={str(x[0]):str(x[1]) for x in errors}
                                 isolated.update({str(x[0]):str(x[1]) for x in watched})
                                 summary=f"每日資料維護 {day}\n更新作業：{'完成'}\n歷史追蹤：{total} 檔\n隔離：{len(isolated)} 檔\n隔離名單：{','.join(sorted(isolated)) or '無'}"
-                                token=os.environ.get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get("LINE_TOKEN")
-                                destination=os.environ.get("GROUP_ID") or os.environ.get("LINE_TO_ID")
+                                token=os.environ.get("LINE_CHANNEL_ACCESS_TOKEN")
+                                destination=os.environ.get("LINE_TO_ID")
                                 if not token or not destination: raise RuntimeError("LINE credentials unavailable")
                                 body=json.dumps({"to":destination,"messages":[{"type":"text","text":summary[:4900]}]}).encode("utf-8")
                                 req=urllib.request.Request("https://api.line.me/v2/bot/message/push",data=body,headers={"Authorization":"Bearer "+token,"Content-Type":"application/json"},method="POST")
