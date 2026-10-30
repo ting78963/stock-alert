@@ -50,13 +50,16 @@ def verify_a_history(snapshot_day, db_path="/var/data/stock-alert/shared_history
         try:
             status=conn.execute("SELECT symbol,covered_through FROM fetch_status").fetchall()
             suspended={row[0] for row in conn.execute("SELECT symbol FROM suspension_watch")}
+            quarantined={row[0] for row in conn.execute("SELECT symbol FROM fetch_error")}
+            from research.per_symbol_exception_policy_v1 import check_systemic_health
+            check_systemic_health(len(status),len(suspended | quarantined))
             count=conn.execute("SELECT COUNT(DISTINCT symbol) FROM daily_ohlcv").fetchone()[0]
         finally: conn.close()
         if not status: raise AHistoryPreflightError("fetch_status empty")
-        bad=[s for s,covered in status if s not in suspended and (not covered or str(covered)[:10]<required)]
+        bad=[s for s,covered in status if s not in suspended and s not in quarantined and (not covered or str(covered)[:10]<required)]
         if bad:
             from collections import Counter
-            distribution=Counter(str(covered)[:10] if covered else "missing" for sym,covered in status if sym not in suspended)
+            distribution=Counter(str(covered)[:10] if covered else "missing" for sym,covered in status if sym not in suspended and sym not in quarantined)
             raise AHistoryPreflightError(f"required={required} snapshot={snapshot_day} SQLite watermark incomplete count={len(bad)} coverage={dict(distribution.most_common(8))} sample={bad[:5]}")
         if count<len(status): raise AHistoryPreflightError(f"daily stock count {count} < status count {len(status)}")
         return required
