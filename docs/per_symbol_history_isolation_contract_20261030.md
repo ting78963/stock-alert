@@ -1,31 +1,20 @@
-# Per-symbol history isolation — implementation contract (2026-10-30)
+# 單檔異常隔離：最小修改原則（2026-10-30）
 
-## Invariants
-- Production `main`, Render, existing SQLite and LINE routing stay unchanged until isolated regression tests pass.
-- Never fabricate OHLCV or advance `fetch_status.covered_through` without verified source data.
-- A symbol with unknown/missing data is **not** eligible for A, B or LINE, but must not prevent verified symbols from running.
-- A global provider outage, widespread missing data, corrupt database, or unverified market calendar still fails closed.
-- TWSE and TPEx official suspension/trading-interruption notices are separate sources; a 404 or zero volume alone never proves an official suspension.
-- Watchlisted symbols are probed each session; resume requires validated catch-up data before eligibility.
+## 唯一核心
+正常股票沿用現有 A → B → LINE 流程；只處理發生資料異常的股票，不重新全面建立或檢查「合格股票名單」。
 
-## Proposed states
-`READY`: verified history through last completed session.
-`OFFICIAL_NO_TRADE`: independently verified official non-trading interval with source, date range, and exchange.
-`QUARANTINED`: individual data failure with reason, first/last seen, retry schedule, no scan permission.
-`RECOVERING`: source resumed; backfill and validate missing sessions before READY.
-`GLOBAL_BLOCK`: aggregate/systemic integrity failure; no A launch.
+## 處理方式
+1. 每日歷史更新遇到單檔 404、資料缺漏或異常，將該股票加入 `data_exception_watch`，記錄錯誤與重試時間。不可偽造 K 棒或更新水位。
+2. A 型沿用原本股票來源，只在處理該股票前檢查是否在異常隔離表；在表內就跳過，不進 A、B、LINE。其他股票照舊。
+3. 隔離股票由既有每日維護程序單獨重試；必要時依上市／上櫃官方公告確認暫停交易、停牌等原因，但**無法查證也保持隔離**，不阻擋其他股票。
+4. 只有缺漏歷史資料補齊且驗證成功，才自動解除隔離。公告復牌不等於資料已完整。
+5. 保留原本整體故障保護：資料庫損壞、交易日判定不明、API 大範圍故障等情況仍禁止 A 啟動。
 
-## Isolation boundary
-Compute a deterministic eligible symbol set from the SQLite snapshot **before A launches**. Pass a versioned allowlist artifact to A; verify A consumes the exact list before enabling partial launch. Never merely relax `verify_a_history` while A still scans every stock.
+## 重要界線
+- 不建立新全市場 allowlist，不改選股條件，不改 B 與 LINE，不更動正常股票流程。
+- 原本 A 啟動前的歷史檢查只需忽略**已登記且可追蹤的個別隔離股票**；未記錄異常不得直接放行。
+- 如果 A 掃描器尚無法在逐檔掃描前跳過隔離股票，不能先放寬啟動檢查。
+- 正式 main／Render 維持現有正常版本；只在獨立分支實作、測試，驗證通過再部署。
 
-## Verification gates
-1. Baseline parity: with all symbols READY, new allowlist equals existing universe; A/B output and LINE event identities unchanged.
-2. One/multiple OFFICIAL_NO_TRADE: other symbols scan; affected symbols emit no events.
-3. One/multiple QUARANTINED: other symbols scan; affected symbols emit no events; alert contains root cause.
-4. RECOVERING: official resumption alone is insufficient; historical backfill required.
-5. Global API outage, missing schema, missing official calendar, mass stale symbols: fail closed.
-6. Repeated restarts, duplicate event protection, no DB schema mutation during read-only preflight.
-7. Verify actual worker A → B → LINE with test-only sinks before production rollout.
-
-## Rollout
-Implement and test on this feature branch; no merge, no production deployment or database migration until explicit pass/fail evidence exists. Preserve current live commit `a17c852` for immediate rollback.
+## 測試
+正常股票結果不變；一檔及多檔異常只隔離自身；恢復後補資料再納回；大量異常仍整體阻擋；不重複發 LINE；正式資料庫不被測試修改。
