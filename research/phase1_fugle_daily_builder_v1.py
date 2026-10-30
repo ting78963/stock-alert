@@ -157,10 +157,11 @@ def main():
         for index,sym in enumerate(symbols[:a.limit or None],1):
             existing=db.execute("SELECT covered_through FROM fetch_status WHERE symbol=?",(sym,)).fetchone()
             watched=db.execute("SELECT last_probe_day FROM suspension_watch WHERE symbol=?",(sym,)).fetchone()
-            if existing and existing[0]>=end.isoformat() and not watched:
+            in_error=db.execute("SELECT 1 FROM fetch_error WHERE symbol=?",(sym,)).fetchone() is not None
+            if existing and existing[0]>=end.isoformat() and not watched and not in_error:
                 skipped+=1;continue
             fetch_start=max(start,dt.date.fromisoformat(existing[0])+dt.timedelta(days=1)) if existing else start
-            if fetch_start>end and not watched:skipped+=1;continue
+            if fetch_start>end and not watched and not in_error:skipped+=1;continue
             if fetch_start>end:fetch_start=end
             if watched and watched[0]==end.isoformat():
                 skipped+=1;continue
@@ -195,8 +196,12 @@ def main():
                             db.execute("INSERT OR IGNORE INTO daily_ohlcv VALUES(?,?,?,?,?,?,?)",row)
                         db.execute("INSERT INTO fetch_status VALUES(?,?,?) ON CONFLICT(symbol) DO UPDATE SET covered_through=excluded.covered_through,last_success_utc=excluded.last_success_utc",
                             (sym,end.isoformat(),dt.datetime.now(dt.timezone.utc).isoformat()))
-                        db.execute("DELETE FROM fetch_error WHERE symbol=?",(sym,))
-                        if resumed: db.execute("DELETE FROM suspension_watch WHERE symbol=?",(sym,))
+                        if had_fetch_error:
+                            db.execute("UPDATE fetch_error SET error=?,last_error_utc=? WHERE symbol=?",
+                                       ("READY_FOR_REVIEW: valid latest candle; manual release required",dt.datetime.now(dt.timezone.utc).isoformat(),sym))
+                        if resumed:
+                            db.execute("UPDATE suspension_watch SET last_probe_day=?,last_probe_result=? WHERE symbol=?",
+                                       (end.isoformat(),"READY_FOR_REVIEW",sym))
                     done+=1;error=None;break
                 except (urllib.error.HTTPError,urllib.error.URLError,TimeoutError,ValueError,KeyError) as ex:
                     error=f"{type(ex).__name__}: {getattr(ex,'code','')} {ex}"
