@@ -382,7 +382,15 @@ def daily_history_maintenance_loop():
                         except OSError as exc:
                             print(f"[SEQUENTIAL MAINT] {name} launch failed {type(exc).__name__}: {exc}; other stage may proceed independently",flush=True)
                             continue
-                        if name=="DAILY_K" and notified_day!=day and os.environ.get("A_DAILY_MAINT_LINE_REPORT","0")=="1":
+                        if rc==0:
+                            stage_done.add(name)
+                            print(f"[SEQUENTIAL MAINT] {name} completed",flush=True)
+                        else:
+                            print(f"[SEQUENTIAL MAINT] {name} incomplete rc={rc}; other stage may proceed independently",flush=True)
+                    if len(stage_done)==len(tasks):
+                        completed_day=day
+                        print(f"[SEQUENTIAL MAINT] ALL COMPLETED date={day}",flush=True)
+                        if notified_day!=day and os.environ.get("A_DAILY_MAINT_LINE_REPORT","0")=="1":
                             try:
                                 import sqlite3, urllib.request, json
                                 dbpath="/var/data/stock-alert/shared_history_stage_v1.sqlite3"
@@ -392,7 +400,7 @@ def daily_history_maintenance_loop():
                                     watched=conn.execute("SELECT symbol,last_probe_result FROM suspension_watch ORDER BY symbol").fetchall()
                                 isolated={str(x[0]):str(x[1]) for x in errors}
                                 isolated.update({str(x[0]):str(x[1]) for x in watched})
-                                summary=f"每日資料維護 {day}\n更新作業：{'完成' if rc==0 else '部分失敗，持續重試'}\n歷史追蹤：{total} 檔\n隔離：{len(isolated)} 檔\n隔離名單：{','.join(sorted(isolated)) or '無'}"
+                                summary=f"每日資料維護 {day}\n更新作業：{'完成'}\n歷史追蹤：{total} 檔\n隔離：{len(isolated)} 檔\n隔離名單：{','.join(sorted(isolated)) or '無'}"
                                 token=os.environ.get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get("LINE_TOKEN")
                                 destination=os.environ.get("GROUP_ID") or os.environ.get("LINE_TO_ID")
                                 if not token or not destination: raise RuntimeError("LINE credentials unavailable")
@@ -404,14 +412,6 @@ def daily_history_maintenance_loop():
                                 print(f"[A DAILY MAINT LINE] sent day={day} isolated={len(isolated)}",flush=True)
                             except Exception as exc:
                                 print(f"[A DAILY MAINT LINE] not sent: {type(exc).__name__}: {exc}",flush=True)
-                        if rc==0:
-                            stage_done.add(name)
-                            print(f"[SEQUENTIAL MAINT] {name} completed",flush=True)
-                        else:
-                            print(f"[SEQUENTIAL MAINT] {name} incomplete rc={rc}; other stage may proceed independently",flush=True)
-                    if len(stage_done)==len(tasks):
-                        completed_day=day
-                        print(f"[SEQUENTIAL MAINT] ALL COMPLETED date={day}",flush=True)
                     else:
                         print(f"[SEQUENTIAL MAINT] PENDING stages={','.join(name for name,_,_ in tasks if name not in stage_done)}; retry in 5m",flush=True)
                         next_retry_at=time.monotonic()+300
