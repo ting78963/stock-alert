@@ -15,12 +15,37 @@ def last_completed_session(snapshot_day, rows):
         d-=timedelta(days=1)
     raise AHistoryPreflightError("no verified previous session within 16 days")
 
+def register_confirmed_halts_once(db_path, snapshot_day):
+    """One-time operator-confirmed watch registration; never fake candles."""
+    if str(snapshot_day)[:10] < "2026-10-30":
+        return
+    conn=sqlite3.connect(str(db_path),timeout=5)
+    try:
+        with conn:
+            marker="operator_halts_20261030_v1"
+            seen=conn.execute("SELECT 1 FROM suspension_meta WHERE key=?",(marker,)).fetchone()
+            if seen:
+                return
+            members={row[0] for row in conn.execute("SELECT symbol FROM fetch_status")}
+            confirmed={"5355","8176"}
+            if not confirmed.issubset(members):
+                raise AHistoryPreflightError("operator-confirmed symbols absent from history universe")
+            from datetime import datetime,timezone
+            now=datetime.now(timezone.utc).isoformat()
+            for sym in sorted(confirmed):
+                conn.execute("INSERT OR IGNORE INTO suspension_watch(symbol,confirmed_source,confirmed_at_utc) VALUES(?,?,?)",
+                             (sym,"operator-confirmed-2026-10-30",now))
+            conn.execute("INSERT INTO suspension_meta(key,value) VALUES(?,?)",(marker,now))
+    finally:
+        conn.close()
+
 def verify_a_history(snapshot_day, db_path="/var/data/stock-alert/shared_history_stage_v1.sqlite3", rows=None):
     try:
         if rows is None: rows=fetch_schedule()
         required=last_completed_session(snapshot_day,rows)
         db=Path(db_path)
         if not db.is_file(): raise AHistoryPreflightError("shared daily SQLite missing")
+        register_confirmed_halts_once(db,snapshot_day)
         conn=sqlite3.connect(f"file:{db}?mode=ro",uri=True,timeout=5)
         try:
             status=conn.execute("SELECT symbol,covered_through FROM fetch_status").fetchall()
