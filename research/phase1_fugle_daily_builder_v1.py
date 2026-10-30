@@ -196,12 +196,8 @@ def main():
                             db.execute("INSERT OR IGNORE INTO daily_ohlcv VALUES(?,?,?,?,?,?,?)",row)
                         db.execute("INSERT INTO fetch_status VALUES(?,?,?) ON CONFLICT(symbol) DO UPDATE SET covered_through=excluded.covered_through,last_success_utc=excluded.last_success_utc",
                             (sym,end.isoformat(),dt.datetime.now(dt.timezone.utc).isoformat()))
-                        if had_fetch_error:
-                            db.execute("UPDATE fetch_error SET error=?,last_error_utc=? WHERE symbol=?",
-                                       ("READY_FOR_REVIEW: valid latest candle; manual release required",dt.datetime.now(dt.timezone.utc).isoformat(),sym))
-                        if resumed:
-                            db.execute("UPDATE suspension_watch SET last_probe_day=?,last_probe_result=? WHERE symbol=?",
-                                       (end.isoformat(),"READY_FOR_REVIEW",sym))
+                        db.execute("DELETE FROM fetch_error WHERE symbol=?",(sym,))
+                        if resumed: db.execute("DELETE FROM suspension_watch WHERE symbol=?",(sym,))
                     done+=1;error=None;break
                 except (urllib.error.HTTPError,urllib.error.URLError,TimeoutError,ValueError,KeyError) as ex:
                     error=f"{type(ex).__name__}: {getattr(ex,'code','')} {ex}"
