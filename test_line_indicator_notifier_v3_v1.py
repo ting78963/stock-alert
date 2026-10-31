@@ -82,6 +82,38 @@ class NotifierV3Tests(unittest.TestCase):
                  redirect_stdout(io.StringIO()):
                 notifier.main()
         self.assertEqual([r["minute"] for r in captured],["09:30:00","09:31:00"])
+    def test_preview_json_contains_real_indicator_panel_in_same_card(self):
+        import line_indicator_snapshot_v1 as snapshot
+        e={"stock_id":"1301","stock_name":"台塑","signal_class":"B",
+           "recognition_time":"09:31:00","date":"2026-10-26"}
+        indicators={"osc":0.58,"osc_delta":0.21,"weekly_kd":"prepare",
+                    "ma_cross_day":2,"ma_prepare":False,
+                    "ma20_first_above":True,"strong_buy":True}
+        with tempfile.TemporaryDirectory() as d:
+            path=Path(d)/"event.json"
+            path.write_text("{}",encoding="utf-8")
+            minute_dir=Path(d)/"b_live_runner_v2_p1"/"2026-10-26"/"1301"
+            minute_dir.mkdir(parents=True)
+            (minute_dir/"canonical_minutes.jsonl").write_text(
+                json.dumps({"date":"2026-10-26","minute":"09:31:00","open":10,
+                            "high":11,"low":10,"close":11})+"\n",encoding="utf-8")
+            output=io.StringIO()
+            with patch.object(sys,"argv",["notifier",str(path),"--preview-json"]), \
+                 patch.object(notifier,"load_event",return_value=e), \
+                 patch.dict("os.environ",{"PRODUCTION_STATE_DIR":d}), \
+                 patch.object(snapshot,"compute_indicators",return_value=indicators), \
+                 patch.object(notifier,"send",side_effect=AssertionError("must not send")), \
+                 redirect_stdout(output):
+                notifier.main()
+            out=output.getvalue()
+            self.assertIn("OSC +0.58",out)
+            self.assertIn("週KD",out)
+            self.assertIn("黃金交叉 Day2",out)
+            self.assertIn("20MA",out)
+            self.assertIn("強勢買進訊號",out)
+            self.assertIn("立即買進",out)
+            self.assertIn("DRY RUN PASS",out)
+            self.assertNotIn("line_sent",path.read_text(encoding="utf-8"))
     def test_production_runner_targets_notifier_v3(self):
         source=(ROOT/"fugle_b_live_runner_v2_p1_final.py").read_text(encoding="utf-8")
         self.assertIn('NOTIFIER=BASE/"line_signal_notifier_v3.py"',source)
