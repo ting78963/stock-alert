@@ -117,14 +117,23 @@ def main():
     flex=build_flex(e);spec=CARD[e["signal_class"]];name,sid=stock_display(e)
     # Presentation only: fail open, preserve original signal and LINE dedupe.
     try:
-        from fugle_adapter import intraday_1m
         from line_indicator_snapshot_v1 import compute_indicators
         from line_indicator_flex_preview_v1 import enrich_preview
         cutoff=str(e["recognition_time"])[:5]+":59"
-        minutes=intraday_1m(str(e["stock_id"]),str(e["date"]),timeout=2.0)
-        minutes=[bar for bar in minutes if str(bar["minute"])[:8] <= cutoff]
+        # The production Runner has already persisted completed minute bars.
+        # Reuse those bars; no additional Fugle REST request.
+        state_root=Path(os.environ.get("PRODUCTION_STATE_DIR",str(Path(__file__).resolve().parent/"_production_output")))
+        minute_file=state_root/"b_live_runner_v2_p1"/str(e["date"])/str(e["stock_id"]).zfill(4)/"canonical_minutes.jsonl"
+        minutes=[]
+        with minute_file.open(encoding="utf-8") as handle:
+            for line in handle:
+                if not line.strip():continue
+                bar=json.loads(line)
+                if str(bar.get("date",""))[:10]!=str(e["date"]):continue
+                if str(bar.get("minute",""))[:8]<=cutoff:minutes.append(bar)
         indicators=compute_indicators(str(e["stock_id"]),str(e["date"]),minutes,cutoff)
         flex=enrich_preview(flex,indicators)
+        print(f"[LINE INDICATOR] {e['stock_id']} source=canonical_minutes rows={len(minutes)} labels={len(flex['contents']['body']['contents'])}",flush=True)
     except Exception as exc:
         print(f"[LINE INDICATOR SKIP] {e['stock_id']} {type(exc).__name__}: {exc}",flush=True)
     print("="*110);print("LINE SIGNAL NOTIFIER v3 | A/B/C/P1 FLEX");print("="*110);print("Mode:","REAL SEND" if a.send else "DRY RUN");print("Event:",path);print("Stock:",f"{name} {sid}");print("Signal:",f"{e['signal_class']} | {spec['title']}");print("Recognition:",e["recognition_time"]);print("Retry key:",retry_key(e))
