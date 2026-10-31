@@ -472,10 +472,45 @@ def a_launch_gate_once(snapshot_day, verify=None):
     env["A_VERIFIED_SNAPSHOT_DAY"]=str(snapshot_day)
     return env
 
+def send_one_time_maintenance_test():
+    """Explicitly armed, one-time LINE Flex smoke test; no A/B or maintenance calls."""
+    if os.environ.get("A_MAINT_FLEX_SMOKE_TEST", "0") != "1":
+        return
+    import urllib.request
+    marker=Path("/var/data/stock-alert/maint_flex_smoke_test_v1.sent")
+    if marker.exists():
+        print("[MAINT FLEX TEST] already sent; skipping",flush=True)
+        return
+    token=os.environ.get("LINE_CHANNEL_ACCESS_TOKEN")
+    destination=os.environ.get("LINE_TO_ID")
+    if not token or not destination:
+        print("[MAINT FLEX TEST] NOT SENT: missing recognition LINE credentials",flush=True)
+        return
+    card={"type":"bubble","size":"mega",
+        "header":{"type":"box","layout":"vertical","backgroundColor":"#173C32","paddingAll":"16px","contents":[
+            {"type":"text","text":"每日資料維護報告","weight":"bold","size":"lg","color":"#FFFFFF"},
+            {"type":"text","text":"LINE 發送功能測試","size":"xs","color":"#C9E1D4"}]},
+        "body":{"type":"box","layout":"vertical","spacing":"md","contents":[
+            {"type":"text","text":"測試訊息｜發送功能驗證","weight":"bold","size":"md","color":"#173C32","wrap":True},
+            {"type":"text","text":"這是一張測試卡片，不代表當日維護結果。","size":"sm","color":"#61786B","wrap":True},
+            {"type":"text","text":"辨識系統 · 自動維護","size":"xxs","color":"#83958A"}]}}
+    payload=json.dumps({"to":destination,"messages":[{"type":"flex","altText":"辨識系統每日維護通知測試","contents":card}]},ensure_ascii=False).encode("utf-8")
+    try:
+        req=urllib.request.Request("https://api.line.me/v2/bot/message/push",data=payload,headers={"Authorization":"Bearer "+token,"Content-Type":"application/json"},method="POST")
+        with urllib.request.urlopen(req,timeout=12) as response:
+            if response.status!=200:
+                raise RuntimeError("LINE API returned non-200")
+        marker.parent.mkdir(parents=True,exist_ok=True)
+        marker.write_text("sent",encoding="utf-8")
+        print("[MAINT FLEX TEST] LINE API 200; one-time test sent",flush=True)
+    except Exception as exc:
+        print(f"[MAINT FLEX TEST] NOT SENT: {type(exc).__name__}: {exc}",flush=True)
+
 def main():
     ap=argparse.ArgumentParser();ap.add_argument("--self-test",action="store_true");a=ap.parse_args()
     if a.self_test:self_test();return
     self_test()
+    send_one_time_maintenance_test()
     preflight();STATE_ROOT.mkdir(parents=True,exist_ok=True);f14_bootstrap(now_tpe().date().isoformat());threading.Thread(target=f10_maintenance_loop,name="f10-maint",daemon=True).start();threading.Thread(target=daily_history_maintenance_loop,name="a-daily-maint",daemon=True).start();wait_session()
     threading.Thread(target=serve,daemon=True).start()
     threading.Thread(target=shared_ws_loop,daemon=True).start()
