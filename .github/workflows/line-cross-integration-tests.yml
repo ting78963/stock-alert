@@ -1,5 +1,8 @@
 name: LINE crossover integration checks
 on:
+  pull_request:
+    branches:
+      - main
   push:
     branches:
       - feature/line-cross-display-integration-20261031
