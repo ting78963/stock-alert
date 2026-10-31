@@ -22,28 +22,13 @@ _group_limit_up_thread = None
 _b_thread = None
 
 def start_background_services():
-    global _group_limit_up_thread, _b_thread
-    # Keep legacy limit-up notifications isolated from the recognition group.
-    if GROUP_ID and LINE_TOKEN:
-        if _group_limit_up_thread is None or not _group_limit_up_thread.is_alive():
-            _group_limit_up_thread = threading.Thread(
-                target=group_limit_up_monitor_loop,
-                args=(LINE_TOKEN, GROUP_ID),
-                name="group-limit-up-runner", daemon=True,
-            )
-            _group_limit_up_thread.start()
-            print("group limit-up notifier started", flush=True)
-    else:
-        print("group limit-up notifier waiting for original GROUP_ID", flush=True)
-    if LINE_TO_ID and LINE_TOKEN and (_b_thread is None or not _b_thread.is_alive()):
-        _b_thread = threading.Thread(
-            target=b_monitor_loop,
-            args=(LINE_TOKEN, LINE_TO_ID),
-            name="abc-b-runner",
-            daemon=True,
-        )
-        _b_thread.start()
-        print("ABC B runner started", flush=True)
+    """Web service serves status, LINE replies and explicit tests only.
+
+    Production A/B monitoring and LINE signal pushes belong exclusively to
+    stock-alert-trend-worker. Do not launch duplicate background monitors here.
+    """
+    print("[WEB MONITORS DISABLED] production signal ownership: trend-worker", flush=True)
+
 
 start_background_services()
 
