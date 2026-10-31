@@ -44,16 +44,16 @@ class NotifierV3Tests(unittest.TestCase):
             minute_dir=Path(d)/"b_live_runner_v2_p1"/"2026-10-26"/"1301"
             minute_dir.mkdir(parents=True)
             (minute_dir/"canonical_minutes.jsonl").write_text(
-                json.dumps({"date":"2026-10-26","minute":"09:31:00","open":10,"high":11,"low":10,"close":11})+"\\n",encoding="utf-8")
+                json.dumps({"date":"2026-10-26","minute":"09:31:00","open":10,"high":11,"low":10,"close":11})+"\n",encoding="utf-8")
             for indicator,expected in [({"osc":0.5,"osc_delta":0.2},"OSC"),
                                        (RuntimeError("missing history"),"LINE INDICATOR SKIP")]:
                 with self.subTest(expected=expected):
                     output=io.StringIO()
-                    with patch.object(sys,"argv",["notifier",str(path),"--preview-json"]), \\
-                         patch.object(notifier,"load_event",return_value=e.copy()), \\
-                         patch.dict("os.environ",{"PRODUCTION_STATE_DIR":d}), \\
-                         patch.object(snapshot,"compute_indicators",side_effect=indicator if isinstance(indicator,Exception) else None,return_value=indicator if isinstance(indicator,dict) else None), \\
-                         patch.object(notifier,"send",side_effect=AssertionError("must not send")), \\
+                    with patch.object(sys,"argv",["notifier",str(path),"--preview-json"]), \
+                         patch.object(notifier,"load_event",return_value=e.copy()), \
+                         patch.dict("os.environ",{"PRODUCTION_STATE_DIR":d}), \
+                         patch.object(snapshot,"compute_indicators",side_effect=indicator if isinstance(indicator,Exception) else None,return_value=indicator if isinstance(indicator,dict) else None), \
+                         patch.object(notifier,"send",side_effect=AssertionError("must not send")), \
                          redirect_stdout(output):
                         notifier.main()
                     self.assertIn(expected,output.getvalue())
@@ -74,11 +74,11 @@ class NotifierV3Tests(unittest.TestCase):
             minute_dir=Path(d)/"b_live_runner_v2_p1"/"2026-10-26"/"1301"
             minute_dir.mkdir(parents=True)
             (minute_dir/"canonical_minutes.jsonl").write_text(
-                "".join(json.dumps(b)+"\\n" for b in bars),encoding="utf-8")
-            with patch.object(sys,"argv",["notifier",str(path)]), \\
-                 patch.object(notifier,"load_event",return_value=e), \\
-                 patch.dict("os.environ",{"PRODUCTION_STATE_DIR":d}), \\
-                 patch.object(snapshot,"compute_indicators",side_effect=compute), \\
+                "".join(json.dumps(b)+"\n" for b in bars),encoding="utf-8")
+            with patch.object(sys,"argv",["notifier",str(path)]), \
+                 patch.object(notifier,"load_event",return_value=e), \
+                 patch.dict("os.environ",{"PRODUCTION_STATE_DIR":d}), \
+                 patch.object(snapshot,"compute_indicators",side_effect=compute), \
                  redirect_stdout(io.StringIO()):
                 notifier.main()
         self.assertEqual([r["minute"] for r in captured],["09:30:00","09:31:00"])
