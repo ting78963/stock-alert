@@ -281,6 +281,46 @@ def audit_indicator_help_flex():
     return jsonify(ok=False,error="LEGACY_LINE_PUSH_DISABLED"),410
 
 
+# A single-use, authenticated maintenance-card smoke test for the recognition group.
+_maint_test_lock = threading.Lock()
+_maint_test_sent = False
+
+@app.get("/audit/maintenance-flex-test")
+def maintenance_flex_test():
+    global _maint_test_sent
+    expected = os.environ.get("MAINT_FLEX_TEST_TOKEN", "").strip()
+    if not expected or request.args.get("token", "") != expected:
+        return jsonify(ok=False, error="unauthorized"), 403
+    with _maint_test_lock:
+        if _maint_test_sent:
+            return jsonify(ok=True, already_sent=True, message="test already sent in this process"), 200
+        token = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "").strip() or os.environ.get("LINE_TOKEN", "").strip()
+        to = os.environ.get("LINE_TO_ID", "").strip()
+        if not token or not to:
+            return jsonify(ok=False, error="recognition LINE credentials missing"), 503
+        card = {
+            "type": "bubble", "size": "mega",
+            "header": {"type": "box", "layout": "vertical", "backgroundColor": "#173C32",
+                "paddingAll": "16px", "contents": [
+                    {"type": "text", "text": "每日資料維護報告", "weight": "bold", "size": "lg", "color": "#FFFFFF"},
+                    {"type": "text", "text": "LINE 發送功能測試", "size": "xs", "color": "#C9E1D4"}]},
+            "body": {"type": "box", "layout": "vertical", "spacing": "md", "contents": [
+                {"type": "text", "text": "測試訊息｜發送功能驗證", "weight": "bold", "size": "md", "color": "#173C32", "wrap": True},
+                {"type": "text", "text": "這是測試卡片，不代表當日維護結果。", "size": "sm", "color": "#61786B", "wrap": True},
+                {"type": "text", "text": "辨識系統 · 自動維護", "size": "xxs", "color": "#83958A"}]}}
+        try:
+            response = requests.post("https://api.line.me/v2/bot/message/push",
+                headers={"Authorization": "Bearer " + token},
+                json={"to": to, "messages": [{"type": "flex", "altText": "辨識系統維護通知測試", "contents": card}]},
+                timeout=12)
+            response.raise_for_status()
+        except requests.RequestException as exc:
+            print("[MAINT FLEX WEB TEST] failed: " + type(exc).__name__, flush=True)
+            return jsonify(ok=False, error="LINE push failed", status=getattr(getattr(exc, "response", None), "status_code", None)), 502
+        _maint_test_sent = True
+        print("[MAINT FLEX WEB TEST] LINE API success", flush=True)
+        return jsonify(ok=True, sent=True, destination="LINE_TO_ID", type="flex")
+
 @app.get("/status")
 def status():
     return jsonify(
