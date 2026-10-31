@@ -400,11 +400,32 @@ def daily_history_maintenance_loop():
                                     watched=conn.execute("SELECT symbol,last_probe_result FROM suspension_watch ORDER BY symbol").fetchall()
                                 isolated={str(x[0]):str(x[1]) for x in errors}
                                 isolated.update({str(x[0]):str(x[1]) for x in watched})
-                                summary=f"每日資料維護 {day}\n更新作業：{'完成'}\n歷史追蹤：{total} 檔\n隔離：{len(isolated)} 檔\n隔離名單：{','.join(sorted(isolated)) or '無'}"
                                 token=os.environ.get("LINE_CHANNEL_ACCESS_TOKEN")
                                 destination=os.environ.get("LINE_TO_ID")
-                                if not token or not destination: raise RuntimeError("LINE credentials unavailable")
-                                body=json.dumps({"to":destination,"messages":[{"type":"text","text":summary[:4900]}]}).encode("utf-8")
+                                if not token or not destination: raise RuntimeError("recognition LINE credentials unavailable")
+                                def flex_text(value,size="sm",color="#263C33",weight="regular",wrap=True):
+                                    return {"type":"text","text":str(value),"size":size,"color":color,"weight":weight,"wrap":wrap}
+                                def stat(label,value):
+                                    return {"type":"box","layout":"vertical","backgroundColor":"#F1F5F2","cornerRadius":"md","paddingAll":"12px","flex":1,"contents":[flex_text(label,"xs","#61786B"),flex_text(value,"xl","#173C32","bold")]}
+                                def result_row(label,value):
+                                    return {"type":"box","layout":"horizontal","contents":[{"type":"box","layout":"vertical","flex":3,"contents":[flex_text(label)]},{"type":"box","layout":"vertical","flex":2,"contents":[flex_text(value,"sm","#218B51","bold")]}]}
+                                watch_symbols=sorted(str(row[0]) for row in watched)
+                                other_errors=sorted(str(row[0]) for row in errors)
+                                anomaly="暫停交易觀察："+(", ".join(watch_symbols[:20]) or "無")
+                                if len(watch_symbols)>20: anomaly+=f" 等 {len(watch_symbols)} 檔"
+                                if other_errors: anomaly+="\\n資料異常："+", ".join(other_errors[:20])+(f" 等 {len(other_errors)} 檔" if len(other_errors)>20 else "")
+                                card={"type":"bubble","size":"mega",
+                                    "header":{"type":"box","layout":"vertical","backgroundColor":"#173C32","paddingAll":"16px","contents":[flex_text("每日資料維護報告","lg","#FFFFFF","bold"),flex_text(f"{day}｜收盤後維護","xs","#C9E1D4")]},
+                                    "body":{"type":"box","layout":"vertical","spacing":"md","contents":[
+                                        {"type":"box","layout":"horizontal","spacing":"sm","contents":[stat("追蹤股票",f"{total:,} 檔"),stat("暫停交易觀察",f"{len(watched)} 檔")]},
+                                        flex_text("維護執行結果","md","#173C32","bold"),
+                                        result_row("每日 K 線（DAILY_K）","✓ 完成"),
+                                        result_row("F10 歷史資料","✓ 完成"),
+                                        result_row("F10 維護階段","✓ 完成"),
+                                        {"type":"box","layout":"vertical","backgroundColor":"#F1F5F2","cornerRadius":"md","paddingAll":"12px","contents":[flex_text("異常與觀察","sm","#173C32","bold"),flex_text(anomaly,"xs","#61786B")]},
+                                        flex_text("辨識系統 · 自動維護","xxs","#83958A")
+                                    ]}}
+                                body=json.dumps({"to":destination,"messages":[{"type":"flex","altText":f"每日資料維護 {day}：已完成，觀察 {len(watched)} 檔","contents":card}]},ensure_ascii=False).encode("utf-8")
                                 req=urllib.request.Request("https://api.line.me/v2/bot/message/push",data=body,headers={"Authorization":"Bearer "+token,"Content-Type":"application/json"},method="POST")
                                 with urllib.request.urlopen(req,timeout=10) as response:
                                     if response.status!=200: raise RuntimeError("LINE push unsuccessful")
