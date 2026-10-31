@@ -14,5 +14,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+      - name: Compile notifier and indicator modules
+        run: python -m py_compile line_signal_notifier_v3.py line_indicator_calculations_v1.py line_indicator_history_reader_v1.py line_indicator_partial_day_v1.py line_indicator_snapshot_v1.py line_indicator_flex_preview_v1.py
       - name: Run indicator and notifier tests (no LINE sends)
         run: python -m unittest -v test_line_indicator_calculations_v1.py test_line_indicator_flex_preview_v1.py test_line_indicator_history_preflight_v1.py test_line_indicator_partial_day_v1.py test_line_indicator_snapshot_v1.py test_line_indicator_notifier_v3_v1.py
