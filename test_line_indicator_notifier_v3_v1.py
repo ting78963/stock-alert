@@ -41,37 +41,44 @@ class NotifierV3Tests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             path=Path(d)/"event.json"
             path.write_text(json.dumps(e),encoding="utf-8")
+            minute_dir=Path(d)/"b_live_runner_v2_p1"/"2026-10-26"/"1301"
+            minute_dir.mkdir(parents=True)
+            (minute_dir/"canonical_minutes.jsonl").write_text(
+                json.dumps({"date":"2026-10-26","minute":"09:31:00","open":10,"high":11,"low":10,"close":11})+"\\n",encoding="utf-8")
             for indicator,expected in [({"osc":0.5,"osc_delta":0.2},"OSC"),
                                        (RuntimeError("missing history"),"LINE INDICATOR SKIP")]:
                 with self.subTest(expected=expected):
                     output=io.StringIO()
-                    with patch.object(sys,"argv",["notifier",str(path),"--preview-json"]), \
-                         patch.object(notifier,"load_event",return_value=e.copy()), \
-                         patch.dict(sys.modules,{"fugle_adapter":types.SimpleNamespace(intraday_1m=lambda *args,**kwargs: [])}), \
-                         patch.object(snapshot,"compute_indicators",side_effect=indicator if isinstance(indicator,Exception) else None,return_value=indicator if isinstance(indicator,dict) else None), \
-                         patch.object(notifier,"send",side_effect=AssertionError("must not send")), \
+                    with patch.object(sys,"argv",["notifier",str(path),"--preview-json"]), \\
+                         patch.object(notifier,"load_event",return_value=e.copy()), \\
+                         patch.dict("os.environ",{"PRODUCTION_STATE_DIR":d}), \\
+                         patch.object(snapshot,"compute_indicators",side_effect=indicator if isinstance(indicator,Exception) else None,return_value=indicator if isinstance(indicator,dict) else None), \\
+                         patch.object(notifier,"send",side_effect=AssertionError("must not send")), \\
                          redirect_stdout(output):
                         notifier.main()
                     self.assertIn(expected,output.getvalue())
                     self.assertIn("DRY RUN PASS",output.getvalue())
                     self.assertNotIn("line_sent",path.read_text(encoding="utf-8"))
     def test_main_filters_future_minutes_before_snapshot(self):
-        import types
         import line_indicator_snapshot_v1 as snapshot
         e={"stock_id":"1301","stock_name":"台塑","signal_class":"A",
            "recognition_time":"09:31:00","date":"2026-10-26"}
         captured=[]
-        bars=[{"minute":"09:30:00"},{"minute":"09:31:00"},{"minute":"09:32:00"}]
+        bars=[{"date":"2026-10-26","minute":t,"open":10,"high":11,"low":10,"close":11} for t in ("09:30:00","09:31:00","09:32:00")]
         def compute(symbol,day,minutes,cutoff):
             captured.extend(minutes)
             return {}
         with tempfile.TemporaryDirectory() as d:
             path=Path(d)/"event.json"
             path.write_text("{}",encoding="utf-8")
-            with patch.object(sys,"argv",["notifier",str(path)]), \
-                 patch.object(notifier,"load_event",return_value=e), \
-                 patch.dict(sys.modules,{"fugle_adapter":types.SimpleNamespace(intraday_1m=lambda *args,**kwargs: bars)}), \
-                 patch.object(snapshot,"compute_indicators",side_effect=compute), \
+            minute_dir=Path(d)/"b_live_runner_v2_p1"/"2026-10-26"/"1301"
+            minute_dir.mkdir(parents=True)
+            (minute_dir/"canonical_minutes.jsonl").write_text(
+                "".join(json.dumps(b)+"\\n" for b in bars),encoding="utf-8")
+            with patch.object(sys,"argv",["notifier",str(path)]), \\
+                 patch.object(notifier,"load_event",return_value=e), \\
+                 patch.dict("os.environ",{"PRODUCTION_STATE_DIR":d}), \\
+                 patch.object(snapshot,"compute_indicators",side_effect=compute), \\
                  redirect_stdout(io.StringIO()):
                 notifier.main()
         self.assertEqual([r["minute"] for r in captured],["09:30:00","09:31:00"])
