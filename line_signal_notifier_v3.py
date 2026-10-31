@@ -115,6 +115,31 @@ def main():
     e=load_event(path)
     if a.stock_name.strip():e["stock_name"]=a.stock_name.strip()
     flex=build_flex(e);spec=CARD[e["signal_class"]];name,sid=stock_display(e)
+    # Presentation only: fail open, preserve original signal and LINE dedupe.
+    try:
+        from line_indicator_snapshot_v1 import compute_indicators
+        from line_indicator_flex_preview_v1 import enrich_preview
+        cutoff=str(e["recognition_time"])[:5]+":59"
+        # The production Runner has already persisted completed minute bars.
+        # Reuse those bars; no additional Fugle REST request.
+        state_root=Path(os.environ.get("PRODUCTION_STATE_DIR",str(Path(__file__).resolve().parent/"_production_output")))
+        minute_file=state_root/"b_live_runner_v2_p1"/str(e["date"])/str(e["stock_id"]).zfill(4)/"canonical_minutes.jsonl"
+        minutes=[]
+        with minute_file.open(encoding="utf-8") as handle:
+            for line in handle:
+                if not line.strip():continue
+                bar=json.loads(line)
+                if str(bar.get("date",""))[:10]!=str(e["date"]):continue
+                if str(bar.get("minute",""))[:8]<=cutoff:minutes.append(bar)
+        indicators=compute_indicators(str(e["stock_id"]),str(e["date"]),minutes,cutoff)
+        if not indicators:
+            print(f"[LINE INDICATOR DATA MISSING] {e['stock_id']} canonical_rows={len(minutes)} history_or_intraday_insufficient",flush=True)
+        else:
+            from line_indicator_flex_preview_v1 import indicator_lines
+            print(f"[LINE INDICATOR READY] {e['stock_id']} canonical_rows={len(minutes)} displayed_lines={len(indicator_lines(indicators))}",flush=True)
+        flex=enrich_preview(flex,indicators)
+    except Exception as exc:
+        print(f"[LINE INDICATOR SKIP] {e['stock_id']} {type(exc).__name__}: {exc}",flush=True)
     print("="*110);print("LINE SIGNAL NOTIFIER v3 | A/B/C/P1 FLEX");print("="*110);print("Mode:","REAL SEND" if a.send else "DRY RUN");print("Event:",path);print("Stock:",f"{name} {sid}");print("Signal:",f"{e['signal_class']} | {spec['title']}");print("Recognition:",e["recognition_time"]);print("Retry key:",retry_key(e))
     if a.preview_json:print(json.dumps(flex,ensure_ascii=False,indent=2))
     if not a.send:print("\nDRY RUN PASS -> NO LINE SEND");return
