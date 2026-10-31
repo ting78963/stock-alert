@@ -132,8 +132,12 @@ def main():
                 if str(bar.get("date",""))[:10]!=str(e["date"]):continue
                 if str(bar.get("minute",""))[:8]<=cutoff:minutes.append(bar)
         indicators=compute_indicators(str(e["stock_id"]),str(e["date"]),minutes,cutoff)
+        if not indicators:
+            print(f"[LINE INDICATOR DATA MISSING] {e['stock_id']} canonical_rows={len(minutes)} history_or_intraday_insufficient",flush=True)
+        else:
+            from line_indicator_flex_preview_v1 import indicator_lines
+            print(f"[LINE INDICATOR READY] {e['stock_id']} canonical_rows={len(minutes)} displayed_lines={len(indicator_lines(indicators))}",flush=True)
         flex=enrich_preview(flex,indicators)
-        print(f"[LINE INDICATOR] {e['stock_id']} source=canonical_minutes rows={len(minutes)} labels={len(flex['contents']['body']['contents'])}",flush=True)
     except Exception as exc:
         print(f"[LINE INDICATOR SKIP] {e['stock_id']} {type(exc).__name__}: {exc}",flush=True)
     print("="*110);print("LINE SIGNAL NOTIFIER v3 | A/B/C/P1 FLEX");print("="*110);print("Mode:","REAL SEND" if a.send else "DRY RUN");print("Event:",path);print("Stock:",f"{name} {sid}");print("Signal:",f"{e['signal_class']} | {spec['title']}");print("Recognition:",e["recognition_time"]);print("Retry key:",retry_key(e))
