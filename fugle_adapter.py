@@ -10,10 +10,10 @@ def api_key():
     if not k:raise DataError("FUGLE_API_KEY missing")
     return k
 
-def _get(url,key):
+def _get(url,key,timeout=None):
     req=urllib.request.Request(url,headers={"X-API-KEY":key,"Accept":"application/json"})
     try:
-        with urllib.request.urlopen(req,timeout=TIMEOUT) as r:return json.loads(r.read().decode())
+        with urllib.request.urlopen(req,timeout=TIMEOUT if timeout is None else timeout) as r:return json.loads(r.read().decode())
     except urllib.error.HTTPError as e:raise DataError(f"Fugle HTTP {e.code}: "+e.read().decode(errors="replace")[:300])
 
 def _canonical_minutes(o,symbol,date,volume_scale=1.0):
@@ -31,11 +31,11 @@ def _canonical_minutes(o,symbol,date,volume_scale=1.0):
     if not out:raise DataError(f"Fugle coverage failed for {symbol} {date}")
     return out
 
-def intraday_1m(symbol,date,key=None):
+def intraday_1m(symbol,date,key=None,timeout=None):
     """Current trading-day 1m candles. Fugle intraday volume is lots; canonical unit is lots."""
     key=key or api_key()
     q=urllib.parse.urlencode({"timeframe":"1","sort":"asc"})
-    o=_get(f"{BASE}/intraday/candles/{symbol}?{q}",key)
+    o=_get(f"{BASE}/intraday/candles/{symbol}?{q}",key,timeout=timeout)
     response_date=str(o.get("date",""))[:10]
     if response_date!=date:raise DataError(f"Fugle intraday date mismatch: expected {date}, got {response_date}")
     return _canonical_minutes(o,symbol,date,volume_scale=1.0)
