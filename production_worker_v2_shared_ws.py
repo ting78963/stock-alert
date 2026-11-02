@@ -401,7 +401,7 @@ def daily_history_maintenance_loop():
                                 isolated={str(x[0]):str(x[1]) for x in errors}
                                 isolated.update({str(x[0]):str(x[1]) for x in watched})
                                 token=(os.environ.get("LINE_CHANNEL_ACCESS_TOKEN","") or os.environ.get("LINE_TOKEN","")).strip()
-                                destination=(os.environ.get("LINE_TO_ID","") or os.environ.get("GROUP_ID","")).strip()
+                                destination=os.environ.get("LINE_TO_ID","").strip()  # Explicit recognition recipient; never fall back to limit-up GROUP_ID.
                                 if not token or not destination: raise RuntimeError("recognition LINE credentials unavailable")
                                 def flex_text(value,size="sm",color="#263C33",weight="regular",wrap=True):
                                     return {"type":"text","text":str(value),"size":size,"color":color,"weight":weight,"wrap":wrap}
