@@ -434,6 +434,8 @@ def daily_history_maintenance_loop():
                                 print(f"[A DAILY MAINT LINE] sent day={day} isolated={len(isolated)}",flush=True)
                             except Exception as exc:
                                 print(f"[A DAILY MAINT LINE] not sent: {type(exc).__name__}: {exc}",flush=True)
+                                completed_day=None  # Retry notification without rerunning completed maintenance stages.
+                                next_retry_at=time.monotonic()+300
                     else:
                         print(f"[SEQUENTIAL MAINT] PENDING stages={','.join(name for name,_,_ in tasks if name not in stage_done)}; retry in 5m",flush=True)
                         next_retry_at=time.monotonic()+300
