@@ -400,9 +400,10 @@ def daily_history_maintenance_loop():
                                     watched=conn.execute("SELECT symbol,last_probe_result FROM suspension_watch ORDER BY symbol").fetchall()
                                 isolated={str(x[0]):str(x[1]) for x in errors}
                                 isolated.update({str(x[0]):str(x[1]) for x in watched})
-                                token=os.environ.get("LINE_CHANNEL_ACCESS_TOKEN")
-                                destination=os.environ.get("LINE_TO_ID")
-                                if not token or not destination: raise RuntimeError("recognition LINE credentials unavailable")
+                                token=(os.environ.get("LINE_CHANNEL_ACCESS_TOKEN","") or os.environ.get("LINE_TOKEN","")).strip()
+                                destination=os.environ.get("LINE_TO_ID","").strip()  # Explicit recognition recipient; never fall back to limit-up GROUP_ID.
+                                if not token or not destination:
+                                    raise RuntimeError(f"recognition LINE credentials unavailable (token_configured={bool(token)}, LINE_TO_ID_configured={bool(destination)}); refusing other GROUP_ID")
                                 def flex_text(value,size="sm",color="#263C33",weight="regular",wrap=True):
                                     return {"type":"text","text":str(value),"size":size,"color":color,"weight":weight,"wrap":wrap}
                                 def stat(label,value):
@@ -433,6 +434,8 @@ def daily_history_maintenance_loop():
                                 print(f"[A DAILY MAINT LINE] sent day={day} isolated={len(isolated)}",flush=True)
                             except Exception as exc:
                                 print(f"[A DAILY MAINT LINE] not sent: {type(exc).__name__}: {exc}",flush=True)
+                                completed_day=None  # Retry notification without rerunning completed maintenance stages.
+                                next_retry_at=time.monotonic()+300
                     else:
                         print(f"[SEQUENTIAL MAINT] PENDING stages={','.join(name for name,_,_ in tasks if name not in stage_done)}; retry in 5m",flush=True)
                         next_retry_at=time.monotonic()+300
