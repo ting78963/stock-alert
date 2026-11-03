@@ -280,10 +280,26 @@ def save_json_atomic(path: Path, obj: Any) -> None:
 
 
 def append_event(obj: Dict[str, Any]) -> None:
+    # Cache-only route misses recur every five seconds. Record the first
+    # occurrence of each (date, route, symbol, reason), not every scan.
+    # Other event types (including handoffs and discoveries) are unchanged.
+    if obj.get("type") in {"vcp_unknown", "surge_unknown"}:
+        day = str(obj.get("date") or now_tw().date().isoformat())
+        seen_day = getattr(append_event, "_unknown_day", None)
+        if seen_day != day:
+            append_event._unknown_day = day
+            append_event._unknown_seen = set()
+        key = (str(obj.get("type")), str(obj.get("symbol")),
+               str(obj.get("reason")))
+        if key in append_event._unknown_seen:
+            return
+        # Mark as seen only after a successful append below.
     ensure_outdir()
     p = OUTDIR / "events.jsonl"
     with p.open("a", encoding="utf-8") as f:
         f.write(json.dumps(obj, ensure_ascii=False) + "\n")
+    if obj.get("type") in {"vcp_unknown", "surge_unknown"}:
+        append_event._unknown_seen.add(key)
 
 
 def append_queue_shadow(d: str, obj: Dict[str, Any]) -> None:
