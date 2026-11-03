@@ -4,7 +4,8 @@ import json
 import os
 import sqlite3
 from collections import Counter
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 from pathlib import Path
 
 ROOT = Path(os.environ.get("A_STOCK_ROOT", "/var/data/stock-alert"))
@@ -15,10 +16,15 @@ EXCLUDED = {"02", "09", "14", "15", "16", "17", "18", "22", "32"}
 def main():
     metadata = json.loads(META.read_text(encoding="utf-8"))
     records = metadata.get("symbols", {})
+    staging_enabled = os.environ.get("A_F11_OFFLINE_STAGING", "") == "1"
+    if staging_enabled:
+        staging_file = ROOT / "f11-staging" / "a_f11_staging_v1.json"
+        staging = json.loads(staging_file.read_text(encoding="utf-8"))
+        records = staging.get("symbols", staging.get("records", {}))
     if not isinstance(records, dict):
         raise ValueError("F11 symbols must be a dict")
     required = os.environ.get("A_LAST_COMPLETED_SESSION", "").strip()
-    snapshot = os.environ.get("A_AUDIT_SNAPSHOT_DATE", date.today().isoformat())
+    snapshot = os.environ.get("A_AUDIT_SNAPSHOT_DATE", datetime.now(ZoneInfo("Asia/Taipei")).date().isoformat())
     target = (date.fromisoformat(snapshot) - timedelta(days=1)).isoformat()
     counts = Counter()
     with sqlite3.connect(f"file:{DB}?mode=ro", uri=True) as conn:
@@ -51,7 +57,7 @@ def main():
     print(json.dumps({
         "snapshot_date": snapshot, "last_completed_session": required or None,
         "target_previous_calendar_day": target, "database_symbols": len(symbols),
-        "f11_file_symbols": len(records), "counts": dict(sorted(counts.items())),
+        "f11_file_symbols": len(records), "f11_offline_staging_enabled": staging_enabled, "counts": dict(sorted(counts.items())),
         "note": "Coverage counters are independent; VCP still requires all gates. No files modified."
     }, ensure_ascii=False, indent=2))
 
