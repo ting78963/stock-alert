@@ -27,6 +27,7 @@ def main():
     snapshot = os.environ.get("A_AUDIT_SNAPSHOT_DATE", datetime.now(ZoneInfo("Asia/Taipei")).date().isoformat())
     target = (date.fromisoformat(snapshot) - timedelta(days=1)).isoformat()
     counts = Counter()
+    missing_f11_symbols = []
     session_date = date.fromisoformat(required) if required else None
     session_future = session_date is not None and session_date > date.fromisoformat(target)
     with sqlite3.connect(f"file:{DB}?mode=ro", uri=True) as conn:
@@ -35,6 +36,7 @@ def main():
             meta = records.get(symbol)
             if not isinstance(meta, dict) or str(meta.get("symbol", "")) != symbol:
                 counts["f11_missing_or_invalid"] += 1
+                missing_f11_symbols.append(symbol)
             elif (str(meta.get("market") or "") == "ESB"
                   or (str(meta.get("securityType") or "") not in ("", "01"))
                   or str(meta.get("industry") or "") in EXCLUDED):
@@ -52,14 +54,22 @@ def main():
                 "SELECT day,close,volume_zhang FROM daily_ohlcv WHERE symbol=? AND day<? AND day>=? ORDER BY day",
                 (symbol, snapshot, (date.fromisoformat(snapshot)-timedelta(days=171)).isoformat())
             ).fetchall()
-            if len(rows) >= 60 and all(c is not None and v is not None and c > 0 and v >= 0 for _,c,v in rows):
+            bars_ready = len(rows) >= 60 and all(c is not None and v is not None and c > 0 and v >= 0 for _,c,v in rows)
+            if bars_ready:
                 counts["prior_60_bars_ready"] += 1
             else:
                 counts["prior_60_bars_missing"] += 1
+            if (isinstance(meta, dict) and str(meta.get("symbol", "")) == symbol
+                    and str(meta.get("market") or "") != "ESB"
+                    and str(meta.get("securityType") or "") in ("", "01")
+                    and str(meta.get("industry") or "") not in EXCLUDED
+                    and required and not session_future and status and status[0]
+                    and str(status[0])[:10] >= required and bars_ready):
+                counts["vcp_all_local_gates_ready"] += 1
     print(json.dumps({
         "snapshot_date": snapshot, "last_completed_session": required or None,
         "target_previous_calendar_day": target, "session_future_for_snapshot": session_future, "database_symbols": len(symbols),
-        "f11_file_symbols": len(records), "f11_offline_staging_enabled": staging_enabled, "counts": dict(sorted(counts.items())),
+        "f11_file_symbols": len(records), "f11_missing_symbol_sample": missing_f11_symbols[:30], "f11_offline_staging_enabled": staging_enabled, "counts": dict(sorted(counts.items())),
         "note": "Coverage counters are independent; VCP still requires all gates. No files modified."
     }, ensure_ascii=False, indent=2))
 
