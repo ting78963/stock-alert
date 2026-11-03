@@ -20,13 +20,15 @@ def main():
     if staging_enabled:
         staging_file = ROOT / "f11-staging" / "a_f11_staging_v1.json"
         staging = json.loads(staging_file.read_text(encoding="utf-8"))
-        records = staging.get("symbols", staging.get("records", {}))
+        records = staging.get("symbols") if isinstance(staging, dict) else None
     if not isinstance(records, dict):
         raise ValueError("F11 symbols must be a dict")
     required = os.environ.get("A_LAST_COMPLETED_SESSION", "").strip()
     snapshot = os.environ.get("A_AUDIT_SNAPSHOT_DATE", datetime.now(ZoneInfo("Asia/Taipei")).date().isoformat())
     target = (date.fromisoformat(snapshot) - timedelta(days=1)).isoformat()
     counts = Counter()
+    session_date = date.fromisoformat(required) if required else None
+    session_future = session_date is not None and session_date > date.fromisoformat(target)
     with sqlite3.connect(f"file:{DB}?mode=ro", uri=True) as conn:
         symbols = [str(row[0]) for row in conn.execute("SELECT DISTINCT symbol FROM daily_ohlcv")]
         for symbol in symbols:
@@ -42,7 +44,7 @@ def main():
             status = conn.execute("SELECT covered_through FROM fetch_status WHERE symbol=?", (symbol,)).fetchone()
             if not required:
                 counts["session_env_missing"] += 1
-            elif not status or not status[0] or str(status[0])[:10] < required:
+            elif session_future or not status or not status[0] or str(status[0])[:10] < required:
                 counts["coverage_not_ready"] += 1
             else:
                 counts["coverage_ready"] += 1
@@ -56,7 +58,7 @@ def main():
                 counts["prior_60_bars_missing"] += 1
     print(json.dumps({
         "snapshot_date": snapshot, "last_completed_session": required or None,
-        "target_previous_calendar_day": target, "database_symbols": len(symbols),
+        "target_previous_calendar_day": target, "session_future_for_snapshot": session_future, "database_symbols": len(symbols),
         "f11_file_symbols": len(records), "f11_offline_staging_enabled": staging_enabled, "counts": dict(sorted(counts.items())),
         "note": "Coverage counters are independent; VCP still requires all gates. No files modified."
     }, ensure_ascii=False, indent=2))
