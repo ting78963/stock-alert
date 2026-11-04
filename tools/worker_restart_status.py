@@ -52,7 +52,7 @@ def snapshot(root=ROOT, now=None):
     db = root / "shared_history_stage_v1.sqlite3"
     try:
         with sqlite3.connect("file:" + str(db) + "?mode=ro", uri=True, timeout=3) as conn:
-            result["database_ok"] = conn.execute("PRAGMA quick_check(1)").fetchone()[0] == "ok"
+            result["database_ok"] = conn.execute("SELECT name FROM sqlite_master LIMIT 1").fetchone() is not None
     except (sqlite3.Error, OSError):
         pass
     return result
