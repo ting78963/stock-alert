@@ -51,7 +51,7 @@ class TrajectoryLazyEngineTests(unittest.TestCase):
                 raise StopLoop()
 
         with tempfile.TemporaryDirectory() as tmp:
-            with patch.object(mod, "OUT", Path(tmp)), patch.object(mod, "days", return_value=days), patch.object(mod, "datetime") as dt, patch.object(mod, "build_day", side_effect=fake_build), patch.object(mod.time, "sleep", side_effect=fake_sleep):
+            with patch.object(mod, "OUT", Path(tmp)), patch.object(mod, "days", return_value=days), patch.object(mod, "datetime") as dt, patch.object(mod, "build_day", side_effect=fake_build), patch.object(mod, "report_and_trajectory_complete", return_value=True), patch.object(mod.time, "sleep", side_effect=fake_sleep):
                 dt.now.return_value = clock
                 with self.assertRaises(StopLoop):
                     mod.loop()
@@ -83,7 +83,30 @@ class TrajectoryLazyEngineTests(unittest.TestCase):
                 dt.now.return_value = clock
                 with self.assertRaises(StopLoop):
                     mod.loop()
-        self.assertEqual(attempts, [today, today, today])
+        self.assertEqual(attempts, [today])
+
+    def test_complete_requires_sent_report_and_all_matching_files(self):
+        day = "2026-11-05"
+        event = {"stock_id": "1301", "signal_class": "A", "recognition_time": "10:30"}
+        name = "1301_A_1030.json"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            folder = root / day
+            folder.mkdir()
+            (folder / name).write_text("{}", encoding="utf-8")
+            (folder / "manifest.json").write_text(json.dumps({
+                "schema": mod.SCHEMA, "date": day, "count": 1, "files": [name]
+            }), encoding="utf-8")
+            registry = {"dates": {day: {"total": 1}}}
+            with patch.object(mod, "OUT", root), patch.object(mod.f15, "reg", return_value=(None, registry)), patch.object(mod.f15, "load_events", return_value=[event]):
+                self.assertTrue(mod.report_and_trajectory_complete(day))
+                (folder / name).unlink()
+                self.assertFalse(mod.report_and_trajectory_complete(day))
+                (folder / name).write_text("{}", encoding="utf-8")
+                registry["dates"][day]["total"] = 2
+                self.assertFalse(mod.report_and_trajectory_complete(day))
+                registry["dates"].clear()
+                self.assertFalse(mod.report_and_trajectory_complete(day))
 
 if __name__ == "__main__":
     unittest.main()
