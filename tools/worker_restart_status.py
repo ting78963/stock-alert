@@ -70,6 +70,13 @@ def snapshot(root=ROOT, now=None):
             result["f15_complete"] = True
     except (OSError, ValueError, TypeError, AttributeError):
         pass
+    # Only the durable attempt ledger can establish whether a restart was requested.
+    # Missing ledger means no reservation yet; unreadable ledger fails closed.
+    ledger = root / "restart_attempts" / (day + ".json")
+    try:
+        result["restart_attempted"] = ledger.exists()
+    except OSError:
+        pass
     return result
 
 if __name__ == "__main__":
