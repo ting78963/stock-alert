@@ -53,14 +53,17 @@ def build_one(day,e,M,key):
 def build_day(day):
  events=f15.load_events(day)
  if not events:return {"day":day,"status":"no_events","written":0,"skipped":0}
- M=runpy.run_path(str(f15.ENGINE),run_name="__f15_trajectory_engine__");key,_=M["find_key"]();written=skipped=0;manifest=[]
+ M=None;key=None;written=skipped=0;manifest=[]
  for e in events:
   sid=str(e["stock_id"]).zfill(4);cls=str(e["signal_class"]).upper();t0=nt(e["recognition_time"]);p=OUT/day/f"{sid}_{cls}_{t0.replace(':','')}.json"
   if p.exists():
    old=json.loads(p.read_text(encoding="utf-8"));ident=old.get("identity",{})
    if old.get("schema")!=SCHEMA or ident.get("date")!=day or ident.get("stock_id")!=sid or ident.get("signal_class")!=cls or ident.get("recognition_time")!=t0:raise RuntimeError(f"F15 trajectory identity conflict {p}")
    skipped+=1
-  else:atomic(p,build_one(day,e,M,key));written+=1
+  else:
+   if M is None:
+    M=runpy.run_path(str(f15.ENGINE),run_name="__f15_trajectory_engine__");key,_=M["find_key"]()
+   atomic(p,build_one(day,e,M,key));written+=1
   manifest.append(p.name)
  atomic(OUT/day/"manifest.json",{"schema":SCHEMA,"date":day,"files":sorted(manifest),"count":len(manifest),"updated_at_taipei":datetime.now(TPE).isoformat(timespec="seconds")})
  print(f"[F15 TRAJECTORY] {day} signals={len(events)} written={written} skipped={skipped}",flush=True);return {"day":day,"status":"ok","written":written,"skipped":skipped}
