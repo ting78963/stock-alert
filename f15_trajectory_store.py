@@ -85,7 +85,9 @@ def loop():
      result=build_day(day)
      # Today's events can arrive late; freeze today's archive only after
      # the ordinary post-close maintenance window.
-     if result["status"]=="ok" and (day!=now.date().isoformat() or (now.hour,now.minute)>=(15,45)):
+     if result["status"]=="ok" and day!=now.date().isoformat():
       completed.add(day)
+     # Never freeze today based on time alone: late events can still arrive.
+     # Rechecking today remains cheap because the research engine is lazy-loaded.
     except BaseException as ex:print(f"[F15 TRAJECTORY FAIL] {day} {type(ex).__name__}: {ex}",flush=True)
   time.sleep(900)
