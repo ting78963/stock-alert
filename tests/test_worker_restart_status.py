@@ -21,7 +21,7 @@ class StatusTests(unittest.TestCase):
             self.assertFalse(result["database_ok"])
             self.assertIsNone(result["f15_complete"])
             self.assertIsNone(result["active_trading_jobs"])
-            self.assertIsNone(result["restart_attempted"])
+            self.assertFalse(result["restart_attempted"])
 
     def test_valid_record_and_db_do_not_imply_restart_ready(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -62,6 +62,14 @@ class StatusTests(unittest.TestCase):
                     "schema": "f15_trajectory_v1", "date": "2026-11-05", "count": 2
                 }), encoding="utf-8")
                 self.assertTrue(mod.snapshot(root, NOW)["f15_complete"])
+
+    def test_reserved_attempt_blocks_restart(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ledger = root / "restart_attempts"
+            ledger.mkdir()
+            (ledger / "2026-11-05.json").write_text("{}", encoding="utf-8")
+            self.assertTrue(mod.snapshot(root, NOW)["restart_attempted"])
 
     def test_legacy_record_cannot_invent_acceptance_time(self):
         with tempfile.TemporaryDirectory() as tmp:
