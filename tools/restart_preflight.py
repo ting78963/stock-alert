@@ -18,6 +18,9 @@ def check(state, now):
     if not isinstance(state, dict):
         return False, "invalid state"
     day = now.date().isoformat()
+    # Never restart near market hours, even with a stale idle snapshot.
+    if not dt.time(17, 0) <= now.time() < dt.time(23, 0):
+        return False, "outside safe evening restart window (17:00-23:00 TPE)"
     if state.get("schema") != "daily_maintenance_state_v2" or state.get("date") != day:
         return False, "maintenance state missing, stale, or incompatible"
     stages = state.get("stages")
