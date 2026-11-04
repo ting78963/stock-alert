@@ -349,20 +349,37 @@ def daily_history_maintenance_loop():
         return
     daily=BASE/"research"/"a_daily_incremental_maintenance_v1.py"
     f10=BASE/"f10_baseline_store_v1.py"
+    # Persistent across Render redeploys; never infer delivery from process-local variables.
+    state_root=Path("/var/data/stock-alert/daily_maintenance_state")
+    state_root.mkdir(parents=True,exist_ok=True)
     completed_day=None
     stage_done=set()
     stage_day=None
     next_retry_at=0.0
     notified_day=None
+    line_accepted_at=None
+    def save_state(day):
+        _atomic_json(state_root/(day+".json"),{
+            "schema":"daily_maintenance_state_v2","date":day,
+            "stages":sorted(stage_done),"line_sent":notified_day==day,
+            "line_accepted_at":line_accepted_at})
     while True:
         n=now_tpe()
         day=n.date().isoformat()
         if day!=stage_day:
-            notified_day=None
             stage_day=day
-            stage_done=set()
-            completed_day=None
+            state_path=state_root/(day+".json")
+            state=json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
+            if state and (state.get("schema") not in ("daily_maintenance_state_v1","daily_maintenance_state_v2") or state.get("date")!=day):
+                raise RuntimeError("daily maintenance state identity/schema mismatch")
+            stage_done=set(state.get("stages",[]))
+            notified_day=day if state.get("line_sent") is True else None
+            # Legacy v1 records do not have a verified LINE acceptance time.
+            # Preserve their sent flag, but do not invent a restart countdown.
+            line_accepted_at=state.get("line_accepted_at") if state.get("schema")=="daily_maintenance_state_v2" else None
+            completed_day=day if {"DAILY_K","F10"}.issubset(stage_done) and (not os.environ.get("A_DAILY_MAINT_LINE_REPORT","0")=="1" or notified_day==day) else None
             next_retry_at=0.0
+            print(f"[SEQUENTIAL MAINT RESTORE] date={day} stages={sorted(stage_done)} line_sent={notified_day==day}",flush=True)
         if (n.hour,n.minute)>=(15,30) and completed_day!=day and time.monotonic()>=next_retry_at:
             try:
                 if not is_scheduled_open(n.date()):
@@ -384,6 +401,7 @@ def daily_history_maintenance_loop():
                             continue
                         if rc==0:
                             stage_done.add(name)
+                            save_state(day)
                             print(f"[SEQUENTIAL MAINT] {name} completed",flush=True)
                         else:
                             print(f"[SEQUENTIAL MAINT] {name} incomplete rc={rc}; other stage may proceed independently",flush=True)
@@ -427,10 +445,20 @@ def daily_history_maintenance_loop():
                                         flex_text("辨識系統 · 自動維護","xxs","#83958A")
                                     ]}}
                                 body=json.dumps({"to":destination,"messages":[{"type":"flex","altText":f"每日資料維護 {day}：已完成，觀察 {len(watched)} 檔","contents":card}]},ensure_ascii=False).encode("utf-8")
-                                req=urllib.request.Request("https://api.line.me/v2/bot/message/push",data=body,headers={"Authorization":"Bearer "+token,"Content-Type":"application/json"},method="POST")
-                                with urllib.request.urlopen(req,timeout=10) as response:
-                                    if response.status!=200: raise RuntimeError("LINE push unsuccessful")
+                                # LINE retry key is stable across process restarts. A 409 means
+                                # this exact key was already accepted; do not push again.
+                                import uuid, urllib.error
+                                retry_key=str(uuid.uuid5(uuid.NAMESPACE_URL,"stock-alert/daily-maintenance/"+day))
+                                req=urllib.request.Request("https://api.line.me/v2/bot/message/push",data=body,headers={"Authorization":"Bearer "+token,"Content-Type":"application/json","X-Line-Retry-Key":retry_key},method="POST")
+                                try:
+                                    with urllib.request.urlopen(req,timeout=10) as response:
+                                        if response.status!=200: raise RuntimeError("LINE push unsuccessful")
+                                except urllib.error.HTTPError as exc:
+                                    if exc.code!=409: raise
+                                    print(f"[A DAILY MAINT LINE] already accepted day={day}",flush=True)
                                 notified_day=day
+                                line_accepted_at=now_tpe().isoformat()
+                                save_state(day)
                                 print(f"[A DAILY MAINT LINE] sent day={day} isolated={len(isolated)}",flush=True)
                             except Exception as exc:
                                 print(f"[A DAILY MAINT LINE] not sent: {type(exc).__name__}: {exc}",flush=True)

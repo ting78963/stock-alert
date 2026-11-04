@@ -1,0 +1,33 @@
+name: Restart preflight safety tests
+on:
+  pull_request:
+    paths:
+      - 'tools/restart_preflight.py'
+      - 'tests/test_restart_preflight.py'
+      - 'tools/render_restart_client.py'
+      - 'tests/test_render_restart_client.py'
+      - 'tools/restart_attempt_ledger.py'
+      - 'tests/test_restart_attempt_ledger.py'
+      - 'tools/worker_restart_status.py'
+      - 'tests/test_worker_restart_status.py'
+      - '.github/workflows/restart-preflight-tests.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dry-run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Run isolated safety tests
+        run: |
+          python -m unittest discover -s tests -p 'test_restart_preflight.py' -v
+          python -m unittest discover -s tests -p 'test_render_restart_client.py' -v
+          python -m unittest discover -s tests -p 'test_worker_restart_status.py' -v
+          python -m unittest discover -s tests -p 'test_restart_attempt_ledger.py' -v
