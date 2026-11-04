@@ -27,5 +27,35 @@ class TrajectoryLazyEngineTests(unittest.TestCase):
             self.assertEqual(result["skipped"], 1)
             self.assertEqual(json.loads((folder / "manifest.json").read_text())["count"], 1)
 
+    def test_loop_skips_completed_prior_day_but_retries_failure(self):
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        class StopLoop(Exception):
+            pass
+
+        days = ["2026-11-03", "2026-11-04"]
+        attempts = []
+        clock = datetime(2026, 11, 5, 16, 0, tzinfo=ZoneInfo("Asia/Taipei"))
+        ticks = [0]
+
+        def fake_build(day):
+            attempts.append(day)
+            if day == days[1] and attempts.count(day) == 1:
+                raise RuntimeError("temporary error")
+            return {"day": day, "status": "ok", "written": 0, "skipped": 1}
+
+        def fake_sleep(_):
+            ticks[0] += 1
+            if ticks[0] >= 3:
+                raise StopLoop()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.object(mod, "OUT", Path(tmp)), patch.object(mod, "days", return_value=days), patch.object(mod, "datetime") as dt, patch.object(mod, "build_day", side_effect=fake_build), patch.object(mod.time, "sleep", side_effect=fake_sleep):
+                dt.now.return_value = clock
+                with self.assertRaises(StopLoop):
+                    mod.loop()
+        self.assertEqual(attempts, [days[0], days[1], days[1]])
+
 if __name__ == "__main__":
     unittest.main()
