@@ -55,6 +55,21 @@ def snapshot(root=ROOT, now=None):
             result["database_ok"] = conn.execute("SELECT name FROM sqlite_master LIMIT 1").fetchone() is not None
     except (sqlite3.Error, OSError):
         pass
+    # F15's report and trajectory run separately from daily maintenance.
+    try:
+        base = Path(os.environ.get("PRODUCTION_STATE_DIR", str(Path(__file__).resolve().parents[1] / "_production_output"))) / "f15_eod"
+        sent = json.loads((base / "sent_registry.json").read_text(encoding="utf-8"))
+        manifest = json.loads((base / "trajectory_v1" / day / "manifest.json").read_text(encoding="utf-8"))
+        entry = sent.get("dates", {}).get(day)
+        if (sent.get("schema") == "f15_sent_v1" and isinstance(entry, dict)
+                and type(entry.get("total")) is int and entry["total"] > 0
+                and manifest.get("schema") == "f15_trajectory_v1"
+                and manifest.get("date") == day
+                and type(manifest.get("count")) is int
+                and manifest["count"] == entry["total"]):
+            result["f15_complete"] = True
+    except (OSError, ValueError, TypeError, AttributeError):
+        pass
     return result
 
 if __name__ == "__main__":
