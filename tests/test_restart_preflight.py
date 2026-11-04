@@ -44,6 +44,18 @@ class RestartGateTests(unittest.TestCase):
         s = ready()
         s["restart_attempted"] = True
         self.assertFalse(mod.check(s, NOW)[0])
+    def test_malformed_stages(self):
+        s = ready()
+        s["stages"] = None
+        self.assertFalse(mod.check(s, NOW)[0])
+    def test_boolean_jobs_rejected(self):
+        s = ready()
+        s["active_trading_jobs"] = False
+        self.assertFalse(mod.check(s, NOW)[0])
+    def test_future_timestamp_rejected(self):
+        s = ready()
+        s["line_accepted_at"] = "2026-11-05T20:00:00+08:00"
+        self.assertFalse(mod.check(s, NOW)[0])
     def test_old_schema(self):
         s = ready()
         s["schema"] = "daily_maintenance_state_v1"
