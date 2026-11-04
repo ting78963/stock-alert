@@ -3,6 +3,8 @@ on:
   pull_request:
     paths:
       - 'f15_trajectory_store.py'
+      - 'f15_eod_signal_report.py'
+      - 'tests/test_f15_eod_completed_loop.py'
       - 'tests/test_f15_trajectory_lazy_engine.py'
       - '.github/workflows/f15-trajectory-regression.yml'
   workflow_dispatch:
@@ -15,3 +17,4 @@ jobs:
         with:
           python-version: '3.11'
       - run: python -m unittest discover -s tests -p 'test_f15_trajectory_lazy_engine.py' -v
+      - run: python -m unittest discover -s tests -p 'test_f15_eod_completed_loop.py' -v
