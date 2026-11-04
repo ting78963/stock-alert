@@ -6,6 +6,8 @@ on:
       - 'tests/test_restart_preflight.py'
       - 'tools/render_restart_client.py'
       - 'tests/test_render_restart_client.py'
+      - 'tools/worker_restart_status.py'
+      - 'tests/test_worker_restart_status.py'
       - '.github/workflows/restart-preflight-tests.yml'
   workflow_dispatch:
 
@@ -25,3 +27,4 @@ jobs:
         run: |
           python -m unittest discover -s tests -p 'test_restart_preflight.py' -v
           python -m unittest discover -s tests -p 'test_render_restart_client.py' -v
+          python -m unittest discover -s tests -p 'test_worker_restart_status.py' -v
