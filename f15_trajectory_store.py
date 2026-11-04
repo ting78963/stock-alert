@@ -71,11 +71,21 @@ def days(n=8):
  d=datetime.now(TPE).date();return [(d-timedelta(days=i)).isoformat() for i in range(n-1,-1,-1)]
 def loop():
  OUT.mkdir(parents=True,exist_ok=True)
+ completed=set()
  while True:
   now=datetime.now(TPE)
   # Research archive is post-close only: zero intraday competition with A/B.
   if (now.hour,now.minute)>=(13,45):
-   for day in days():
-    try:build_day(day)
+   window=days()
+   completed.intersection_update(window)
+   for day in window:
+    if day in completed:
+     continue
+    try:
+     result=build_day(day)
+     # Today's events can arrive late; freeze today's archive only after
+     # the ordinary post-close maintenance window.
+     if result["status"]=="ok" and (day!=now.date().isoformat() or (now.hour,now.minute)>=(15,45)):
+      completed.add(day)
     except BaseException as ex:print(f"[F15 TRAJECTORY FAIL] {day} {type(ex).__name__}: {ex}",flush=True)
   time.sleep(900)
