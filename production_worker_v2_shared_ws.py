@@ -357,10 +357,12 @@ def daily_history_maintenance_loop():
     stage_day=None
     next_retry_at=0.0
     notified_day=None
+    line_accepted_at=None
     def save_state(day):
         _atomic_json(state_root/(day+".json"),{
-            "schema":"daily_maintenance_state_v1","date":day,
-            "stages":sorted(stage_done),"line_sent":notified_day==day})
+            "schema":"daily_maintenance_state_v2","date":day,
+            "stages":sorted(stage_done),"line_sent":notified_day==day,
+            "line_accepted_at":line_accepted_at})
     while True:
         n=now_tpe()
         day=n.date().isoformat()
@@ -368,10 +370,13 @@ def daily_history_maintenance_loop():
             stage_day=day
             state_path=state_root/(day+".json")
             state=json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
-            if state and (state.get("schema")!="daily_maintenance_state_v1" or state.get("date")!=day):
+            if state and (state.get("schema") not in ("daily_maintenance_state_v1","daily_maintenance_state_v2") or state.get("date")!=day):
                 raise RuntimeError("daily maintenance state identity/schema mismatch")
             stage_done=set(state.get("stages",[]))
             notified_day=day if state.get("line_sent") is True else None
+            # Legacy v1 records do not have a verified LINE acceptance time.
+            # Preserve their sent flag, but do not invent a restart countdown.
+            line_accepted_at=state.get("line_accepted_at") if state.get("schema")=="daily_maintenance_state_v2" else None
             completed_day=day if {"DAILY_K","F10"}.issubset(stage_done) and (not os.environ.get("A_DAILY_MAINT_LINE_REPORT","0")=="1" or notified_day==day) else None
             next_retry_at=0.0
             print(f"[SEQUENTIAL MAINT RESTORE] date={day} stages={sorted(stage_done)} line_sent={notified_day==day}",flush=True)
@@ -452,6 +457,7 @@ def daily_history_maintenance_loop():
                                     if exc.code!=409: raise
                                     print(f"[A DAILY MAINT LINE] already accepted day={day}",flush=True)
                                 notified_day=day
+                                line_accepted_at=now_tpe().isoformat()
                                 save_state(day)
                                 print(f"[A DAILY MAINT LINE] sent day={day} isolated={len(isolated)}",flush=True)
                             except Exception as exc:
