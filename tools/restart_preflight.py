@@ -20,7 +20,10 @@ def check(state, now):
     day = now.date().isoformat()
     if state.get("schema") != "daily_maintenance_state_v2" or state.get("date") != day:
         return False, "maintenance state missing, stale, or incompatible"
-    if not REQUIRED.issubset(set(state.get("stages", []))):
+    stages = state.get("stages")
+    if not isinstance(stages, list) or any(not isinstance(x, str) for x in stages):
+        return False, "invalid maintenance stage list"
+    if not REQUIRED.issubset(set(stages)):
         return False, "DAILY_K/F10 not complete"
     if state.get("line_sent") is not True:
         return False, "maintenance LINE not accepted"
@@ -36,7 +39,7 @@ def check(state, now):
         return False, "two-hour wait not satisfied"
     if state.get("f15_complete") is not True:
         return False, "F15 end-of-day not confirmed"
-    if state.get("active_trading_jobs") != 0:
+    if type(state.get("active_trading_jobs")) is not int or state["active_trading_jobs"] != 0:
         return False, "active trading jobs not confirmed idle"
     if state.get("disk_ok") is not True or state.get("database_ok") is not True:
         return False, "disk/database health not confirmed"
