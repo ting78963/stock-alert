@@ -20,7 +20,7 @@ class MemoryDiagnosticTests(unittest.TestCase):
         fn = next(n for n in TREE.body if isinstance(n, ast.FunctionDef) and n.name == "_rss_mib")
         namespace = {}
         exec(compile(ast.Module(body=[fn], type_ignores=[]), "<isolated>", "exec"), namespace)
-        with patch("builtins.open", mock_open(read_data="Name: python\\nVmRSS: 102400 kB\\n")):
+        with patch("builtins.open", mock_open(read_data="Name: python\nVmRSS: 102400 kB\n")):
             self.assertEqual(namespace["_rss_mib"](123), 100.0)
         with patch("builtins.open", side_effect=FileNotFoundError):
             self.assertIsNone(namespace["_rss_mib"](123))
