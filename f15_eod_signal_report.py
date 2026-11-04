@@ -129,10 +129,16 @@ def days():
  d=datetime.now(TPE).date();return [(d-timedelta(days=i)).isoformat() for i in range(7,-1,-1)]
 def loop():
  OUT.mkdir(parents=True,exist_ok=True)
+ completed=set()
  while True:
   n=datetime.now(TPE);today=n.date().isoformat()
-  for d in days():
-   if d==today and (n.hour,n.minute)<(13,40):continue
-   try:process_day(d,True)
+  window=days()
+  completed.intersection_update(window)
+  for d in window:
+   if d in completed or (d==today and (n.hour,n.minute)<(13,40)):continue
+   try:
+    result=process_day(d,True)
+    if result in ("sent","already_sent"):
+     completed.add(d)
    except BaseException as e:print(f"[F15 FAIL] {d} {type(e).__name__}: {e}",flush=True)
   time.sleep(300)

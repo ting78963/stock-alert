@@ -53,26 +53,57 @@ def build_one(day,e,M,key):
 def build_day(day):
  events=f15.load_events(day)
  if not events:return {"day":day,"status":"no_events","written":0,"skipped":0}
- M=runpy.run_path(str(f15.ENGINE),run_name="__f15_trajectory_engine__");key,_=M["find_key"]();written=skipped=0;manifest=[]
+ M=None;key=None;written=skipped=0;manifest=[]
  for e in events:
   sid=str(e["stock_id"]).zfill(4);cls=str(e["signal_class"]).upper();t0=nt(e["recognition_time"]);p=OUT/day/f"{sid}_{cls}_{t0.replace(':','')}.json"
   if p.exists():
    old=json.loads(p.read_text(encoding="utf-8"));ident=old.get("identity",{})
    if old.get("schema")!=SCHEMA or ident.get("date")!=day or ident.get("stock_id")!=sid or ident.get("signal_class")!=cls or ident.get("recognition_time")!=t0:raise RuntimeError(f"F15 trajectory identity conflict {p}")
    skipped+=1
-  else:atomic(p,build_one(day,e,M,key));written+=1
+  else:
+   if M is None:
+    M=runpy.run_path(str(f15.ENGINE),run_name="__f15_trajectory_engine__");key,_=M["find_key"]()
+   atomic(p,build_one(day,e,M,key));written+=1
   manifest.append(p.name)
  atomic(OUT/day/"manifest.json",{"schema":SCHEMA,"date":day,"files":sorted(manifest),"count":len(manifest),"updated_at_taipei":datetime.now(TPE).isoformat(timespec="seconds")})
  print(f"[F15 TRAJECTORY] {day} signals={len(events)} written={written} skipped={skipped}",flush=True);return {"day":day,"status":"ok","written":written,"skipped":skipped}
+def report_and_trajectory_complete(day):
+ # The LINE report is the day's published signal snapshot.
+ _,registry=f15.reg()
+ sent=registry["dates"].get(day)
+ if not isinstance(sent,dict):return False
+ expected=sent.get("total")
+ if not isinstance(expected,int) or expected<=0:return False
+ events=f15.load_events(day)
+ if len(events)!=expected:return False
+ manifest_path=OUT/day/"manifest.json"
+ if not manifest_path.is_file():return False
+ manifest=json.loads(manifest_path.read_text(encoding="utf-8"))
+ files=manifest.get("files")
+ if manifest.get("schema")!=SCHEMA or manifest.get("date")!=day or manifest.get("count")!=expected or not isinstance(files,list) or len(files)!=expected or len(set(files))!=expected:return False
+ actual={f"{str(e['stock_id']).zfill(4)}_{str(e['signal_class']).upper()}_{nt(e['recognition_time']).replace(':','')}.json" for e in events}
+ if set(files)!=actual:return False
+ return all((OUT/day/name).is_file() for name in files)
+
 def days(n=8):
  d=datetime.now(TPE).date();return [(d-timedelta(days=i)).isoformat() for i in range(n-1,-1,-1)]
 def loop():
  OUT.mkdir(parents=True,exist_ok=True)
+ completed=set()
  while True:
   now=datetime.now(TPE)
   # Research archive is post-close only: zero intraday competition with A/B.
   if (now.hour,now.minute)>=(13,45):
-   for day in days():
-    try:build_day(day)
+   window=days()
+   completed.intersection_update(window)
+   for day in window:
+    if day in completed:
+     continue
+    try:
+     result=build_day(day)
+     # Today's events can arrive late; freeze today's archive only after
+     # the ordinary post-close maintenance window.
+     if result["status"]=="ok" and report_and_trajectory_complete(day):
+      completed.add(day)
     except BaseException as ex:print(f"[F15 TRAJECTORY FAIL] {day} {type(ex).__name__}: {ex}",flush=True)
   time.sleep(900)
