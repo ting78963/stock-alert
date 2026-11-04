@@ -20,6 +20,14 @@ def ready():
 class RestartGateTests(unittest.TestCase):
     def test_eligible(self):
         self.assertTrue(mod.check(ready(), NOW)[0])
+    def test_rejects_market_hours_even_if_all_flags_true(self):
+        morning = NOW.replace(hour=10)
+        self.assertFalse(mod.check(ready(), morning)[0])
+
+    def test_rejects_late_night(self):
+        late = NOW.replace(hour=23, minute=10)
+        self.assertFalse(mod.check(ready(), late)[0])
+
     def test_wait(self):
         s = ready()
         s["line_accepted_at"] = "2026-11-05T17:30:00+08:00"
