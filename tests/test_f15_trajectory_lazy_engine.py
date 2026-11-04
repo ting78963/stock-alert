@@ -79,11 +79,11 @@ class TrajectoryLazyEngineTests(unittest.TestCase):
             return {"day": day, "status": "ok", "written": 0, "skipped": 1}
 
         with tempfile.TemporaryDirectory() as tmp:
-            with patch.object(mod, "OUT", Path(tmp)), patch.object(mod, "days", return_value=[today]), patch.object(mod, "datetime") as dt, patch.object(mod, "build_day", side_effect=fake_build), patch.object(mod.time, "sleep", side_effect=fake_sleep):
+            with patch.object(mod, "OUT", Path(tmp)), patch.object(mod, "days", return_value=[today]), patch.object(mod, "datetime") as dt, patch.object(mod, "build_day", side_effect=fake_build), patch.object(mod, "report_and_trajectory_complete", return_value=False), patch.object(mod.time, "sleep", side_effect=fake_sleep):
                 dt.now.return_value = clock
                 with self.assertRaises(StopLoop):
                     mod.loop()
-        self.assertEqual(attempts, [today])
+        self.assertEqual(attempts, [today, today, today])
 
     def test_complete_requires_sent_report_and_all_matching_files(self):
         day = "2026-11-05"
