@@ -341,6 +341,21 @@ def f10_maintenance_loop():
             first=False
         time.sleep(60)
 
+def daily_maintenance_snapshot(day, dbpath="/var/data/stock-alert/shared_history_stage_v1.sqlite3"):
+    """Read-only status: permit partial report only for a small, explicitly recorded isolation set."""
+    import sqlite3
+    with sqlite3.connect("file:"+dbpath+"?mode=ro",uri=True,timeout=3) as conn:
+        conn.execute("ATTACH DATABASE '/var/data/stock-alert/f10_baseline_v1.sqlite3' AS f10")
+        members={str(r[0]) for r in conn.execute("SELECT symbol FROM f10.member")}
+        covered={str(s) for s,through in conn.execute("SELECT symbol,covered_through FROM fetch_status") if str(through)>=day}
+        errors=conn.execute("SELECT symbol,error FROM fetch_error ORDER BY symbol").fetchall()
+        watched=conn.execute("SELECT symbol,last_probe_result,last_probe_day FROM suspension_watch ORDER BY symbol").fetchall()
+    bad={str(x[0]) for x in errors}
+    watch={str(x[0]) for x in watched}
+    pending=members-covered-bad-watch
+    safe=bool(members) and len(bad)<=max(10,len(members)//100) and not pending and (bad|watch)<=members and all(str(x[2])==day for x in watched)
+    return {"safe":safe,"universe":len(members),"covered":len(covered),"errors":errors,"watched":watched,"pending":len(pending)}
+
 def daily_history_maintenance_loop():
     """Opt-in post-close maintenance: independent daily K / F10, retry failures in 5m."""
     import subprocess
@@ -354,11 +369,13 @@ def daily_history_maintenance_loop():
     stage_day=None
     next_retry_at=0.0
     notified_day=None
+    daily_attempted=False
     while True:
         n=now_tpe()
         day=n.date().isoformat()
         if day!=stage_day:
             notified_day=None
+            daily_attempted=False
             stage_day=day
             stage_done=set()
             completed_day=None
@@ -382,14 +399,25 @@ def daily_history_maintenance_loop():
                         except OSError as exc:
                             print(f"[SEQUENTIAL MAINT] {name} launch failed {type(exc).__name__}: {exc}; other stage may proceed independently",flush=True)
                             continue
+                        if name=="DAILY_K":
+                            daily_attempted=True
                         if rc==0:
                             stage_done.add(name)
                             print(f"[SEQUENTIAL MAINT] {name} completed",flush=True)
                         else:
                             print(f"[SEQUENTIAL MAINT] {name} incomplete rc={rc}; other stage may proceed independently",flush=True)
-                    if len(stage_done)==len(tasks):
+                    all_done=len(stage_done)==len(tasks)
+                    partial=False
+                    if daily_attempted and "F10" in stage_done and not all_done:
+                        try:
+                            snapshot=daily_maintenance_snapshot(day)
+                            partial=snapshot["safe"] and bool(snapshot["errors"])
+                        except Exception as exc:
+                            print(f"[SEQUENTIAL MAINT] partial report gate unavailable: {type(exc).__name__}: {exc}",flush=True)
+                    if all_done:
                         completed_day=day
                         print(f"[SEQUENTIAL MAINT] ALL COMPLETED date={day}",flush=True)
+                    if all_done or partial:
                         if notified_day!=day and os.environ.get("A_DAILY_MAINT_LINE_REPORT","0")=="1":
                             try:
                                 import sqlite3, urllib.request, json
@@ -420,23 +448,23 @@ def daily_history_maintenance_loop():
                                     "body":{"type":"box","layout":"vertical","spacing":"md","contents":[
                                         {"type":"box","layout":"horizontal","spacing":"sm","contents":[stat("追蹤股票",f"{total:,} 檔"),stat("暫停交易觀察",f"{len(watched)} 檔")]},
                                         flex_text("維護執行結果","md","#173C32","bold"),
-                                        result_row("每日 K 線（DAILY_K）","✓ 完成"),
+                                        result_row("每日 K 線（DAILY_K）",f"⚠ {len(errors)} 檔隔離，持續重試" if partial else "✓ 完成"),
                                         result_row("F10 歷史資料","✓ 完成"),
                                         result_row("F10 維護階段","✓ 完成"),
                                         {"type":"box","layout":"vertical","backgroundColor":"#F1F5F2","cornerRadius":"md","paddingAll":"12px","contents":[flex_text("異常與觀察","sm","#173C32","bold"),flex_text(anomaly,"xs","#61786B")]},
                                         flex_text("辨識系統 · 自動維護","xxs","#83958A")
                                     ]}}
-                                body=json.dumps({"to":destination,"messages":[{"type":"flex","altText":f"每日資料維護 {day}：已完成，觀察 {len(watched)} 檔","contents":card}]},ensure_ascii=False).encode("utf-8")
+                                body=json.dumps({"to":destination,"messages":[{"type":"flex","altText":f"每日資料維護 {day}：{'部分完成，異常隔離' if partial else '已完成'}，觀察 {len(watched)} 檔","contents":card}]},ensure_ascii=False).encode("utf-8")
                                 req=urllib.request.Request("https://api.line.me/v2/bot/message/push",data=body,headers={"Authorization":"Bearer "+token,"Content-Type":"application/json"},method="POST")
                                 with urllib.request.urlopen(req,timeout=10) as response:
                                     if response.status!=200: raise RuntimeError("LINE push unsuccessful")
                                 notified_day=day
-                                print(f"[A DAILY MAINT LINE] sent day={day} isolated={len(isolated)}",flush=True)
+                                print(f"[A DAILY MAINT LINE] sent day={day} partial={partial} isolated={len(isolated)}",flush=True)
                             except Exception as exc:
                                 print(f"[A DAILY MAINT LINE] not sent: {type(exc).__name__}: {exc}",flush=True)
-                                completed_day=None  # Retry notification without rerunning completed maintenance stages.
+                                if all_done: completed_day=None  # Retry notification without rerunning completed maintenance stages.
                                 next_retry_at=time.monotonic()+300
-                    else:
+                    if not all_done:
                         print(f"[SEQUENTIAL MAINT] PENDING stages={','.join(name for name,_,_ in tasks if name not in stage_done)}; retry in 5m",flush=True)
                         next_retry_at=time.monotonic()+300
             except BaseException as exc:
