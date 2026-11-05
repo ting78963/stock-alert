@@ -243,10 +243,25 @@ def main():
                 error=None
                 done+=1
             if error:
-                failed+=1
-                with db:db.execute("INSERT INTO fetch_error VALUES(?,?,?) ON CONFLICT(symbol) DO UPDATE SET error=excluded.error,last_error_utc=excluded.last_error_utc",
-                    (sym,error[:400],dt.datetime.now(dt.timezone.utc).isoformat()))
-                print(f"[FAIL] {index}/{total} {sym} {error}",flush=True)
+                # Quarantine repeated missing-data failures only. This is not
+                # evidence of a confirmed trading halt.
+                repeatable=(error.startswith("HTTPError: 404 ") or
+                            "quarantined stock has no verified latest daily candle" in error)
+                prior=db.execute("SELECT error FROM fetch_error WHERE symbol=?",(sym,)).fetchone()
+                auto_limit=max(10,int(total*0.01))
+                if repeatable and prior and failed<auto_limit:
+                    with db:
+                        db.execute("INSERT OR IGNORE INTO suspension_watch(symbol,confirmed_source,confirmed_at_utc,last_probe_day,last_probe_result) VALUES(?,?,?,?,?)",
+                                   (sym,"auto-data-error-unverified",dt.datetime.now(dt.timezone.utc).isoformat(),end.isoformat(),"isolated:"+error[:160]))
+                        db.execute("DELETE FROM fetch_error WHERE symbol=?",(sym,))
+                    print(f"[DATA QUARANTINE] {sym} repeated missing daily data; unverified, daily probe only",flush=True)
+                    done+=1
+                    error=None
+                if error:
+                    failed+=1
+                    with db:db.execute("INSERT INTO fetch_error VALUES(?,?,?) ON CONFLICT(symbol) DO UPDATE SET error=excluded.error,last_error_utc=excluded.last_error_utc",
+                        (sym,error[:400],dt.datetime.now(dt.timezone.utc).isoformat()))
+                    print(f"[FAIL] {index}/{total} {sym} {error}",flush=True)
             elif index%25==0:print(f"[PROGRESS] {index}/{total} done={done} skipped={skipped} failed={failed}",flush=True)
         watch_pending=db.execute("SELECT COUNT(*) FROM suspension_watch").fetchone()[0]
         print(json.dumps({"status":"INCOMPLETE" if failed else ("WATCH_PENDING" if watch_pending else "COMPLETE"),"universe":total,"processed":done,"skipped":skipped,"failed":failed,"suspension_watch_pending":watch_pending,"database":str(a.db),"request_checked_through":end.isoformat(),"note":"Successful query coverage only, not proof of per-day trades or calendar completeness. Staging only; A/B/LINE unchanged"},ensure_ascii=False))
