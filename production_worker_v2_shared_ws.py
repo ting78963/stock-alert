@@ -341,11 +341,11 @@ def f10_maintenance_loop():
             first=False
         time.sleep(60)
 
-def daily_maintenance_snapshot(day, dbpath="/var/data/stock-alert/shared_history_stage_v1.sqlite3"):
+def daily_maintenance_snapshot(day, dbpath="/var/data/stock-alert/shared_history_stage_v1.sqlite3", f10path="/var/data/stock-alert/f10_baseline_v1.sqlite3"):
     """Read-only status: permit partial report only for a small, explicitly recorded isolation set."""
     import sqlite3
     with sqlite3.connect("file:"+dbpath+"?mode=ro",uri=True,timeout=3) as conn:
-        conn.execute("ATTACH DATABASE '/var/data/stock-alert/f10_baseline_v1.sqlite3' AS f10")
+        conn.execute("ATTACH DATABASE ? AS f10",(str(f10path),))
         members={str(r[0]) for r in conn.execute("SELECT symbol FROM f10.member")}
         covered={str(s) for s,through in conn.execute("SELECT symbol,covered_through FROM fetch_status") if str(through)>=day}
         errors=conn.execute("SELECT symbol,error FROM fetch_error ORDER BY symbol").fetchall()
