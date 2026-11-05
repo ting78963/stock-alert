@@ -1,0 +1,18 @@
+name: Daily maintenance isolation report regression
+on:
+  pull_request:
+    paths:
+      - 'production_worker_v2_shared_ws.py'
+      - 'tests/test_daily_maintenance_isolation_report.py'
+      - '.github/workflows/daily-maintenance-isolation-regression.yml'
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m unittest discover -s tests -p test_daily_maintenance_isolation_report.py -v
+      - run: python -m py_compile production_worker_v2_shared_ws.py
