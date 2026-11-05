@@ -257,9 +257,10 @@ def main():
             if error:
                 # Isolate the first per-symbol failure; do not block healthy
                 # stocks. Provider-wide failures are not individual stock faults.
-                provider_error=("HTTPError: 401 " in error or
-                                "HTTPError: 403 " in error or
-                                "HTTPError: 429 " in error or
+                provider_error=(error.startswith("HTTPError: 401 ") or
+                                error.startswith("HTTPError: 403 ") or
+                                error.startswith("HTTPError: 429 ") or
+                                any(error.startswith("HTTPError: "+str(code)+" ") for code in range(500,600)) or
                                 error.startswith("URLError:") or
                                 error.startswith("TimeoutError:"))
                 if not provider_error and auto_isolated<max(10,int(total*0.01)):
