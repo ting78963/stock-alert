@@ -98,6 +98,12 @@ def twse_suspension_status(symbol, day, timeout=12):
             return "twse-twtawu"
     return None
 
+def is_provider_failure(error):
+    """Do not treat a provider/network outage as a stock-specific fault."""
+    return (error.startswith(("HTTPError: 401 ","HTTPError: 403 ","HTTPError: 429 ",
+                              "URLError:","TimeoutError:")) or
+            any(error.startswith("HTTPError: "+str(code)+" ") for code in range(500,600)))
+
 def main():
     p=argparse.ArgumentParser()
     p.add_argument("--asof",required=True,help="Exclusive YYYY-MM-DD, usually next market date")
@@ -242,11 +248,7 @@ def main():
                 print(f"[SUSPENSION WATCH] {sym} daily probe HTTP 404; remains watched",flush=True)
                 error=None
                 done+=1
-            if error and watched and not (error.startswith("HTTPError: 401 ") or
-                                          error.startswith("HTTPError: 403 ") or
-                                          error.startswith("HTTPError: 429 ") or
-                                          error.startswith("URLError:") or
-                                          error.startswith("TimeoutError:")):
+            if error and watched and not is_provider_failure(error):
                 with db:
                     db.execute("UPDATE suspension_watch SET last_probe_day=?,last_probe_result=? WHERE symbol=?",
                                (end.isoformat(),"probe_error:"+error[:160],sym))
@@ -257,12 +259,7 @@ def main():
             if error:
                 # Isolate the first per-symbol failure; do not block healthy
                 # stocks. Provider-wide failures are not individual stock faults.
-                provider_error=(error.startswith("HTTPError: 401 ") or
-                                error.startswith("HTTPError: 403 ") or
-                                error.startswith("HTTPError: 429 ") or
-                                any(error.startswith("HTTPError: "+str(code)+" ") for code in range(500,600)) or
-                                error.startswith("URLError:") or
-                                error.startswith("TimeoutError:"))
+                provider_error=is_provider_failure(error)
                 if not provider_error and auto_isolated<max(10,int(total*0.01)):
                     with db:
                         db.execute("INSERT OR IGNORE INTO suspension_watch(symbol,confirmed_source,confirmed_at_utc,last_probe_day,last_probe_result) VALUES(?,?,?,?,?)",
