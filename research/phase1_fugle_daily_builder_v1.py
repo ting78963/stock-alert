@@ -159,22 +159,6 @@ def main():
                                (sym,"operator-confirmed-2026-10-30",dt.datetime.now(dt.timezone.utc).isoformat()))
                 db.execute("INSERT INTO suspension_meta(key,value) VALUES('operator_halts_20261030_v1',?)",
                            (dt.datetime.now(dt.timezone.utc).isoformat(),))
-        # Operator confirmed these six symbols are halted on 2026-11-05.
-        # Seed once only: after a verified trading resumption removes a symbol
-        # from suspension_watch, future maintenance must not re-isolate it.
-        marker="operator_halts_20261105_v1"
-        if not db.execute("SELECT 1 FROM suspension_meta WHERE key=?",(marker,)).fetchone():
-            halted={"2949","3191","3226","3714","4534","5276"}
-            if not halted.issubset(set(symbols)):
-                raise SystemExit("STOP: 2026-11-05 operator-confirmed halts outside member universe")
-            with db:
-                for sym in sorted(halted):
-                    db.execute("INSERT OR IGNORE INTO suspension_watch(symbol,confirmed_source,confirmed_at_utc) VALUES(?,?,?)",
-                               (sym,"operator-confirmed-2026-11-05",dt.datetime.now(dt.timezone.utc).isoformat()))
-                    db.execute("DELETE FROM fetch_error WHERE symbol=?",(sym,))
-                db.execute("INSERT INTO suspension_meta(key,value) VALUES(?,?)",
-                           (marker,dt.datetime.now(dt.timezone.utc).isoformat()))
-            print("[SUSPENSION WATCH] operator-confirmed 2026-11-05 six symbols isolated",flush=True)
         total=len(symbols); done=0; failed=0; skipped=0; auto_isolated=0
         for index,sym in enumerate(symbols[:a.limit or None],1):
             existing=db.execute("SELECT covered_through FROM fetch_status WHERE symbol=?",(sym,)).fetchone()
