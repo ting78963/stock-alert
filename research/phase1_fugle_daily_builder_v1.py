@@ -242,6 +242,18 @@ def main():
                 print(f"[SUSPENSION WATCH] {sym} daily probe HTTP 404; remains watched",flush=True)
                 error=None
                 done+=1
+            if error and watched and not (error.startswith("HTTPError: 401 ") or
+                                          error.startswith("HTTPError: 403 ") or
+                                          error.startswith("HTTPError: 429 ") or
+                                          error.startswith("URLError:") or
+                                          error.startswith("TimeoutError:")):
+                with db:
+                    db.execute("UPDATE suspension_watch SET last_probe_day=?,last_probe_result=? WHERE symbol=?",
+                               (end.isoformat(),"probe_error:"+error[:160],sym))
+                    db.execute("DELETE FROM fetch_error WHERE symbol=?",(sym,))
+                print(f"[DATA QUARANTINE] {sym} daily probe failed; remains isolated",flush=True)
+                done+=1
+                error=None
             if error:
                 # Isolate the first per-symbol failure; do not block healthy
                 # stocks. Provider-wide failures are not individual stock faults.
