@@ -169,7 +169,7 @@ def main():
                 db.execute("INSERT INTO suspension_meta(key,value) VALUES(?,?)",
                            (marker,dt.datetime.now(dt.timezone.utc).isoformat()))
             print("[SUSPENSION WATCH] operator-confirmed 2026-11-05 six symbols isolated",flush=True)
-        total=len(symbols); done=0; failed=0; skipped=0
+        total=len(symbols); done=0; failed=0; skipped=0; auto_isolated=0
         for index,sym in enumerate(symbols[:a.limit or None],1):
             existing=db.execute("SELECT covered_through FROM fetch_status WHERE symbol=?",(sym,)).fetchone()
             watched=db.execute("SELECT last_probe_day FROM suspension_watch WHERE symbol=?",(sym,)).fetchone()
@@ -249,13 +249,14 @@ def main():
                             "quarantined stock has no verified latest daily candle" in error)
                 prior=db.execute("SELECT error FROM fetch_error WHERE symbol=?",(sym,)).fetchone()
                 auto_limit=max(10,int(total*0.01))
-                if repeatable and prior and failed<auto_limit:
+                if repeatable and prior and auto_isolated<auto_limit:
                     with db:
                         db.execute("INSERT OR IGNORE INTO suspension_watch(symbol,confirmed_source,confirmed_at_utc,last_probe_day,last_probe_result) VALUES(?,?,?,?,?)",
                                    (sym,"auto-data-error-unverified",dt.datetime.now(dt.timezone.utc).isoformat(),end.isoformat(),"isolated:"+error[:160]))
                         db.execute("DELETE FROM fetch_error WHERE symbol=?",(sym,))
                     print(f"[DATA QUARANTINE] {sym} repeated missing daily data; unverified, daily probe only",flush=True)
                     done+=1
+                    auto_isolated+=1
                     error=None
                 if error:
                     failed+=1
