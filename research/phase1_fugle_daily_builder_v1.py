@@ -243,25 +243,27 @@ def main():
                 error=None
                 done+=1
             if error:
-                # Quarantine repeated missing-data failures only. This is not
-                # evidence of a confirmed trading halt.
-                repeatable=(error.startswith("HTTPError: 404 ") or
-                            "quarantined stock has no verified latest daily candle" in error)
-                prior=db.execute("SELECT error FROM fetch_error WHERE symbol=?",(sym,)).fetchone()
-                auto_limit=max(10,int(total*0.01))
-                if repeatable and prior and auto_isolated<auto_limit:
+                # Isolate the first per-symbol failure; do not block healthy
+                # stocks. Provider-wide failures are not individual stock faults.
+                provider_error=("HTTPError: 401 " in error or
+                                "HTTPError: 403 " in error or
+                                "HTTPError: 429 " in error or
+                                error.startswith("URLError:") or
+                                error.startswith("TimeoutError:"))
+                if not provider_error and auto_isolated<max(10,int(total*0.01)):
                     with db:
                         db.execute("INSERT OR IGNORE INTO suspension_watch(symbol,confirmed_source,confirmed_at_utc,last_probe_day,last_probe_result) VALUES(?,?,?,?,?)",
                                    (sym,"auto-data-error-unverified",dt.datetime.now(dt.timezone.utc).isoformat(),end.isoformat(),"isolated:"+error[:160]))
                         db.execute("DELETE FROM fetch_error WHERE symbol=?",(sym,))
-                    print(f"[DATA QUARANTINE] {sym} repeated missing daily data; unverified, daily probe only",flush=True)
+                    print(f"[DATA QUARANTINE] {sym} first per-symbol error: {error}",flush=True)
                     done+=1
                     auto_isolated+=1
                     error=None
                 if error:
                     failed+=1
-                    with db:db.execute("INSERT INTO fetch_error VALUES(?,?,?) ON CONFLICT(symbol) DO UPDATE SET error=excluded.error,last_error_utc=excluded.last_error_utc",
-                        (sym,error[:400],dt.datetime.now(dt.timezone.utc).isoformat()))
+                    with db:
+                        db.execute("INSERT INTO fetch_error VALUES(?,?,?) ON CONFLICT(symbol) DO UPDATE SET error=excluded.error,last_error_utc=excluded.last_error_utc",
+                            (sym,error[:400],dt.datetime.now(dt.timezone.utc).isoformat()))
                     print(f"[FAIL] {index}/{total} {sym} {error}",flush=True)
             elif index%25==0:print(f"[PROGRESS] {index}/{total} done={done} skipped={skipped} failed={failed}",flush=True)
         watch_pending=db.execute("SELECT COUNT(*) FROM suspension_watch").fetchone()[0]
