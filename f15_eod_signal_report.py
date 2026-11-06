@@ -129,9 +129,16 @@ def days():
  d=datetime.now(TPE).date();return [(d-timedelta(days=i)).isoformat() for i in range(7,-1,-1)]
 def loop():
  OUT.mkdir(parents=True,exist_ok=True)
+ # Completed LINE reports are authoritative across process restarts.
+ # Avoid repeatedly rebuilding historical dates after an OOM restart.
  completed=set()
  while True:
   n=datetime.now(TPE);today=n.date().isoformat()
+  try:
+   _,sent_registry=reg()
+   completed.update(sent_registry['dates'].keys())
+  except Exception as e:
+   print(f'[F15 REGISTRY READ FAIL] {type(e).__name__}: {e}',flush=True)
   window=days()
   completed.intersection_update(window)
   for d in window:
