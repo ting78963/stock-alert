@@ -356,6 +356,43 @@ def daily_maintenance_snapshot(day, dbpath="/var/data/stock-alert/shared_history
     safe=bool(members) and len(bad)<=max(10,len(members)//100) and not pending and (bad|watch)<=members and all(str(x[2])==day for x in watched)
     return {"safe":safe,"universe":len(members),"covered":len(covered),"errors":errors,"watched":watched,"pending":len(pending)}
 
+
+def maybe_restart_after_maintenance(day, stage_done, notified_at):
+    """Restart at most once after all post-close work, never during a running stage."""
+    if not notified_at or stage_done != {"DAILY_K", "F10"}:
+        return
+    now=now_tpe()
+    if now.date().isoformat()!=day or not (17 <= now.hour < 23):
+        return
+    from datetime import datetime as _datetime, timedelta as _timedelta
+    if now < _datetime.fromisoformat(notified_at) + _timedelta(hours=2):
+        return
+    import f15_trajectory_store
+    if not f15_trajectory_store.report_and_trajectory_complete(day):
+        return
+    key=os.environ.get("RENDER_API_KEY","").strip()
+    if not key:
+        print("[DAILY RESTART] skipped: RENDER_API_KEY unavailable",flush=True)
+        return
+    marker=Path("/var/data/stock-alert")/"daily_restart"/f"{day}.json"
+    if marker.exists():
+        return
+    import urllib.request
+    service="srv-dasvnou0tbcc7399tl90"
+    req=urllib.request.Request(
+        f"https://api.render.com/v1/services/{service}/restart",
+        data=b"{}",method="POST",
+        headers={"Authorization":f"Bearer {key}","Content-Type":"application/json"})
+    # Persist the attempt before requesting restart: prevents a restart loop.
+    marker.parent.mkdir(parents=True,exist_ok=True)
+    _atomic_json(marker,{"day":day,"requested_at":now.isoformat(),"status":"requested"})
+    try:
+        with urllib.request.urlopen(req,timeout=15) as response:
+            print(f"[DAILY RESTART] requested day={day} http={response.status}",flush=True)
+    except Exception as exc:
+        print(f"[DAILY RESTART] request failed {type(exc).__name__}: {exc}",flush=True)
+        # Fail closed: no automatic retry after an ambiguous API response.
+
 def daily_history_maintenance_loop():
     """Opt-in post-close maintenance: independent daily K / F10, retry failures in 5m."""
     import subprocess
@@ -369,12 +406,14 @@ def daily_history_maintenance_loop():
     stage_day=None
     next_retry_at=0.0
     notified_day=None
+    notified_at=None
     daily_attempted=False
     while True:
         n=now_tpe()
         day=n.date().isoformat()
         if day!=stage_day:
             notified_day=None
+            notified_at=None
             daily_attempted=False
             stage_day=day
             stage_done=set()
@@ -459,6 +498,7 @@ def daily_history_maintenance_loop():
                                 with urllib.request.urlopen(req,timeout=10) as response:
                                     if response.status!=200: raise RuntimeError("LINE push unsuccessful")
                                 notified_day=day
+                                notified_at=now_tpe().isoformat()
                                 print(f"[A DAILY MAINT LINE] sent day={day} partial={partial} isolated={len(isolated)}",flush=True)
                             except Exception as exc:
                                 print(f"[A DAILY MAINT LINE] not sent: {type(exc).__name__}: {exc}",flush=True)
@@ -470,6 +510,10 @@ def daily_history_maintenance_loop():
             except BaseException as exc:
                 next_retry_at=time.monotonic()+300
                 print(f"[SEQUENTIAL MAINT] FAIL {type(exc).__name__}: {exc}; retry in 5m",flush=True)
+        try:
+            maybe_restart_after_maintenance(day,stage_done,notified_at)
+        except Exception as exc:
+            print(f"[DAILY RESTART] check failed {type(exc).__name__}: {exc}",flush=True)
         time.sleep(60)
 
 def self_test():
