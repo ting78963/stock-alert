@@ -90,6 +90,14 @@ def days(n=8):
 def loop():
  OUT.mkdir(parents=True,exist_ok=True)
  completed=set()
+ # Check persisted completed days once on boot, not every polling cycle.
+ # If a day is incomplete or unreadable it remains eligible for repair.
+ for old_day in days():
+  try:
+   if report_and_trajectory_complete(old_day):
+    completed.add(old_day)
+  except Exception as e:
+   print(f'[F15 TRAJECTORY VERIFY FAIL] {old_day} {type(e).__name__}: {e}',flush=True)
  while True:
   now=datetime.now(TPE)
   # Research archive is post-close only: zero intraday competition with A/B.
