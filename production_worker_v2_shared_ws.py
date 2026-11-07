@@ -370,28 +370,35 @@ def maybe_restart_after_maintenance(day, stage_done, notified_at):
     import f15_trajectory_store
     if not f15_trajectory_store.report_and_trajectory_complete(day):
         return
-    key=os.environ.get("RENDER_API_KEY","").strip()
-    if not key:
-        print("[DAILY RESTART] skipped: RENDER_API_KEY unavailable",flush=True)
+    from daily_restart_coordination import archive_restart_lock
+    if not archive_restart_lock.acquire(blocking=False):
+        print("[DAILY RESTART] archive busy; defer",flush=True)
         return
-    marker=Path("/var/data/stock-alert")/"daily_restart"/f"{day}.json"
-    if marker.exists():
-        return
-    import urllib.request
-    service="srv-dasvnou0tbcc7399tl90"
-    req=urllib.request.Request(
-        f"https://api.render.com/v1/services/{service}/restart",
-        data=b"{}",method="POST",
-        headers={"Authorization":f"Bearer {key}","Content-Type":"application/json"})
-    # Persist the attempt before requesting restart: prevents a restart loop.
-    marker.parent.mkdir(parents=True,exist_ok=True)
-    _atomic_json(marker,{"day":day,"requested_at":now.isoformat(),"status":"requested"})
     try:
-        with urllib.request.urlopen(req,timeout=15) as response:
-            print(f"[DAILY RESTART] requested day={day} http={response.status}",flush=True)
-    except Exception as exc:
-        print(f"[DAILY RESTART] request failed {type(exc).__name__}: {exc}",flush=True)
-        # Fail closed: no automatic retry after an ambiguous API response.
+        key=os.environ.get("RENDER_API_KEY","").strip()
+        if not key:
+            print("[DAILY RESTART] skipped: RENDER_API_KEY unavailable",flush=True)
+            return
+        marker=Path("/var/data/stock-alert")/"daily_restart"/f"{day}.json"
+        if marker.exists():
+            return
+        import urllib.request
+        service="srv-dasvnou0tbcc7399tl90"
+        req=urllib.request.Request(
+            f"https://api.render.com/v1/services/{service}/restart",
+            data=b"{}",method="POST",
+            headers={"Authorization":f"Bearer {key}","Content-Type":"application/json"})
+        # Persist the attempt before requesting restart: prevents a restart loop.
+        marker.parent.mkdir(parents=True,exist_ok=True)
+        _atomic_json(marker,{"day":day,"requested_at":now.isoformat(),"status":"requested"})
+        try:
+            with urllib.request.urlopen(req,timeout=15) as response:
+                print(f"[DAILY RESTART] requested day={day} http={response.status}",flush=True)
+        except Exception as exc:
+            print(f"[DAILY RESTART] request failed {type(exc).__name__}: {exc}",flush=True)
+            # Fail closed: no automatic retry after an ambiguous API response.
+    finally:
+        archive_restart_lock.release()
 
 def daily_history_maintenance_loop():
     """Opt-in post-close maintenance: independent daily K / F10, retry failures in 5m."""
