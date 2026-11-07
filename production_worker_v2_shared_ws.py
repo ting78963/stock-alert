@@ -537,12 +537,40 @@ def send_one_time_maintenance_test():
     except Exception as exc:
         print(f"[MAINT FLEX TEST] NOT SENT: {type(exc).__name__}: {exc}",flush=True)
 
+# Read-only RSS sampling; disabled unless explicitly enabled.
+_a_pid = None
+
+def _rss_mib(pid):
+    try:
+        with open(f"/proc/{pid}/status", encoding="ascii") as stream:
+            for line in stream:
+                if line.startswith("VmRSS:"):
+                    return round(int(line.split()[1]) / 1024, 1)
+    except (OSError, ValueError, IndexError):
+        pass
+    return None
+
+def memory_diag_loop():
+    while True:
+        try:
+            with _lock:
+                active = len(_runners)
+                queued = sum(q.qsize() for q in _queues.values())
+                pid = _a_pid
+            print(f"[MEM DIAG] worker_mib={_rss_mib(os.getpid())} a_mib={_rss_mib(pid) if pid else None} b_active={active} b_queued={queued} a_pid={pid}", flush=True)
+        except Exception as exc:
+            print(f"[MEM DIAG ERROR] {type(exc).__name__}: {exc}", flush=True)
+        time.sleep(60)
+
 def main():
     ap=argparse.ArgumentParser();ap.add_argument("--self-test",action="store_true");a=ap.parse_args()
     if a.self_test:self_test();return
     self_test()
     send_one_time_maintenance_test()
-    preflight();STATE_ROOT.mkdir(parents=True,exist_ok=True);f14_bootstrap(now_tpe().date().isoformat());threading.Thread(target=f10_maintenance_loop,name="f10-maint",daemon=True).start();threading.Thread(target=daily_history_maintenance_loop,name="a-daily-maint",daemon=True).start();wait_session()
+    preflight();STATE_ROOT.mkdir(parents=True,exist_ok=True);f14_bootstrap(now_tpe().date().isoformat());
+    if os.environ.get("MEM_DIAG_ENABLED", "0") == "1":
+        threading.Thread(target=memory_diag_loop, name="memory-diagnostics", daemon=True).start()
+    threading.Thread(target=f10_maintenance_loop,name="f10-maint",daemon=True).start();threading.Thread(target=daily_history_maintenance_loop,name="a-daily-maint",daemon=True).start();wait_session()
     threading.Thread(target=serve,daemon=True).start()
     threading.Thread(target=shared_ws_loop,daemon=True).start()
     threading.Thread(target=clock_loop,daemon=True).start()
@@ -563,6 +591,9 @@ def main():
             continue
         print(f"[A HISTORY PREFLIGHT PASS] last_completed={a_env['A_LAST_COMPLETED_SESSION']}",flush=True)
         p=subprocess.Popen([sys.executable,str(A),"--interval","5","--bridge-url",bridge],cwd=str(BASE),env=a_env)
-        rc=p.wait();print(f"[A EXIT] rc={rc}; restart in 10s",flush=True);time.sleep(10)
+        global _a_pid
+        _a_pid = p.pid
+        rc=p.wait();
+        _a_pid = None;print(f"[A EXIT] rc={rc}; restart in 10s",flush=True);time.sleep(10)
 
 if __name__=="__main__":main()

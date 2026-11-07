@@ -1,0 +1,21 @@
+name: Memory diagnostics isolated tests
+on:
+  push:
+    branches:
+      - diagnostic/worker-memory-20261104
+  pull_request:
+    paths:
+      - 'production_worker_v2_shared_ws.py'
+      - 'test_worker_memory_diag.py'
+      - '.github/workflows/memory-diagnostic-tests.yml'
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Run isolated memory diagnostics tests
+        run: python -m unittest -v test_worker_memory_diag.py
