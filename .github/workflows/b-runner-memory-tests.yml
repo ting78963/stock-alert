@@ -1,0 +1,19 @@
+name: B runner memory isolation tests
+on:
+  push:
+    branches:
+      - fix/b-runner-memory-20261104
+  pull_request:
+    paths:
+      - production_worker_v2_shared_ws.py
+      - test_b_runner_module_cache.py
+      - .github/workflows/b-runner-memory-tests.yml
+jobs:
+  isolated:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m unittest -v test_b_runner_module_cache.py

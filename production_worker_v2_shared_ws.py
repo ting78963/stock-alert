@@ -97,7 +97,17 @@ def preflight():
     if LINE_SEND and not (os.environ.get("GROUP_ID","").strip() or os.environ.get("LINE_TO_ID","").strip()):
         raise RuntimeError("LINE destination missing")
 
-def runner_module(): return runpy.run_path(str(BR),run_name="__shared_b_runner__")
+# The B runner source defines classes/functions only at import time. Re-executing
+# the whole source for every discovered stock retains another set of function
+# globals while that stock is tracked. Load once per worker process instead.
+_runner_module_cache = None
+_runner_module_lock = threading.Lock()
+def runner_module():
+    global _runner_module_cache
+    with _runner_module_lock:
+        if _runner_module_cache is None:
+            _runner_module_cache = runpy.run_path(str(BR),run_name="__shared_b_runner__")
+        return _runner_module_cache
 
 def b_time_expired(now=None):
     n=now or now_tpe()
