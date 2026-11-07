@@ -50,6 +50,14 @@ class RestartTests(unittest.TestCase):
         Clock.current=datetime.datetime(2026,11,6,23,0,tzinfo=TPE)
         try:self.assertEqual(self.call(),0)
         finally:Clock.current=datetime.datetime(2026,11,6,19,0,tzinfo=TPE)
+    def test_archive_busy(self):
+        from daily_restart_coordination import archive_restart_lock
+        archive_restart_lock.acquire()
+        try:
+            self.assertEqual(self.call(),0)
+            self.assertFalse(self.marker.exists())
+        finally:
+            archive_restart_lock.release()
     def test_once_only(self):
         self.assertEqual(self.call(),1)
         self.assertEqual(self.call(),0)
