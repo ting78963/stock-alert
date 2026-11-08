@@ -33,7 +33,7 @@ class RestartTests(unittest.TestCase):
         self.ctx={"now_tpe":Clock.now,"Path":FakePath,"os":__import__("os"),
                   "f15_trajectory_store":None,
                   "_atomic_json":lambda p,x:p.write_text(__import__("json").dumps(x)),
-                  "print":lambda *a,**k:None}
+                  "print":lambda *a,**k:None,"_RESTART_PROCESS_TOKEN":"test-worker-token"}
         exec(MODULE,self.ctx)
     def call(self,stages={"DAILY_K","F10"},notice="2026-11-06T16:00:00+08:00"):
         with patch.dict("sys.modules",{"f15_trajectory_store":MagicMock(report_and_trajectory_complete=lambda day:self.complete)}),patch.dict("os.environ",{"RENDER_API_KEY":"test-only"},clear=False),patch("urllib.request.urlopen") as urlopen:

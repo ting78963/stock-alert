@@ -357,6 +357,47 @@ def daily_maintenance_snapshot(day, dbpath="/var/data/stock-alert/shared_history
     return {"safe":safe,"universe":len(members),"covered":len(covered),"errors":errors,"watched":watched,"pending":len(pending)}
 
 
+_RESTART_PROCESS_TOKEN = os.urandom(16).hex()
+
+def _restart_line_notice(day, status, detail):
+    """Send only to recognition LINE; never fall back to GROUP_ID."""
+    import urllib.request
+    token=(os.environ.get("LINE_CHANNEL_ACCESS_TOKEN","") or os.environ.get("LINE_TOKEN","")).strip()
+    dest=os.environ.get("LINE_TO_ID","").strip()
+    if not token or not dest:
+        print("[DAILY RESTART LINE] unavailable: recognition credentials missing",flush=True)
+        return False
+    message=f"辨識系統每日 Restart｜{day}\n{status}\n{detail}"
+    payload=json.dumps({"to":dest,"messages":[{"type":"text","text":message}]},ensure_ascii=False).encode("utf-8")
+    req=urllib.request.Request("https://api.line.me/v2/bot/message/push",data=payload,
+        headers={"Authorization":"Bearer "+token,"Content-Type":"application/json"},method="POST")
+    try:
+        with urllib.request.urlopen(req,timeout=10) as response:
+            if response.status!=200:raise RuntimeError(f"LINE HTTP {response.status}")
+        print(f"[DAILY RESTART LINE] sent day={day} status={status}",flush=True)
+        return True
+    except Exception as exc:
+        print(f"[DAILY RESTART LINE] failed {type(exc).__name__}: {exc}",flush=True)
+        return False
+
+def _restart_post_boot_check():
+    """Report a requested restart only after a new process passes its startup self-test."""
+    root=Path("/var/data/stock-alert")/"daily_restart"
+    if not root.is_dir():return
+    for marker in sorted(root.glob("*.json"),reverse=True)[:2]:
+        try:
+            state=json.loads(marker.read_text(encoding="utf-8"))
+            if state.get("status") not in {"requested","accepted"}:continue
+            if not state.get("process_token") or state["process_token"]==_RESTART_PROCESS_TOKEN:continue
+            # This process must have started after the accepted request.
+            requested=datetime.fromisoformat(state["requested_at"])
+            if not (__import__("datetime").timedelta(seconds=0) <= now_tpe() - requested <= __import__("datetime").timedelta(hours=24)):continue
+            if _restart_line_notice(state["day"],"Worker 啟動檢查通過","先前已發出 Restart 請求；新程序啟動且自我測試通過"):
+                state["status"]="verified"
+                _atomic_json(marker,state)
+        except Exception as exc:
+            print(f"[DAILY RESTART] post-boot verification failed {type(exc).__name__}: {exc}",flush=True)
+
 def maybe_restart_after_maintenance(day, stage_done, notified_at):
     """Restart at most once after all post-close work, never during a running stage."""
     if not notified_at or stage_done != {"DAILY_K", "F10"}:
@@ -390,13 +431,18 @@ def maybe_restart_after_maintenance(day, stage_done, notified_at):
             headers={"Authorization":f"Bearer {key}","Content-Type":"application/json"})
         # Persist the attempt before requesting restart: prevents a restart loop.
         marker.parent.mkdir(parents=True,exist_ok=True)
-        _atomic_json(marker,{"day":day,"requested_at":now.isoformat(),"status":"requested"})
+        _atomic_json(marker,{"day":day,"requested_at":now.isoformat(),"status":"requested","process_token":_RESTART_PROCESS_TOKEN})
         try:
             with urllib.request.urlopen(req,timeout=15) as response:
-                print(f"[DAILY RESTART] requested day={day} http={response.status}",flush=True)
+                code=response.status
+            if not 200 <= code < 300:raise RuntimeError(f"Render HTTP {code}")
+            _atomic_json(marker,{"day":day,"requested_at":now.isoformat(),"status":"accepted","process_token":_RESTART_PROCESS_TOKEN})
+            print(f"[DAILY RESTART] accepted day={day} http={code}",flush=True)
         except Exception as exc:
-            print(f"[DAILY RESTART] request failed {type(exc).__name__}: {exc}",flush=True)
-            # Fail closed: no automatic retry after an ambiguous API response.
+            # A timeout may mean Render accepted the request and killed this process.
+            # Keep the pre-request marker so the next boot can report the outcome.
+            print(f"[DAILY RESTART] request uncertain {type(exc).__name__}: {exc}",flush=True)
+            _restart_line_notice(day,"重啟請求結果未確認",f"{type(exc).__name__}；不自動重試")
     finally:
         archive_restart_lock.release()
 
@@ -593,7 +639,9 @@ def main():
     if a.self_test:self_test();return
     self_test()
     send_one_time_maintenance_test()
-    preflight();STATE_ROOT.mkdir(parents=True,exist_ok=True);f14_bootstrap(now_tpe().date().isoformat());threading.Thread(target=f10_maintenance_loop,name="f10-maint",daemon=True).start();threading.Thread(target=daily_history_maintenance_loop,name="a-daily-maint",daemon=True).start();wait_session()
+    preflight();STATE_ROOT.mkdir(parents=True,exist_ok=True);f14_bootstrap(now_tpe().date().isoformat());
+    _restart_post_boot_check()
+    threading.Thread(target=f10_maintenance_loop,name="f10-maint",daemon=True).start();threading.Thread(target=daily_history_maintenance_loop,name="a-daily-maint",daemon=True).start();wait_session()
     threading.Thread(target=serve,daemon=True).start()
     threading.Thread(target=shared_ws_loop,daemon=True).start()
     threading.Thread(target=clock_loop,daemon=True).start()

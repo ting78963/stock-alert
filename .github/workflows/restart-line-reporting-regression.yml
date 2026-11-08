@@ -1,0 +1,23 @@
+name: Restart LINE reporting regression
+on:
+  pull_request:
+    paths:
+      - production_worker_v2_shared_ws.py
+      - test_daily_restart_reporting.py
+      - test_daily_safe_restart.py
+      - .github/workflows/restart-line-reporting-regression.yml
+  workflow_dispatch:
+
+jobs:
+  offline-restart-reporting:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Verify syntax
+        run: python -m py_compile production_worker_v2_shared_ws.py test_daily_restart_reporting.py
+      - name: Run offline restart reporting tests
+        run: python -m unittest -v test_daily_restart_reporting.py test_daily_safe_restart.py
