@@ -357,6 +357,8 @@ def daily_maintenance_snapshot(day, dbpath="/var/data/stock-alert/shared_history
     return {"safe":safe,"universe":len(members),"covered":len(covered),"errors":errors,"watched":watched,"pending":len(pending)}
 
 
+_RESTART_PROCESS_TOKEN = os.urandom(16).hex()
+
 def _restart_line_notice(day, status, detail):
     """Send only to recognition LINE; never fall back to GROUP_ID."""
     import urllib.request
@@ -386,6 +388,7 @@ def _restart_post_boot_check():
         try:
             state=json.loads(marker.read_text(encoding="utf-8"))
             if state.get("status") not in {"requested","accepted"}:continue
+            if not state.get("process_token") or state["process_token"]==_RESTART_PROCESS_TOKEN:continue
             # This process must have started after the accepted request.
             requested=datetime.fromisoformat(state["requested_at"])
             if not (__import__("datetime").timedelta(seconds=0) <= now_tpe() - requested <= __import__("datetime").timedelta(hours=24)):continue
@@ -428,12 +431,12 @@ def maybe_restart_after_maintenance(day, stage_done, notified_at):
             headers={"Authorization":f"Bearer {key}","Content-Type":"application/json"})
         # Persist the attempt before requesting restart: prevents a restart loop.
         marker.parent.mkdir(parents=True,exist_ok=True)
-        _atomic_json(marker,{"day":day,"requested_at":now.isoformat(),"status":"requested"})
+        _atomic_json(marker,{"day":day,"requested_at":now.isoformat(),"status":"requested","process_token":_RESTART_PROCESS_TOKEN})
         try:
             with urllib.request.urlopen(req,timeout=15) as response:
                 code=response.status
             if not 200 <= code < 300:raise RuntimeError(f"Render HTTP {code}")
-            _atomic_json(marker,{"day":day,"requested_at":now.isoformat(),"status":"accepted"})
+            _atomic_json(marker,{"day":day,"requested_at":now.isoformat(),"status":"accepted","process_token":_RESTART_PROCESS_TOKEN})
             print(f"[DAILY RESTART] accepted day={day} http={code}",flush=True)
         except Exception as exc:
             # A timeout may mean Render accepted the request and killed this process.
