@@ -365,7 +365,7 @@ def _restart_line_notice(day, status, detail):
     if not token or not dest:
         print("[DAILY RESTART LINE] unavailable: recognition credentials missing",flush=True)
         return False
-    message=f"辨識系統每日 Restart｜{day}\\n{status}\\n{detail}"
+    message=f"辨識系統每日 Restart｜{day}\n{status}\n{detail}"
     payload=json.dumps({"to":dest,"messages":[{"type":"text","text":message}]},ensure_ascii=False).encode("utf-8")
     req=urllib.request.Request("https://api.line.me/v2/bot/message/push",data=payload,
         headers={"Authorization":"Bearer "+token,"Content-Type":"application/json"},method="POST")
@@ -385,11 +385,11 @@ def _restart_post_boot_check():
     for marker in sorted(root.glob("*.json"),reverse=True)[:2]:
         try:
             state=json.loads(marker.read_text(encoding="utf-8"))
-            if state.get("status")!="accepted":continue
+            if state.get("status") not in {"requested","accepted"}:continue
             # This process must have started after the accepted request.
             requested=datetime.fromisoformat(state["requested_at"])
-            if now_tpe() - requested > __import__("datetime").timedelta(hours=24):continue
-            if _restart_line_notice(state["day"],"重啟後檢查通過","Worker 已重新啟動，啟動自我測試通過"):
+            if not (__import__("datetime").timedelta(seconds=0) <= now_tpe() - requested <= __import__("datetime").timedelta(hours=24)):continue
+            if _restart_line_notice(state["day"],"Worker 啟動檢查通過","先前已發出 Restart 請求；新程序啟動且自我測試通過"):
                 state["status"]="verified"
                 _atomic_json(marker,state)
         except Exception as exc:
@@ -436,9 +436,10 @@ def maybe_restart_after_maintenance(day, stage_done, notified_at):
             _atomic_json(marker,{"day":day,"requested_at":now.isoformat(),"status":"accepted"})
             print(f"[DAILY RESTART] accepted day={day} http={code}",flush=True)
         except Exception as exc:
-            _atomic_json(marker,{"day":day,"requested_at":now.isoformat(),"status":"failed"})
-            print(f"[DAILY RESTART] request failed {type(exc).__name__}: {exc}",flush=True)
-            _restart_line_notice(day,"重啟請求失敗",f"{type(exc).__name__}；不自動重試")
+            # A timeout may mean Render accepted the request and killed this process.
+            # Keep the pre-request marker so the next boot can report the outcome.
+            print(f"[DAILY RESTART] request uncertain {type(exc).__name__}: {exc}",flush=True)
+            _restart_line_notice(day,"重啟請求結果未確認",f"{type(exc).__name__}；不自動重試")
     finally:
         archive_restart_lock.release()
 
