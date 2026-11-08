@@ -6,6 +6,7 @@ import sys
 import time
 from pathlib import Path
 from zoneinfo import ZoneInfo
+from daily_restart_coordination import archive_restart_lock
 
 TZ = ZoneInfo("Asia/Taipei")
 ARCHIVER = Path(__file__).with_name("a_queue_archive_v1.py")
@@ -19,8 +20,9 @@ def once():
         return
     cmd = [sys.executable, str(ARCHIVER), "--mode", "compress",
            "--min-age-minutes", "120"]
-    result = subprocess.run(cmd, timeout=600, check=False)
-    print(f"[QUEUE_ARCHIVE] completed exit={result.returncode}", flush=True)
+    with archive_restart_lock:
+        result = subprocess.run(cmd, timeout=600, check=False)
+        print(f"[QUEUE_ARCHIVE] completed exit={result.returncode}", flush=True)
 
 def loop():
     print("[QUEUE_ARCHIVE] background archive loop started; no deletion", flush=True)
