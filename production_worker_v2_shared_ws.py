@@ -637,7 +637,8 @@ def main():
     self_test()
     send_one_time_maintenance_test()
     preflight();STATE_ROOT.mkdir(parents=True,exist_ok=True);f14_bootstrap(now_tpe().date().isoformat());
-    _restart_post_boot_check()threading.Thread(target=f10_maintenance_loop,name="f10-maint",daemon=True).start();threading.Thread(target=daily_history_maintenance_loop,name="a-daily-maint",daemon=True).start();wait_session()
+    _restart_post_boot_check()
+    threading.Thread(target=f10_maintenance_loop,name="f10-maint",daemon=True).start();threading.Thread(target=daily_history_maintenance_loop,name="a-daily-maint",daemon=True).start();wait_session()
     threading.Thread(target=serve,daemon=True).start()
     threading.Thread(target=shared_ws_loop,daemon=True).start()
     threading.Thread(target=clock_loop,daemon=True).start()
