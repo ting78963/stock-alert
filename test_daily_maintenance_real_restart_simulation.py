@@ -60,5 +60,46 @@ class RestartSimulation(unittest.TestCase):
             self.assertEqual(calls,[],"Restart must not rerun DAILY_K or F10")
             self.assertTrue(json.loads((state_dir/(day+".json")).read_text())["report_sent"])
 
+
+    def test_next_trading_day_is_not_suppressed_by_previous_day(self):
+        tree=ast.parse(SOURCE)
+        fn=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=="daily_history_maintenance_loop")
+        with tempfile.TemporaryDirectory() as td:
+            state_dir=pathlib.Path(td)/"daily_maintenance_state"
+            state_dir.mkdir()
+            (state_dir/"2026-11-09.json").write_text(json.dumps({
+                "day":"2026-11-09","stage_done":["DAILY_K","F10"],
+                "report_sent":True,"notified_at":"2026-11-09T22:04:36+08:00"
+            }),encoding="utf-8")
+            assign=next(n for n in ast.walk(fn) if isinstance(n,ast.Assign) and
+                any(isinstance(t,ast.Name) and t.id=="state_dir" for t in n.targets))
+            assign.value=ast.Call(func=ast.Name(id="Path",ctx=ast.Load()),args=[ast.Constant(value=str(state_dir))],keywords=[])
+            ast.fix_missing_locations(fn)
+            module=ast.Module(body=[fn],type_ignores=[])
+            ast.fix_missing_locations(module)
+            calls=[]
+            class FakeTime:
+                @staticmethod
+                def monotonic(): return 0.0
+                @staticmethod
+                def sleep(_): raise StopLoop()
+            fake_subprocess=types.SimpleNamespace(call=lambda *a,**k:(calls.append(a[0]),0)[1])
+            real_import=__import__
+            def guarded_import(name,*args,**kwargs):
+                if name=="subprocess": return fake_subprocess
+                return real_import(name,*args,**kwargs)
+            env={"os":os,"Path":pathlib.Path,"json":json,"time":FakeTime,
+                 "now_tpe":lambda:dt.datetime(2026,11,10,15,31,tzinfo=dt.timezone(dt.timedelta(hours=8))),
+                 "BASE":ROOT,"sys":__import__("sys"),
+                 "is_scheduled_open":lambda _:True,
+                 "maybe_restart_after_maintenance":lambda *args:None,
+                 "_atomic_json":lambda p,v:pathlib.Path(p).write_text(json.dumps(v),encoding="utf-8")}
+            exec(compile(module,"production_worker_v2_shared_ws.py","exec"),env)
+            with patch.dict(os.environ,{"A_DAILY_HISTORY_MAINTENANCE_ENABLED":"1","A_DAILY_MAINT_LINE_REPORT":"0"}),patch("builtins.__import__",side_effect=guarded_import):
+                with self.assertRaises(StopLoop):
+                    env["daily_history_maintenance_loop"]()
+            self.assertEqual(len(calls),2,"New trading day must execute both maintenance stages")
+            self.assertEqual(json.loads((state_dir/"2026-11-10.json").read_text())["stage_done"],["DAILY_K","F10"])
+
 if __name__=="__main__":
     unittest.main()
