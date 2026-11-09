@@ -1,0 +1,16 @@
+name: Daily maintenance restart reporting checks
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [fix/persistent-maint-report-restart-flex-20261109]
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m py_compile production_worker_v2_shared_ws.py
+      - run: python -m unittest -v test_daily_maintenance_restart_flex_v1.py

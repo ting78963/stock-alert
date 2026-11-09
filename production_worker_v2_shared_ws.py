@@ -367,8 +367,21 @@ def _restart_line_notice(day, status, detail):
     if not token or not dest:
         print("[DAILY RESTART LINE] unavailable: recognition credentials missing",flush=True)
         return False
-    message=f"辨識系統每日 Restart｜{day}\n{status}\n{detail}"
-    payload=json.dumps({"to":dest,"messages":[{"type":"text","text":message}]},ensure_ascii=False).encode("utf-8")
+    success=status=="Worker 啟動檢查通過"
+    accent="#16834C" if success else "#C53030"
+    heading="重啟成功" if success else "重啟狀態待確認"
+    def txt(value,size="sm",color="#34475B",weight="regular"):
+        return {"type":"text","text":str(value),"size":size,"color":color,"weight":weight,"wrap":True}
+    card={"type":"bubble","size":"mega",
+        "header":{"type":"box","layout":"vertical","backgroundColor":"#193B63","paddingAll":"16px","contents":[
+            txt("系統重啟報告","lg","#FFFFFF","bold"),txt(f"{day}｜辨識系統","xs","#CBD9EC")]},
+        "body":{"type":"box","layout":"vertical","spacing":"md","paddingAll":"16px","contents":[
+            txt(heading,"lg",accent,"bold"),
+            {"type":"separator","color":"#D7E1EB"},
+            txt(f"Worker：{status}"),
+            txt(f"說明：{detail}"),
+            txt("辨識系統 · 自動維護","xxs","#83958A")]}}
+    payload=json.dumps({"to":dest,"messages":[{"type":"flex","altText":f"辨識系統 Restart {day}：{heading}","contents":card}]},ensure_ascii=False).encode("utf-8")
     req=urllib.request.Request("https://api.line.me/v2/bot/message/push",data=payload,
         headers={"Authorization":"Bearer "+token,"Content-Type":"application/json"},method="POST")
     try:
@@ -461,6 +474,8 @@ def daily_history_maintenance_loop():
     notified_day=None
     notified_at=None
     daily_attempted=False
+    # Persistent state survives Render's daily process restart.
+    state_dir=Path("/var/data/stock-alert")/"daily_maintenance_state"
     while True:
         n=now_tpe()
         day=n.date().isoformat()
@@ -472,6 +487,21 @@ def daily_history_maintenance_loop():
             stage_done=set()
             completed_day=None
             next_retry_at=0.0
+            state_file=state_dir/f"{day}.json"
+            try:
+                persisted=json.loads(state_file.read_text(encoding="utf-8"))
+                if persisted.get("day")==day:
+                    stage_done=set(persisted.get("stage_done",[])) & {"DAILY_K","F10"}
+                    if persisted.get("report_sent") is True:
+                        notified_day=day
+                        notified_at=persisted.get("notified_at")
+                    if stage_done=={"DAILY_K","F10"} and notified_day==day:
+                        completed_day=day
+                    print(f"[SEQUENTIAL MAINT] restored day={day} stages={sorted(stage_done)} report_sent={notified_day==day}",flush=True)
+            except FileNotFoundError:
+                pass
+            except (OSError,ValueError,TypeError) as exc:
+                print(f"[SEQUENTIAL MAINT] state restore skipped: {exc}",flush=True)
         if (n.hour,n.minute)>=(15,30) and completed_day!=day and time.monotonic()>=next_retry_at:
             try:
                 if not is_scheduled_open(n.date()):
@@ -495,6 +525,8 @@ def daily_history_maintenance_loop():
                             daily_attempted=True
                         if rc==0:
                             stage_done.add(name)
+                            state_dir.mkdir(parents=True,exist_ok=True)
+                            _atomic_json(state_dir/f"{day}.json",{"day":day,"stage_done":sorted(stage_done),"report_sent":notified_day==day,"notified_at":notified_at})
                             print(f"[SEQUENTIAL MAINT] {name} completed",flush=True)
                         else:
                             print(f"[SEQUENTIAL MAINT] {name} incomplete rc={rc}; other stage may proceed independently",flush=True)
@@ -552,6 +584,8 @@ def daily_history_maintenance_loop():
                                     if response.status!=200: raise RuntimeError("LINE push unsuccessful")
                                 notified_day=day
                                 notified_at=now_tpe().isoformat()
+                                state_dir.mkdir(parents=True,exist_ok=True)
+                                _atomic_json(state_dir/f"{day}.json",{"day":day,"stage_done":sorted(stage_done),"report_sent":True,"notified_at":notified_at})
                                 print(f"[A DAILY MAINT LINE] sent day={day} partial={partial} isolated={len(isolated)}",flush=True)
                             except Exception as exc:
                                 print(f"[A DAILY MAINT LINE] not sent: {type(exc).__name__}: {exc}",flush=True)
