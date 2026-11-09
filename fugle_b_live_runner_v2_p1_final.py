@@ -347,7 +347,7 @@ class Runner:
         if ma(through)+EPS<ma(recog) or self.p1_signal_emitted:return
         e={"schema":"b_signal_event_v2","date":self.date,"stock_id":self.sid,
            "signal_class":"P1","discovered_at":self.disc,
-            "stock_name":self.stock_name,
+            "stock_name":self.stock_name,"recognition_source":self.recognition_source,
            "a1_time":p.get("a1_time"),"p1_time":p.get("p1_time"),
            "post_p1_entry_time":p.get("post_p1_entry_time"),
            "post_p1_entry_open":p.get("post_p1_entry_open"),
