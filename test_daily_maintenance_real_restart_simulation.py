@@ -31,7 +31,7 @@ class RestartSimulation(unittest.TestCase):
             }),encoding="utf-8")
             assign=next(n for n in ast.walk(fn) if isinstance(n,ast.Assign) and
                 any(isinstance(t,ast.Name) and t.id=="state_dir" for t in n.targets))
-            assign.value=ast.Constant(value=str(state_dir))
+            assign.value=ast.Call(func=ast.Name(id="Path",ctx=ast.Load()),args=[ast.Constant(value=str(state_dir))],keywords=[])
             ast.fix_missing_locations(fn)
             module=ast.Module(body=[fn],type_ignores=[])
             ast.fix_missing_locations(module)
