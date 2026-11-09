@@ -78,6 +78,8 @@ def build_flex(e):
       {"type":"text","text":name,"size":"xxl","weight":"bold","color":C_TEXT,"margin":"xl"},{"type":"text","text":sid,"size":"sm","color":C_MUTED,"margin":"xs"},
       {"type":"box","layout":"horizontal","alignItems":"center","margin":"lg","contents":[{"type":"text","text":cls,"size":"xl","weight":"bold","color":C_RED,"flex":0},{"type":"separator","margin":"md","color":C_RED},{"type":"text","text":spec["title"],"size":"md","weight":"bold","color":C_RED,"margin":"md","flex":0}]}
     ]
+    source=str(e.get("recognition_source") or "").strip()
+    if source:contents.append({"type":"text","text":f"辨識來源：{source}","size":"sm","color":C_MUTED,"margin":"sm","wrap":True})
     if cls=="P1":contents.append({"type":"text","text":spec["daytrade"],"size":"sm","weight":"bold","color":C_GOLD,"margin":"md"})
     contents += [
       {"type":"text","text":spec["desc"],"size":"sm","color":"#676C75","wrap":True,"margin":"md"},{"type":"separator","color":C_BORDER,"margin":"xl"},
