@@ -544,7 +544,7 @@ def daily_history_maintenance_loop():
                     if all_done or partial:
                         if notified_day!=day and os.environ.get("A_DAILY_MAINT_LINE_REPORT","0")=="1":
                             try:
-                                import sqlite3, urllib.request, json
+                                import sqlite3, urllib.request
                                 dbpath="/var/data/stock-alert/shared_history_stage_v1.sqlite3"
                                 with sqlite3.connect("file:"+dbpath+"?mode=ro",uri=True,timeout=3) as conn:
                                     total=conn.execute("SELECT COUNT(*) FROM fetch_status").fetchone()[0]
