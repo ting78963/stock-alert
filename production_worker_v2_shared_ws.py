@@ -458,7 +458,7 @@ def maybe_restart_after_maintenance(day, stage_done, notified_at):
     if not notified_at or stage_done != {"DAILY_K", "F10"}:
         return
     now=now_tpe()
-    if now.date().isoformat()!=day or not (17 <= now.hour < 23):
+    if now.date().isoformat()!=day or not (15 <= now.hour < 23):
         return
     # Completion-based restart: all stages, F15, cleanup and archive lock are the gates.
     import f15_trajectory_store
