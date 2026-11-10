@@ -281,6 +281,24 @@ def save_json_atomic(path: Path, obj: Any) -> None:
 
 _UNKNOWN_EVENT_TYPES = frozenset({"vcp_unknown", "surge_unknown"})
 _UNKNOWN_EVENT_LOCK = threading.Lock()
+
+def _unknown_event_guard():
+    """Coordinate log append and compaction across scanner/worker processes."""
+    from contextlib import contextmanager
+    import fcntl
+
+    @contextmanager
+    def guarded():
+        with _UNKNOWN_EVENT_LOCK:
+            OUTDIR.mkdir(parents=True, exist_ok=True)
+            with (OUTDIR / "events.jsonl.lock").open("a+b") as lockfile:
+                fcntl.flock(lockfile.fileno(), fcntl.LOCK_EX)
+                try:
+                    yield
+                finally:
+                    fcntl.flock(lockfile.fileno(), fcntl.LOCK_UN)
+    return guarded()
+
 _UNKNOWN_EVENT_DAY = None
 _UNKNOWN_EVENT_SEEN = set()
 
@@ -294,7 +312,7 @@ def append_event(obj: Dict[str, Any]) -> None:
     global _UNKNOWN_EVENT_DAY, _UNKNOWN_EVENT_SEEN
     event_type = obj.get("type")
     if event_type not in _UNKNOWN_EVENT_TYPES:
-        with _UNKNOWN_EVENT_LOCK:
+        with _unknown_event_guard():
             ensure_outdir()
             with (OUTDIR / "events.jsonl").open("a", encoding="utf-8") as f:
                 f.write(json.dumps(obj, ensure_ascii=False) + "\n")
@@ -302,7 +320,7 @@ def append_event(obj: Dict[str, Any]) -> None:
 
     day = str(obj.get("date") or now_tw().date().isoformat())
     key = (day, str(event_type), str(obj.get("symbol")), str(obj.get("reason")))
-    with _UNKNOWN_EVENT_LOCK:
+    with _unknown_event_guard():
         ensure_outdir()
         p = OUTDIR / "events.jsonl"
         if _UNKNOWN_EVENT_DAY != day:
@@ -337,7 +355,7 @@ def maintain_unknown_event_log(today: str, retention_days: int = 2) -> Dict[str,
     if is_market_window(now_tw()):
         return {"skipped_market": 1}
     cutoff = (date.fromisoformat(today) - timedelta(days=retention_days - 1)).isoformat()
-    with _UNKNOWN_EVENT_LOCK:
+    with _unknown_event_guard():
         path = OUTDIR / "events.jsonl"
         if not path.is_file():
             return {"kept": 0, "removed": 0}
