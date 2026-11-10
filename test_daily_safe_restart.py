@@ -23,6 +23,9 @@ class RestartTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.root=pathlib.Path(self.tmp.name)
         self.marker=self.root/"daily_restart"/f"{DAY}.json"
+        self.cleanup_marker=self.root/"daily_unknown_cleanup"/f"{DAY}.json"
+        self.cleanup_marker.parent.mkdir(parents=True,exist_ok=True)
+        self.cleanup_marker.write_text('{"status":"completed","stats":{"removed":1}}',encoding="utf-8")
         self.request_count=0
         class FakePath(type(pathlib.Path())):
             def __new__(cls, value):
@@ -58,6 +61,10 @@ class RestartTests(unittest.TestCase):
             self.assertFalse(self.marker.exists())
         finally:
             archive_restart_lock.release()
+    def test_cleanup_incomplete_blocks_restart(self):
+        self.cleanup_marker.unlink()
+        self.assertEqual(self.call(),0)
+        self.assertFalse(self.marker.exists())
     def test_once_only(self):
         self.assertEqual(self.call(),1)
         self.assertEqual(self.call(),0)
