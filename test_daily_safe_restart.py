@@ -33,7 +33,7 @@ class RestartTests(unittest.TestCase):
                 return super().__new__(cls,value)
         self.FakePath=FakePath
         self.complete=True
-        self.ctx={"now_tpe":Clock.now,"Path":FakePath,"os":__import__("os"),
+        self.ctx={"now_tpe":Clock.now,"Path":FakePath,"os":__import__("os"),"json":__import__("json"),
                   "f15_trajectory_store":None,
                   "_atomic_json":lambda p,x:p.write_text(__import__("json").dumps(x)),
                   "print":lambda *a,**k:None,"_RESTART_PROCESS_TOKEN":"test-worker-token"}
