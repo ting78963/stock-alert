@@ -2481,17 +2481,8 @@ def main() -> int:
             return 2
 
     # 雲端常駐：不用 cron 每 5 秒叫一次；worker 自己常駐。
-    last_unknown_maintenance_day = None
     while True:
         dt = now_tw()
-        # Daily off-hours cleanup; never block market-hour scans.
-        if dt.hour >= 15 and last_unknown_maintenance_day != dt.date().isoformat():
-            try:
-                stats = maintain_unknown_event_log(dt.date().isoformat())
-                print(f"[UNKNOWN MAINT] day={dt.date().isoformat()} {stats}", flush=True)
-                last_unknown_maintenance_day = dt.date().isoformat()
-            except Exception as exc:
-                print(f"[UNKNOWN MAINT] failed {type(exc).__name__}: {exc}", flush=True)
         if args.ignore_market_hours or is_market_window(dt):
             # Stage-only safety: do not carry yesterday's verified DB watermark
             # into a new trading day. Exit so parent reruns calendar + DB preflight.
