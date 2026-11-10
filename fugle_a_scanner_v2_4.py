@@ -309,7 +309,7 @@ def append_event(obj: Dict[str, Any]) -> None:
             if p.exists():
                 with p.open("r", encoding="utf-8", errors="replace") as f:
                     for line in f:
-                        if '"unknown"' not in line:
+                        if "unknown" not in line:
                             continue
                         try:
                             previous = json.loads(line)
