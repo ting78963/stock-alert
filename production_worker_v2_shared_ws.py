@@ -467,8 +467,13 @@ def maybe_restart_after_maintenance(day, stage_done, notified_at):
     if not f15_trajectory_store.report_and_trajectory_complete(day):
         return
     cleanup_marker=Path("/var/data/stock-alert")/"daily_unknown_cleanup"/f"{day}.json"
-    if not cleanup_marker.is_file():
-        print("[DAILY RESTART] waiting for UNKNOWN cleanup",flush=True)
+    try:
+        cleanup_state=json.loads(cleanup_marker.read_text(encoding="utf-8"))
+        if cleanup_state.get("day")!=day or cleanup_state.get("status")!="completed":
+            print("[DAILY RESTART] UNKNOWN cleanup not verified",flush=True)
+            return
+    except (OSError,ValueError,TypeError):
+        print("[DAILY RESTART] UNKNOWN cleanup state unavailable",flush=True)
         return
     from daily_restart_coordination import archive_restart_lock
     if not archive_restart_lock.acquire(blocking=False):
