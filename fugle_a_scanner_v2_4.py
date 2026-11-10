@@ -344,9 +344,15 @@ def maintain_unknown_event_log(today: str, retention_days: int = 2) -> Dict[str,
         tmp = path.with_name(path.name + ".unknown-maint.tmp")
         kept = removed = 0
         seen = set()
+        # Keep enough disk headroom for other maintenance writes; never risk the source log.
+        import shutil
+        if shutil.disk_usage(path.parent).free < 32 * 1024 * 1024:
+            raise OSError("UNKNOWN cleanup deferred: less than 32 MiB free")
         try:
             with path.open("r", encoding="utf-8", errors="replace") as source, tmp.open("w", encoding="utf-8") as target:
                 for line in source:
+                    if (kept + removed) % 1000 == 0 and shutil.disk_usage(path.parent).free < 16 * 1024 * 1024:
+                        raise OSError("UNKNOWN cleanup aborted safely: less than 16 MiB free")
                     if "unknown" not in line:
                         target.write(line)
                         kept += 1
