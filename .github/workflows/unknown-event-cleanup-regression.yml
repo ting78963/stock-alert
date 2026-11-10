@@ -1,0 +1,17 @@
+name: UNKNOWN event cleanup offline regression
+on:
+  push:
+    branches:
+      - fix/a-unknown-dedupe-recover-20261110
+  pull_request:
+  workflow_dispatch:
+jobs:
+  unknown-cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: UNKNOWN dedup, retention and low disk tests
+        run: python -m unittest discover -s tests -p 'test_a_unknown_event_maintenance_v1.py' -v
