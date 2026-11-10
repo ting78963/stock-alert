@@ -3,6 +3,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from shutil import _ntuple_diskusage
 from unittest.mock import patch
 
 import fugle_a_scanner_v2_4 as scanner
@@ -65,7 +66,7 @@ class UnknownEventMaintenanceTest(unittest.TestCase):
         path.write_text(json.dumps(record) + "\n", encoding="utf-8")
         original = path.read_bytes()
         with patch.object(scanner, "is_market_window", return_value=False):
-            with patch("shutil.disk_usage", return_value=(100000000, 99999999, 1)):
+            with patch("shutil.disk_usage", return_value=_ntuple_diskusage(100000000, 99999999, 1)):
                 with self.assertRaises(OSError):
                     scanner.maintain_unknown_event_log("2026-11-10")
         self.assertEqual(path.read_bytes(), original)
