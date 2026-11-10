@@ -279,11 +279,52 @@ def save_json_atomic(path: Path, obj: Any) -> None:
     os.replace(tmp, path)
 
 
+_UNKNOWN_EVENT_TYPES = frozenset({"vcp_unknown", "surge_unknown"})
+_UNKNOWN_EVENT_LOCK = threading.Lock()
+_UNKNOWN_EVENT_DAY = None
+_UNKNOWN_EVENT_SEEN = set()
+
+
 def append_event(obj: Dict[str, Any]) -> None:
-    ensure_outdir()
-    p = OUTDIR / "events.jsonl"
-    with p.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(obj, ensure_ascii=False) + "\n")
+    """Deduplicate UNKNOWN audit records, never trading signals or other events.
+
+    Recover today's keys from the existing log after a process restart, so
+    repeated scans cannot regrow the audit file just because A was restarted.
+    """
+    global _UNKNOWN_EVENT_DAY, _UNKNOWN_EVENT_SEEN
+    event_type = obj.get("type")
+    if event_type not in _UNKNOWN_EVENT_TYPES:
+        ensure_outdir()
+        with (OUTDIR / "events.jsonl").open("a", encoding="utf-8") as f:
+            f.write(json.dumps(obj, ensure_ascii=False) + "\n")
+        return
+
+    day = str(obj.get("date") or now_tw().date().isoformat())
+    key = (day, str(event_type), str(obj.get("symbol")), str(obj.get("reason")))
+    with _UNKNOWN_EVENT_LOCK:
+        ensure_outdir()
+        p = OUTDIR / "events.jsonl"
+        if _UNKNOWN_EVENT_DAY != day:
+            seen = set()
+            if p.exists():
+                with p.open("r", encoding="utf-8", errors="replace") as f:
+                    for line in f:
+                        if '"unknown"' not in line:
+                            continue
+                        try:
+                            previous = json.loads(line)
+                        except (ValueError, TypeError):
+                            continue
+                        if previous.get("type") in _UNKNOWN_EVENT_TYPES and str(previous.get("date")) == day:
+                            seen.add((day, str(previous.get("type")),
+                                      str(previous.get("symbol")), str(previous.get("reason"))))
+            _UNKNOWN_EVENT_SEEN = seen
+            _UNKNOWN_EVENT_DAY = day
+        if key in _UNKNOWN_EVENT_SEEN:
+            return
+        with p.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(obj, ensure_ascii=False) + "\n")
+        _UNKNOWN_EVENT_SEEN.add(key)
 
 
 def append_queue_shadow(d: str, obj: Dict[str, Any]) -> None:
