@@ -294,9 +294,10 @@ def append_event(obj: Dict[str, Any]) -> None:
     global _UNKNOWN_EVENT_DAY, _UNKNOWN_EVENT_SEEN
     event_type = obj.get("type")
     if event_type not in _UNKNOWN_EVENT_TYPES:
-        ensure_outdir()
-        with (OUTDIR / "events.jsonl").open("a", encoding="utf-8") as f:
-            f.write(json.dumps(obj, ensure_ascii=False) + "\n")
+        with _UNKNOWN_EVENT_LOCK:
+            ensure_outdir()
+            with (OUTDIR / "events.jsonl").open("a", encoding="utf-8") as f:
+                f.write(json.dumps(obj, ensure_ascii=False) + "\n")
         return
 
     day = str(obj.get("date") or now_tw().date().isoformat())
@@ -325,6 +326,55 @@ def append_event(obj: Dict[str, Any]) -> None:
         with p.open("a", encoding="utf-8") as f:
             f.write(json.dumps(obj, ensure_ascii=False) + "\n")
         _UNKNOWN_EVENT_SEEN.add(key)
+
+
+def maintain_unknown_event_log(today: str, retention_days: int = 2) -> Dict[str, int]:
+    """Off-hours housekeeping: discard stale/repeated UNKNOWN only.
+
+    Keep non-UNKNOWN events verbatim. Stream to a temporary file instead of
+    loading the whole log into RAM; failure leaves the original intact.
+    """
+    if is_market_window(now_tw()):
+        return {"skipped_market": 1}
+    cutoff = (date.fromisoformat(today) - timedelta(days=retention_days - 1)).isoformat()
+    with _UNKNOWN_EVENT_LOCK:
+        path = OUTDIR / "events.jsonl"
+        if not path.is_file():
+            return {"kept": 0, "removed": 0}
+        tmp = path.with_name(path.name + ".unknown-maint.tmp")
+        kept = removed = 0
+        seen = set()
+        try:
+            with path.open("r", encoding="utf-8", errors="replace") as source, tmp.open("w", encoding="utf-8") as target:
+                for line in source:
+                    if "unknown" not in line:
+                        target.write(line)
+                        kept += 1
+                        continue
+                    try:
+                        obj = json.loads(line)
+                    except (ValueError, TypeError):
+                        target.write(line)
+                        kept += 1
+                        continue
+                    if not isinstance(obj, dict) or obj.get("type") not in _UNKNOWN_EVENT_TYPES:
+                        target.write(line)
+                        kept += 1
+                        continue
+                    event_day = str(obj.get("date") or "")
+                    key = (event_day, str(obj.get("type")), str(obj.get("symbol")), str(obj.get("reason")))
+                    if not event_day or event_day < cutoff or key in seen:
+                        removed += 1
+                        continue
+                    seen.add(key)
+                    target.write(line)
+                    kept += 1
+                target.flush()
+                os.fsync(target.fileno())
+            os.replace(tmp, path)
+        finally:
+            tmp.unlink(missing_ok=True)
+        return {"kept": kept, "removed": removed}
 
 
 def append_queue_shadow(d: str, obj: Dict[str, Any]) -> None:
@@ -2431,8 +2481,17 @@ def main() -> int:
             return 2
 
     # 雲端常駐：不用 cron 每 5 秒叫一次；worker 自己常駐。
+    last_unknown_maintenance_day = None
     while True:
         dt = now_tw()
+        # Daily off-hours cleanup; never block market-hour scans.
+        if dt.hour >= 15 and last_unknown_maintenance_day != dt.date().isoformat():
+            try:
+                stats = maintain_unknown_event_log(dt.date().isoformat())
+                print(f"[UNKNOWN MAINT] day={dt.date().isoformat()} {stats}", flush=True)
+                last_unknown_maintenance_day = dt.date().isoformat()
+            except Exception as exc:
+                print(f"[UNKNOWN MAINT] failed {type(exc).__name__}: {exc}", flush=True)
         if args.ignore_market_hours or is_market_window(dt):
             # Stage-only safety: do not carry yesterday's verified DB watermark
             # into a new trading day. Exit so parent reruns calendar + DB preflight.
