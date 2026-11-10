@@ -405,24 +405,74 @@ def _restart_post_boot_check():
             # This process must have started after the accepted request.
             requested=datetime.fromisoformat(state["requested_at"])
             if not (__import__("datetime").timedelta(seconds=0) <= now_tpe() - requested <= __import__("datetime").timedelta(hours=24)):continue
-            if _restart_line_notice(state["day"],"Worker 啟動檢查通過","先前已發出 Restart 請求；新程序啟動且自我測試通過"):
+            cleanup_file=Path("/var/data/stock-alert")/"daily_unknown_cleanup"/f'{state["day"]}.json'
+            cleanup_summary="UNKNOWN 清理結果：未取得"
+            try:
+                cleanup=json.loads(cleanup_file.read_text(encoding="utf-8"))
+                stats=cleanup.get("stats",{})
+                cleanup_summary=f'UNKNOWN 清理完成：刪除 {stats.get("removed",0)} 筆，保留 {stats.get("kept",0)} 筆'
+            except (OSError,ValueError,TypeError):
+                pass
+            if _restart_line_notice(state["day"],"Worker 啟動檢查通過","先前已發出 Restart 請求；新程序啟動且自我測試通過；"+cleanup_summary):
                 state["status"]="verified"
                 _atomic_json(marker,state)
         except Exception as exc:
             print(f"[DAILY RESTART] post-boot verification failed {type(exc).__name__}: {exc}",flush=True)
+
+def maybe_cleanup_after_maintenance(day, stage_done, notified_at):
+    """Run once after K/F10/F15 completion, during the existing restart wait."""
+    if not notified_at or stage_done != {"DAILY_K", "F10"}:
+        return
+    now=now_tpe()
+    if now.date().isoformat()!=day or not (15 <= now.hour < 23):
+        return
+    import f15_trajectory_store
+    if not f15_trajectory_store.report_and_trajectory_complete(day):
+        return
+    from daily_restart_coordination import archive_restart_lock
+    if not archive_restart_lock.acquire(blocking=False):
+        return
+    try:
+        root=Path("/var/data/stock-alert")/"daily_unknown_cleanup"
+        marker=root/f"{day}.json"
+        if marker.exists():
+            return
+        import subprocess
+        script=BASE/"a_unknown_daily_cleanup_v1.py"
+        result=subprocess.run([sys.executable,str(script),day],cwd=str(BASE),
+                              env=os.environ.copy(),capture_output=True,text=True,timeout=600)
+        if result.returncode!=0:
+            print(f"[UNKNOWN MAINT] failed day={day} rc={result.returncode} {result.stderr[-400:]}",flush=True)
+            return
+        stats=json.loads(result.stdout.strip().splitlines()[-1])
+        root.mkdir(parents=True,exist_ok=True)
+        _atomic_json(marker,{"day":day,"status":"completed","stats":stats})
+        print(f"[UNKNOWN MAINT] completed day={day} stats={stats}",flush=True)
+    except Exception as exc:
+        print(f"[UNKNOWN MAINT] failed {type(exc).__name__}: {exc}",flush=True)
+    finally:
+        archive_restart_lock.release()
 
 def maybe_restart_after_maintenance(day, stage_done, notified_at):
     """Restart at most once after all post-close work, never during a running stage."""
     if not notified_at or stage_done != {"DAILY_K", "F10"}:
         return
     now=now_tpe()
-    if now.date().isoformat()!=day or not (17 <= now.hour < 23):
+    if now.date().isoformat()!=day or not (15 <= now.hour < 23):
         return
-    from datetime import datetime as _datetime, timedelta as _timedelta
-    if now < _datetime.fromisoformat(notified_at) + _timedelta(hours=2):
-        return
+    # Completion-based restart: no fixed 17:00 floor or two-hour delay.
+    # All stages, F15, UNKNOWN cleanup and archive lock must also be complete.
     import f15_trajectory_store
     if not f15_trajectory_store.report_and_trajectory_complete(day):
+        return
+    cleanup_marker=Path("/var/data/stock-alert")/"daily_unknown_cleanup"/f"{day}.json"
+    try:
+        cleanup_state=json.loads(cleanup_marker.read_text(encoding="utf-8"))
+        if cleanup_state.get("day")!=day or cleanup_state.get("status")!="completed":
+            print("[DAILY RESTART] UNKNOWN cleanup not verified",flush=True)
+            return
+    except (OSError,ValueError,TypeError):
+        print("[DAILY RESTART] UNKNOWN cleanup state unavailable",flush=True)
         return
     from daily_restart_coordination import archive_restart_lock
     if not archive_restart_lock.acquire(blocking=False):
@@ -597,6 +647,10 @@ def daily_history_maintenance_loop():
             except BaseException as exc:
                 next_retry_at=time.monotonic()+300
                 print(f"[SEQUENTIAL MAINT] FAIL {type(exc).__name__}: {exc}; retry in 5m",flush=True)
+        try:
+            maybe_cleanup_after_maintenance(day,stage_done,notified_at)
+        except Exception as exc:
+            print(f"[UNKNOWN MAINT] check failed {type(exc).__name__}: {exc}",flush=True)
         try:
             maybe_restart_after_maintenance(day,stage_done,notified_at)
         except Exception as exc:

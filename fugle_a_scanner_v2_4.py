@@ -279,11 +279,126 @@ def save_json_atomic(path: Path, obj: Any) -> None:
     os.replace(tmp, path)
 
 
+_UNKNOWN_EVENT_TYPES = frozenset({"vcp_unknown", "surge_unknown"})
+_UNKNOWN_EVENT_LOCK = threading.Lock()
+
+def _unknown_event_guard():
+    """Coordinate log append and compaction across scanner/worker processes."""
+    from contextlib import contextmanager
+    import fcntl
+
+    @contextmanager
+    def guarded():
+        with _UNKNOWN_EVENT_LOCK:
+            OUTDIR.mkdir(parents=True, exist_ok=True)
+            with (OUTDIR / "events.jsonl.lock").open("a+b") as lockfile:
+                fcntl.flock(lockfile.fileno(), fcntl.LOCK_EX)
+                try:
+                    yield
+                finally:
+                    fcntl.flock(lockfile.fileno(), fcntl.LOCK_UN)
+    return guarded()
+
+_UNKNOWN_EVENT_DAY = None
+_UNKNOWN_EVENT_SEEN = set()
+
+
 def append_event(obj: Dict[str, Any]) -> None:
-    ensure_outdir()
-    p = OUTDIR / "events.jsonl"
-    with p.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(obj, ensure_ascii=False) + "\n")
+    """Deduplicate UNKNOWN audit records, never trading signals or other events.
+
+    Recover today's keys from the existing log after a process restart, so
+    repeated scans cannot regrow the audit file just because A was restarted.
+    """
+    global _UNKNOWN_EVENT_DAY, _UNKNOWN_EVENT_SEEN
+    event_type = obj.get("type")
+    if event_type not in _UNKNOWN_EVENT_TYPES:
+        with _unknown_event_guard():
+            ensure_outdir()
+            with (OUTDIR / "events.jsonl").open("a", encoding="utf-8") as f:
+                f.write(json.dumps(obj, ensure_ascii=False) + "\n")
+        return
+
+    day = str(obj.get("date") or now_tw().date().isoformat())
+    key = (day, str(event_type), str(obj.get("symbol")), str(obj.get("reason")))
+    with _unknown_event_guard():
+        ensure_outdir()
+        p = OUTDIR / "events.jsonl"
+        if _UNKNOWN_EVENT_DAY != day:
+            seen = set()
+            if p.exists():
+                with p.open("r", encoding="utf-8", errors="replace") as f:
+                    for line in f:
+                        if "unknown" not in line:
+                            continue
+                        try:
+                            previous = json.loads(line)
+                        except (ValueError, TypeError):
+                            continue
+                        if previous.get("type") in _UNKNOWN_EVENT_TYPES and str(previous.get("date")) == day:
+                            seen.add((day, str(previous.get("type")),
+                                      str(previous.get("symbol")), str(previous.get("reason"))))
+            _UNKNOWN_EVENT_SEEN = seen
+            _UNKNOWN_EVENT_DAY = day
+        if key in _UNKNOWN_EVENT_SEEN:
+            return
+        with p.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(obj, ensure_ascii=False) + "\n")
+        _UNKNOWN_EVENT_SEEN.add(key)
+
+
+def maintain_unknown_event_log(today: str, retention_days: int = 2) -> Dict[str, int]:
+    """Off-hours housekeeping: discard stale/repeated UNKNOWN only.
+
+    Keep non-UNKNOWN events verbatim. Stream to a temporary file instead of
+    loading the whole log into RAM; failure leaves the original intact.
+    """
+    if is_market_window(now_tw()):
+        return {"skipped_market": 1}
+    cutoff = (date.fromisoformat(today) - timedelta(days=retention_days - 1)).isoformat()
+    with _unknown_event_guard():
+        path = OUTDIR / "events.jsonl"
+        if not path.is_file():
+            return {"kept": 0, "removed": 0}
+        tmp = path.with_name(path.name + ".unknown-maint.tmp")
+        kept = removed = 0
+        seen = set()
+        # Keep enough disk headroom for other maintenance writes; never risk the source log.
+        import shutil
+        if shutil.disk_usage(path.parent).free < 32 * 1024 * 1024:
+            raise OSError("UNKNOWN cleanup deferred: less than 32 MiB free")
+        try:
+            with path.open("r", encoding="utf-8", errors="replace") as source, tmp.open("w", encoding="utf-8") as target:
+                for line in source:
+                    if (kept + removed) % 1000 == 0 and shutil.disk_usage(path.parent).free < 16 * 1024 * 1024:
+                        raise OSError("UNKNOWN cleanup aborted safely: less than 16 MiB free")
+                    if "unknown" not in line:
+                        target.write(line)
+                        kept += 1
+                        continue
+                    try:
+                        obj = json.loads(line)
+                    except (ValueError, TypeError):
+                        target.write(line)
+                        kept += 1
+                        continue
+                    if not isinstance(obj, dict) or obj.get("type") not in _UNKNOWN_EVENT_TYPES:
+                        target.write(line)
+                        kept += 1
+                        continue
+                    event_day = str(obj.get("date") or "")
+                    key = (event_day, str(obj.get("type")), str(obj.get("symbol")), str(obj.get("reason")))
+                    if not event_day or event_day < cutoff or key in seen:
+                        removed += 1
+                        continue
+                    seen.add(key)
+                    target.write(line)
+                    kept += 1
+                target.flush()
+                os.fsync(target.fileno())
+            os.replace(tmp, path)
+        finally:
+            tmp.unlink(missing_ok=True)
+        return {"kept": kept, "removed": removed}
 
 
 def append_queue_shadow(d: str, obj: Dict[str, Any]) -> None:

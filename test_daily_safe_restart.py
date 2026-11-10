@@ -23,6 +23,9 @@ class RestartTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.root=pathlib.Path(self.tmp.name)
         self.marker=self.root/"daily_restart"/f"{DAY}.json"
+        self.cleanup_marker=self.root/"daily_unknown_cleanup"/f"{DAY}.json"
+        self.cleanup_marker.parent.mkdir(parents=True,exist_ok=True)
+        self.cleanup_marker.write_text('{"day":"2026-11-06","status":"completed","stats":{"removed":1}}',encoding="utf-8")
         self.request_count=0
         class FakePath(type(pathlib.Path())):
             def __new__(cls, value):
@@ -30,7 +33,7 @@ class RestartTests(unittest.TestCase):
                 return super().__new__(cls,value)
         self.FakePath=FakePath
         self.complete=True
-        self.ctx={"now_tpe":Clock.now,"Path":FakePath,"os":__import__("os"),
+        self.ctx={"now_tpe":Clock.now,"Path":FakePath,"os":__import__("os"),"json":__import__("json"),
                   "f15_trajectory_store":None,
                   "_atomic_json":lambda p,x:p.write_text(__import__("json").dumps(x)),
                   "print":lambda *a,**k:None,"_RESTART_PROCESS_TOKEN":"test-worker-token"}
@@ -40,7 +43,20 @@ class RestartTests(unittest.TestCase):
             urlopen.return_value.__enter__.return_value.status=200
             self.ctx["maybe_restart_after_maintenance"](DAY,stages,notice)
             return urlopen.call_count
-    def test_before_two_hours(self):self.assertEqual(self.call(notice="2026-11-06T17:30:00+08:00"),0)
+    def test_no_fixed_two_hour_delay(self):
+        self.assertEqual(self.call(notice="2026-11-06T18:59:00+08:00"),1)
+    def test_completed_at_1630_can_restart(self):
+        Clock.current=datetime.datetime(2026,11,6,16,30,tzinfo=TPE)
+        try:
+            self.assertEqual(self.call(notice="2026-11-06T16:29:00+08:00"),1)
+        finally:
+            Clock.current=datetime.datetime(2026,11,6,19,0,tzinfo=TPE)
+    def test_market_hours_cannot_restart(self):
+        Clock.current=datetime.datetime(2026,11,6,13,30,tzinfo=TPE)
+        try:
+            self.assertEqual(self.call(),0)
+        finally:
+            Clock.current=datetime.datetime(2026,11,6,19,0,tzinfo=TPE)
     def test_missing_maintenance(self):self.assertEqual(self.call(stages={"DAILY_K"}),0)
     def test_missing_line(self):self.assertEqual(self.call(notice=None),0)
     def test_f15_incomplete(self):
@@ -58,6 +74,10 @@ class RestartTests(unittest.TestCase):
             self.assertFalse(self.marker.exists())
         finally:
             archive_restart_lock.release()
+    def test_cleanup_incomplete_blocks_restart(self):
+        self.cleanup_marker.unlink()
+        self.assertEqual(self.call(),0)
+        self.assertFalse(self.marker.exists())
     def test_once_only(self):
         self.assertEqual(self.call(),1)
         self.assertEqual(self.call(),0)
