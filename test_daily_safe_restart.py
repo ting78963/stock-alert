@@ -25,7 +25,7 @@ class RestartTests(unittest.TestCase):
         self.marker=self.root/"daily_restart"/f"{DAY}.json"
         self.cleanup_marker=self.root/"daily_unknown_cleanup"/f"{DAY}.json"
         self.cleanup_marker.parent.mkdir(parents=True,exist_ok=True)
-        self.cleanup_marker.write_text('{"status":"completed","stats":{"removed":1}}',encoding="utf-8")
+        self.cleanup_marker.write_text('{"day":"2026-11-06","status":"completed","stats":{"removed":1}}',encoding="utf-8")
         self.request_count=0
         class FakePath(type(pathlib.Path())):
             def __new__(cls, value):
