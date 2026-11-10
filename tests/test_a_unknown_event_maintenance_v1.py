@@ -1,9 +1,11 @@
 """Offline regressions for UNKNOWN audit dedup and daily retention."""
 import json
+import multiprocessing
+import time
 import tempfile
 import unittest
 from pathlib import Path
-from shutil import _ntuple_diskusage
+from collections import namedtuple
 from unittest.mock import patch
 
 import fugle_a_scanner_v2_4 as scanner
@@ -66,11 +68,44 @@ class UnknownEventMaintenanceTest(unittest.TestCase):
         path.write_text(json.dumps(record) + "\n", encoding="utf-8")
         original = path.read_bytes()
         with patch.object(scanner, "is_market_window", return_value=False):
-            with patch("shutil.disk_usage", return_value=_ntuple_diskusage(100000000, 99999999, 1)):
+            with patch("shutil.disk_usage", return_value=namedtuple('DiskUsage', 'total used free')(100000000, 99999999, 1)):
                 with self.assertRaises(OSError):
                     scanner.maintain_unknown_event_log("2026-11-10")
         self.assertEqual(path.read_bytes(), original)
         self.assertFalse((self.root / "events.jsonl.unknown-maint.tmp").exists())
+
+    def test_cross_process_lock_serializes_append_with_cleanup(self):
+        """A separate process cannot append while housekeeping owns the log lock."""
+        if "fork" not in multiprocessing.get_all_start_methods():
+            self.skipTest("requires Linux fork, matching Render deployment")
+        ctx = multiprocessing.get_context("fork")
+        entered = ctx.Event()
+        release = ctx.Event()
+        started = ctx.Event()
+        # Parent holds the lock; child must not enter append_event until released.
+        def writer(root, ready, begin):
+            scanner.OUTDIR = root
+            ready.set()
+            scanner.append_event({"type": "handoff", "date": "2026-11-10", "symbol": "1301"})
+            begin.set()
+        with scanner._unknown_event_guard():
+            p = ctx.Process(target=writer, args=(self.root, started, entered))
+            p.start()
+            try:
+                self.assertTrue(started.wait(timeout=5))
+                self.assertFalse(entered.wait(timeout=0.2))
+            finally:
+                # Leave guard before waiting for child to avoid a deadlock.
+                pass
+        try:
+            self.assertTrue(entered.wait(timeout=5))
+            p.join(timeout=5)
+            self.assertEqual(p.exitcode, 0)
+            self.assertEqual([x["type"] for x in self.events()], ["handoff"])
+        finally:
+            if p.is_alive():
+                p.terminate()
+                p.join(timeout=5)
 
     def test_cleanup_does_not_run_in_market_hours(self):
         scanner.append_event({"type": "vcp_unknown", "date": "2026-11-07", "symbol": "1301", "reason": "MISSING"})
