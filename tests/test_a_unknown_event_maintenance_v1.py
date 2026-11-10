@@ -1,6 +1,7 @@
 """Offline regressions for UNKNOWN audit dedup and daily retention."""
 import json
-import multiprocessing
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -74,32 +75,28 @@ class UnknownEventMaintenanceTest(unittest.TestCase):
         self.assertFalse((self.root / "events.jsonl.unknown-maint.tmp").exists())
 
     def test_cross_process_lock_serializes_append_with_cleanup(self):
-        """A separate process cannot append while housekeeping owns the log lock."""
-        if "fork" not in multiprocessing.get_all_start_methods():
-            self.skipTest("requires Linux fork, matching Render deployment")
-        ctx = multiprocessing.get_context("fork")
-        entered = ctx.Event()
-        started = ctx.Event()
-        # Parent holds the lock; child must not enter append_event until released.
-        def writer(root, ready, begin):
-            scanner.OUTDIR = root
-            ready.set()
-            scanner.append_event({"type": "handoff", "date": "2026-11-10", "symbol": "1301"})
-            begin.set()
-        p = ctx.Process(target=writer, args=(self.root, started, entered))
+        """A separate Python interpreter cannot append while maintenance holds the lock."""
+        script = (
+            "import sys; from pathlib import Path; import fugle_a_scanner_v2_4 as scanner; "
+            "scanner.OUTDIR=Path(sys.argv[1]); "
+            "scanner.append_event({'type':'handoff','date':'2026-11-10','symbol':'1301'})"
+        )
+        process = None
         try:
             with scanner._unknown_event_guard():
-                p.start()
-                self.assertTrue(started.wait(timeout=5))
-                self.assertFalse(entered.wait(timeout=0.2))
-            self.assertTrue(entered.wait(timeout=5))
-            p.join(timeout=5)
-            self.assertEqual(p.exitcode, 0)
+                process = subprocess.Popen(
+                    [sys.executable, "-c", script, str(self.root)],
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                )
+                with self.assertRaises(subprocess.TimeoutExpired):
+                    process.communicate(timeout=0.4)
+            _, stderr = process.communicate(timeout=10)
+            self.assertEqual(process.returncode, 0, stderr.decode(errors="replace"))
             self.assertEqual([x["type"] for x in self.events()], ["handoff"])
         finally:
-            if p.is_alive():
-                p.terminate()
-                p.join(timeout=5)
+            if process is not None and process.poll() is None:
+                process.kill()
+                process.communicate(timeout=5)
 
     def test_cleanup_does_not_run_in_market_hours(self):
         scanner.append_event({"type": "vcp_unknown", "date": "2026-11-07", "symbol": "1301", "reason": "MISSING"})
