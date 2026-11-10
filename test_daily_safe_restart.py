@@ -43,7 +43,7 @@ class RestartTests(unittest.TestCase):
             urlopen.return_value.__enter__.return_value.status=200
             self.ctx["maybe_restart_after_maintenance"](DAY,stages,notice)
             return urlopen.call_count
-    def test_before_two_hours(self):self.assertEqual(self.call(notice="2026-11-06T17:30:00+08:00"),0)
+    def test_no_fixed_two_hour_delay(self):self.assertEqual(self.call(notice="2026-11-06T18:59:00+08:00"),1)
     def test_missing_maintenance(self):self.assertEqual(self.call(stages={"DAILY_K"}),0)
     def test_missing_line(self):self.assertEqual(self.call(notice=None),0)
     def test_f15_incomplete(self):
