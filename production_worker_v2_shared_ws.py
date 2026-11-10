@@ -458,16 +458,9 @@ def maybe_restart_after_maintenance(day, stage_done, notified_at):
     if not notified_at or stage_done != {"DAILY_K", "F10"}:
         return
     now=now_tpe()
-    if now.date().isoformat()!=day or not (17 <= now.hour < 23):
+    if now.date().isoformat()!=day or not (15 <= now.hour < 23):
         return
-    # Preserve the agreed two-hour wait after the maintenance notification.
-    from datetime import datetime as _datetime, timedelta as _timedelta
-    try:
-        if now < _datetime.fromisoformat(notified_at) + _timedelta(hours=2):
-            return
-    except (TypeError, ValueError):
-        print("[DAILY RESTART] invalid maintenance notification time", flush=True)
-        return
+    # Completion-based restart: no fixed 17:00 floor or two-hour delay.
     # All stages, F15, UNKNOWN cleanup and archive lock must also be complete.
     import f15_trajectory_store
     if not f15_trajectory_store.report_and_trajectory_complete(day):
