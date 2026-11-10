@@ -1,7 +1,6 @@
 """Offline regressions for UNKNOWN audit dedup and daily retention."""
 import json
 import multiprocessing
-import time
 import tempfile
 import unittest
 from pathlib import Path
@@ -80,7 +79,6 @@ class UnknownEventMaintenanceTest(unittest.TestCase):
             self.skipTest("requires Linux fork, matching Render deployment")
         ctx = multiprocessing.get_context("fork")
         entered = ctx.Event()
-        release = ctx.Event()
         started = ctx.Event()
         # Parent holds the lock; child must not enter append_event until released.
         def writer(root, ready, begin):
@@ -88,16 +86,12 @@ class UnknownEventMaintenanceTest(unittest.TestCase):
             ready.set()
             scanner.append_event({"type": "handoff", "date": "2026-11-10", "symbol": "1301"})
             begin.set()
-        with scanner._unknown_event_guard():
-            p = ctx.Process(target=writer, args=(self.root, started, entered))
-            p.start()
-            try:
+        p = ctx.Process(target=writer, args=(self.root, started, entered))
+        try:
+            with scanner._unknown_event_guard():
+                p.start()
                 self.assertTrue(started.wait(timeout=5))
                 self.assertFalse(entered.wait(timeout=0.2))
-            finally:
-                # Leave guard before waiting for child to avoid a deadlock.
-                pass
-        try:
             self.assertTrue(entered.wait(timeout=5))
             p.join(timeout=5)
             self.assertEqual(p.exitcode, 0)
