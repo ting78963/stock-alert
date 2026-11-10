@@ -59,6 +59,18 @@ class UnknownEventMaintenanceTest(unittest.TestCase):
         self.assertEqual(result["removed"], 2)
         self.assertEqual([x["type"] for x in self.events()], ["vcp_unknown", "handoff"])
 
+    def test_low_disk_aborts_without_touching_original(self):
+        record = {"type": "vcp_unknown", "date": "2026-11-07", "symbol": "1301", "reason": "MISSING"}
+        path = self.root / "events.jsonl"
+        path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+        original = path.read_bytes()
+        with patch.object(scanner, "is_market_window", return_value=False):
+            with patch("shutil.disk_usage", return_value=(100000000, 99999999, 1)):
+                with self.assertRaises(OSError):
+                    scanner.maintain_unknown_event_log("2026-11-10")
+        self.assertEqual(path.read_bytes(), original)
+        self.assertFalse((self.root / "events.jsonl.unknown-maint.tmp").exists())
+
     def test_cleanup_does_not_run_in_market_hours(self):
         scanner.append_event({"type": "vcp_unknown", "date": "2026-11-07", "symbol": "1301", "reason": "MISSING"})
         before = (self.root / "events.jsonl").read_bytes()
