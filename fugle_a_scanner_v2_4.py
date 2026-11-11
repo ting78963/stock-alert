@@ -2310,7 +2310,7 @@ class Scanner:
                             "code": symbol, "name": s.get("name") or symbol,
                             "todayVol": today_vol, "volRatio": round(raw_vr5, 2),
                             "chgPct": round(chg, 2), "price": price,
-                            "vcpInfo": None, "source": "NO_VCP",
+                            "vcpInfo": None, "source": "FLOW" if self.layered_a_enabled else "NO_VCP",
                             "ma20": round(ma20, 2),
                             "rawVr5": round(raw_vr5, 4),
                             "volumeTriggers": ["F10_INCOMPLETE_NO_VCP"],
@@ -2353,6 +2353,8 @@ class Scanner:
                 else:
                     hit = self.selector.select_one(s_for_select, meta, bars)
                 chosen = hit
+                if chosen and self.layered_a_enabled and chosen.get("source") == "NO_VCP":
+                    chosen["source"] = "FLOW"
                 if chosen:
                     if chosen.get("source") != "SURGE":
                         chosen["rawVr5"] = round(raw_vr5, 4)
