@@ -14,10 +14,12 @@ class IndependentVcpLineTests(unittest.TestCase):
         self.decision = {"watch":{"pivot":77.5},"raw_vr5":2.66}
         self.event = make_event(self.row,self.decision,"2026-11-12","09:26:00")
 
-    def test_no_fallback_to_existing_production_group(self):
-        with patch.dict(os.environ, {"LINE_TOKEN":"test-token", "GROUP_ID":"production-group", "LINE_TO_ID":"production-to"}, clear=True):
-            with self.assertRaisesRegex(RuntimeError, "A_VCP_LINE_TO_ID"):
+    def test_reuse_existing_line_to_id(self):
+        with patch.dict(os.environ, {"LINE_TOKEN":"test-token", "LINE_TO_ID":"existing-to"}, clear=True):
+            with patch("a_vcp_line_notify_v1.urllib.request.urlopen") as post:
+                post.return_value.__enter__.return_value.status = 200
                 send_line({"type":"flex"}, "2026-11-12|6150")
+                self.assertEqual(json.loads(post.call_args.args[0].data)["to"], "existing-to")
 
     def test_pending_below_pivot_not_sent_or_marked(self):
         sent = {}
@@ -48,7 +50,7 @@ class IndependentVcpLineTests(unittest.TestCase):
             response = MagicMock()
             response.__enter__.return_value.status = 200
             return response
-        with patch.dict(os.environ, {"LINE_TOKEN":"test-token", "A_VCP_LINE_TO_ID":"test-only"}, clear=True):
+        with patch.dict(os.environ, {"LINE_TOKEN":"test-token", "LINE_TO_ID":"test-only"}, clear=True):
             with patch("a_vcp_line_notify_v1.urllib.request.urlopen", side_effect=accepted):
                 send_line({"type":"flex"}, "2026-11-12|6150")
                 send_line({"type":"flex"}, "2026-11-12|6150")
@@ -59,7 +61,7 @@ class IndependentVcpLineTests(unittest.TestCase):
 
     def test_line_500_remains_retryable(self):
         err = urllib.error.HTTPError("https://api.line.me", 500, "Server Error", {}, None)
-        with patch.dict(os.environ, {"LINE_TOKEN":"test-token", "A_VCP_LINE_TO_ID":"test-only"}, clear=True):
+        with patch.dict(os.environ, {"LINE_TOKEN":"test-token", "LINE_TO_ID":"test-only"}, clear=True):
             with patch("a_vcp_line_notify_v1.urllib.request.urlopen", side_effect=err):
                 with self.assertRaises(urllib.error.HTTPError):
                     send_line({"type":"flex"}, "2026-11-12|6150")
