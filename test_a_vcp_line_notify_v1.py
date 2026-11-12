@@ -17,6 +17,19 @@ class IndependentVcpLineTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "A_VCP_LINE_TO_ID"):
                 send_line({"type":"flex"}, "2026-11-12|6150")
 
+    def test_pending_below_pivot_not_sent_or_marked(self):
+        sent = {}
+        calls = []
+        event = dict(self.event, price=77.0)
+        self.assertFalse(notify_once(event, sent, sender=lambda flex, key: calls.append(key)))
+        self.assertEqual(sent, {})
+        self.assertEqual(calls, [])
+
+    def test_at_pivot_not_sent(self):
+        sent = {}
+        self.assertFalse(notify_once(dict(self.event, price=77.5), sent, sender=lambda flex, key: None))
+        self.assertEqual(sent, {})
+
     def test_actual_pivot_and_snapshot(self):
         self.assertEqual(self.event["pivot"],77.5)
         self.assertEqual(self.event["price"],78.4)
