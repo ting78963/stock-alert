@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 import unittest
 import os
+import json
+import urllib.error
 from unittest.mock import patch
 from a_vcp_line_notify_v1 import make_event, notify_once, send_line
 
@@ -29,6 +31,37 @@ class IndependentVcpLineTests(unittest.TestCase):
         sent = {}
         self.assertFalse(notify_once(dict(self.event, price=77.5), sent, sender=lambda flex, key: None))
         self.assertEqual(sent, {})
+
+    def test_persisted_dedupe_survives_restart(self):
+        sent = {}
+        self.assertTrue(notify_once(self.event, sent, sender=lambda flex, key: None))
+        reloaded = json.loads(json.dumps({"vcp_line_sent": sent}))["vcp_line_sent"]
+        calls = []
+        self.assertFalse(notify_once(self.event, reloaded, sender=lambda flex, key: calls.append(key)))
+        self.assertEqual(calls, [])
+
+    def test_line_retry_key_stable_and_409_accepted(self):
+        from unittest.mock import Mock
+        reqs = []
+        def accepted(req, timeout):
+            reqs.append(req)
+            return Mock(__enter__=lambda self: Mock(status=200),
+                        __exit__=lambda self, exc_type, exc, tb: False)
+        with patch.dict(os.environ, {"LINE_TOKEN":"test-token", "A_VCP_LINE_TO_ID":"test-only"}, clear=True):
+            with patch("a_vcp_line_notify_v1.urllib.request.urlopen", side_effect=accepted):
+                send_line({"type":"flex"}, "2026-11-12|6150")
+                send_line({"type":"flex"}, "2026-11-12|6150")
+            self.assertEqual(reqs[0].get_header("X-line-retry-key"), reqs[1].get_header("X-line-retry-key"))
+            err = urllib.error.HTTPError("https://api.line.me", 409, "Conflict", {}, None)
+            with patch("a_vcp_line_notify_v1.urllib.request.urlopen", side_effect=err):
+                send_line({"type":"flex"}, "2026-11-12|6150")
+
+    def test_line_500_remains_retryable(self):
+        err = urllib.error.HTTPError("https://api.line.me", 500, "Server Error", {}, None)
+        with patch.dict(os.environ, {"LINE_TOKEN":"test-token", "A_VCP_LINE_TO_ID":"test-only"}, clear=True):
+            with patch("a_vcp_line_notify_v1.urllib.request.urlopen", side_effect=err):
+                with self.assertRaises(urllib.error.HTTPError):
+                    send_line({"type":"flex"}, "2026-11-12|6150")
 
     def test_actual_pivot_and_snapshot(self):
         self.assertEqual(self.event["pivot"],77.5)
