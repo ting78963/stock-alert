@@ -44,9 +44,10 @@ def notify_once(event, sent, *, sender=None):
 
 def send_line(flex, key):
     token = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "").strip() or os.getenv("LINE_TOKEN", "").strip()
-    to = os.getenv("LINE_TO_ID", "").strip() or os.getenv("GROUP_ID", "").strip()
+    # Dedicated destination required: never fall back to the existing production B group.
+    to = os.getenv("A_VCP_LINE_TO_ID", "").strip()
     if not token or not to:
-        raise RuntimeError("VCP LINE credentials missing")
+        raise RuntimeError("VCP LINE token or dedicated A_VCP_LINE_TO_ID missing")
     payload = json.dumps({"to": to, "messages": [flex]}, ensure_ascii=False).encode("utf-8")
     retry = str(uuid.uuid5(uuid.NAMESPACE_URL, "a-vcp-line:" + key))
     req = urllib.request.Request(ENDPOINT, data=payload, method="POST", headers={
