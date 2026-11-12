@@ -5,10 +5,10 @@ No sending, trading decision or A->B handoff is performed here.
 """
 from __future__ import annotations
 import copy
+import math
 from line_signal_notifier_v3 import build_flex, C_MUTED, C_BORDER, C_TEXT
 
 ORANGE = "#E87900"
-ORANGE_DARK = "#C65D00"
 RED = "#B4232C"
 
 
@@ -31,7 +31,7 @@ def build_vcp_flex(event):
             raise ValueError(f"VCP FLEX missing {key}")
     pivot = float(event["pivot"])
     price = float(event["price"])
-    if pivot <= 0 or price <= 0:
+    if not math.isfinite(pivot) or not math.isfinite(price) or pivot <= 0 or price <= 0:
         raise ValueError("VCP FLEX requires positive pivot and price")
     # Derive from the existing approved v3 template, not a separate visual system.
     base = build_flex({
@@ -59,11 +59,11 @@ def build_vcp_flex(event):
         _text("股價觸及 VCP 整理型態關鍵突破價位。", color=C_MUTED),
         {"type":"separator","color":C_BORDER,"margin":"xl"},
         {"type":"box","layout":"horizontal","spacing":"sm","margin":"lg","contents":[
-            {"type":"box","layout":"vertical","flex":1,"backgroundColor":ORANGE,
+            {"type":"box","layout":"vertical","flex":1,"backgroundColor":"#FFFFFF",
              "cornerRadius":"lg","paddingAll":"md","contents":[
                 _text("突破門檻 · Pivot",color=C_MUTED,size="xs"),
                 _text(f"{pivot:g} 元",color=ORANGE,size="xl",weight="bold")]},
-            {"type":"box","layout":"vertical","flex":1,"backgroundColor":ORANGE,
+            {"type":"box","layout":"vertical","flex":1,"backgroundColor":"#FFFFFF",
              "cornerRadius":"lg","paddingAll":"md","contents":[
                 _text("目前成交價",color=C_MUTED,size="xs"),
                 _text(f"{price:g} 元",color=ORANGE,size="xl",weight="bold")]},
@@ -72,9 +72,9 @@ def build_vcp_flex(event):
          "cornerRadius":"md","paddingAll":"md","margin":"sm","contents":[
             _text("↗ 已突破 Pivot" if price > pivot else
                   ("＝ 位於突破門檻" if price == pivot else "↘ 回落至突破價下方"),
-                  color="#FFFFFF",weight="bold"),
+                  color=ORANGE,weight="bold"),
             _text(f"{price-pivot:+.2f} 元  ({(price-pivot)/pivot*100:+.2f}%)",
-                  color=ORANGE_DARK if price > pivot else RED,weight="bold"),
+                  color=ORANGE,weight="bold"),
         ]},
     ])
     details = []
@@ -87,7 +87,7 @@ def build_vcp_flex(event):
     for label in event.get("indicator_labels") or []:
         contents.append(_text(str(label),color=ORANGE if ("黃金交叉" in str(label) or "準備交叉" in str(label)) else RED,weight="bold"))
     contents.extend([
-        {"type":"box","layout":"vertical","backgroundColor":"#FFFFFF","cornerRadius":"lg",
+        {"type":"box","layout":"vertical","backgroundColor":ORANGE,"cornerRadius":"lg",
          "paddingAll":"md","margin":"xl","contents":[
             {"type":"text","text":"◆  VCP 突破確認","size":"md","weight":"bold","color":"#FFFFFF","align":"center"}]},
         _text(f"◷  VCP 辨識成立  {str(event['recognition_time'])[:5]}",color=C_MUTED),
