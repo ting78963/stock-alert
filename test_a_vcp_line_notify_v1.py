@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 import unittest
-from a_vcp_line_notify_v1 import make_event, notify_once
+import os
+from unittest.mock import patch
+from a_vcp_line_notify_v1 import make_event, notify_once, send_line
 
 
 class IndependentVcpLineTests(unittest.TestCase):
@@ -9,6 +11,11 @@ class IndependentVcpLineTests(unittest.TestCase):
                     "change_rate":1.82,"total_volume":8824}
         self.decision = {"watch":{"pivot":77.5},"raw_vr5":2.66}
         self.event = make_event(self.row,self.decision,"2026-11-12","09:26:00")
+
+    def test_no_fallback_to_existing_production_group(self):
+        with patch.dict(os.environ, {"LINE_TOKEN":"test-token", "GROUP_ID":"production-group", "LINE_TO_ID":"production-to"}, clear=True):
+            with self.assertRaisesRegex(RuntimeError, "A_VCP_LINE_TO_ID"):
+                send_line({"type":"flex"}, "2026-11-12|6150")
 
     def test_actual_pivot_and_snapshot(self):
         self.assertEqual(self.event["pivot"],77.5)
