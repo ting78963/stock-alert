@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Offline regression checks: approved B card stays unchanged; VCP is presentation-only."""
 import copy
+import math
 import unittest
 from a_vcp_flex_v1 import build_vcp_flex
 from line_signal_notifier_v3 import build_flex
@@ -25,6 +26,22 @@ class VcpFlexTests(unittest.TestCase):
         self.assertIn("#E87900", data)
         self.assertIn("週KD✦ 黃金交叉", data)
         self.assertNotIn("立即買進", data)
+
+    def test_approved_color_contrast(self):
+        card = build_vcp_flex(self.e)
+        body = card["contents"]["body"]["contents"]
+        price_panels = next(n for n in body if n.get("type") == "box" and n.get("layout") == "horizontal" and n.get("spacing") == "sm")
+        for panel in price_panels["contents"]:
+            self.assertEqual(panel["backgroundColor"], "#FFFFFF")
+            self.assertEqual(panel["contents"][1]["color"], "#E87900")
+        self.assertTrue(any(n.get("backgroundColor") == "#E87900" and n["contents"][0]["color"] == "#FFFFFF" for n in body if isinstance(n, dict) and n.get("type") == "box" and n.get("layout") == "vertical"))
+
+    def test_nonfinite_price_fails_closed(self):
+        for value in (math.nan, math.inf, -math.inf):
+            with self.subTest(value=value):
+                self.e["pivot"] = value
+                with self.assertRaises(ValueError):
+                    build_vcp_flex(self.e)
 
     def test_b_original_is_unchanged(self):
         e = dict(signal_class="A", stock_id="6150", stock_name="測試股票",
