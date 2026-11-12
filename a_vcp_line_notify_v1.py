@@ -4,6 +4,7 @@ import json
 import os
 import uuid
 import urllib.request
+import urllib.error
 
 from a_vcp_flex_v1 import build_vcp_flex
 
@@ -52,6 +53,11 @@ def send_line(flex, key):
         "Content-Type": "application/json", "Authorization": "Bearer " + token,
         "X-Line-Retry-Key": retry,
     })
-    with urllib.request.urlopen(req, timeout=10) as response:
-        if response.status not in (200, 409):
-            raise RuntimeError("VCP LINE status " + str(response.status))
+    try:
+        with urllib.request.urlopen(req, timeout=10) as response:
+            if response.status != 200:
+                raise RuntimeError("VCP LINE status " + str(response.status))
+    except urllib.error.HTTPError as exc:
+        # LINE retry-key duplicate acceptance is 409; other errors retry next scan.
+        if exc.code != 409:
+            raise
