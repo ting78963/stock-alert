@@ -21,9 +21,9 @@ def classify(meta):
         return "MISSING_F11"
     if str(meta.get("market", "")).upper() == "ESB":
         return "EXCLUDED_ESB"
-    if str(meta.get("securityType", "")) != "01":
+    if str(meta.get("securityType") or "") not in ("", "01"):
         return "EXCLUDED_SECURITY_TYPE"
-    if str(meta.get("industry", "")).zfill(2) in EXCLUDED:
+    if str(meta.get("industry") or "") in EXCLUDED:
         return "EXCLUDED_INDUSTRY"
     return "ELIGIBLE_F11"
 
