@@ -41,12 +41,13 @@ class IndependentVcpLineTests(unittest.TestCase):
         self.assertEqual(calls, [])
 
     def test_line_retry_key_stable_and_409_accepted(self):
-        from unittest.mock import Mock
+        from unittest.mock import MagicMock
         reqs = []
         def accepted(req, timeout):
             reqs.append(req)
-            return Mock(__enter__=lambda self: Mock(status=200),
-                        __exit__=lambda self, exc_type, exc, tb: False)
+            response = MagicMock()
+            response.__enter__.return_value.status = 200
+            return response
         with patch.dict(os.environ, {"LINE_TOKEN":"test-token", "A_VCP_LINE_TO_ID":"test-only"}, clear=True):
             with patch("a_vcp_line_notify_v1.urllib.request.urlopen", side_effect=accepted):
                 send_line({"type":"flex"}, "2026-11-12|6150")
