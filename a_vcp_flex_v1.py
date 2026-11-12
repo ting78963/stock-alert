@@ -59,10 +59,10 @@ def build_vcp_flex(event):
         _text("股價觸及 VCP 整理型態關鍵突破價位。", color=C_MUTED),
         {"type":"separator","color":C_BORDER,"margin":"xl"},
         {"type":"box","layout":"horizontal","spacing":"sm","margin":"lg","contents":[
-            {"type":"box","layout":"vertical","flex":1,"backgroundColor":"#F3F4F6",
+            {"type":"box","layout":"vertical","flex":1,"backgroundColor":"#FFF5EA",
              "cornerRadius":"lg","paddingAll":"md","contents":[
-                _text("突破門檻 · Pivot",color=C_MUTED,size="xs"),
-                _text(f"{pivot:g} 元",color=C_TEXT,size="xl",weight="bold")]},
+                _text("突破門檻 · Pivot",color=ORANGE_DARK,size="xs"),
+                _text(f"{pivot:g} 元",color=ORANGE_DARK,size="xl",weight="bold")]},
             {"type":"box","layout":"vertical","flex":1,"backgroundColor":"#FFF0DD",
              "cornerRadius":"lg","paddingAll":"md","contents":[
                 _text("目前成交價",color=ORANGE_DARK,size="xs"),
