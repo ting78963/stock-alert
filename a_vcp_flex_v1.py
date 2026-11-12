@@ -58,12 +58,24 @@ def build_vcp_flex(event):
     contents.extend([
         _text("股價觸及 VCP 整理型態關鍵突破價位。", color=C_MUTED),
         {"type":"separator","color":C_BORDER,"margin":"xl"},
-        {"type":"box","layout":"vertical","backgroundColor":"#FFF2E5","cornerRadius":"lg",
-         "paddingAll":"md","margin":"lg","contents":[
-            _text("VCP 突破價位（Pivot）",color=C_MUTED,size="xs"),
-            _text(f"{pivot:g}",color=ORANGE,size="xl",weight="bold"),
-            _text(f"目前成交價 {price:g}",color=RED,size="md",weight="bold"),
-         ]},
+        {"type":"box","layout":"horizontal","spacing":"sm","margin":"lg","contents":[
+            {"type":"box","layout":"vertical","flex":1,"backgroundColor":"#F3F4F6",
+             "cornerRadius":"lg","paddingAll":"md","contents":[
+                _text("突破門檻 · Pivot",color=C_MUTED,size="xs"),
+                _text(f"{pivot:g} 元",color=C_TEXT,size="xl",weight="bold")]},
+            {"type":"box","layout":"vertical","flex":1,"backgroundColor":"#FFF0DD",
+             "cornerRadius":"lg","paddingAll":"md","contents":[
+                _text("目前成交價",color=ORANGE_DARK,size="xs"),
+                _text(f"{price:g} 元",color=ORANGE_DARK,size="xl",weight="bold")]},
+        ]},
+        {"type":"box","layout":"vertical","backgroundColor":"#FFF3E6",
+         "cornerRadius":"md","paddingAll":"md","margin":"sm","contents":[
+            _text("↗ 已突破 Pivot" if price > pivot else
+                  ("＝ 位於突破門檻" if price == pivot else "↘ 回落至突破價下方"),
+                  color=ORANGE_DARK if price > pivot else RED,weight="bold"),
+            _text(f"{price-pivot:+.2f} 元  ({(price-pivot)/pivot*100:+.2f}%)",
+                  color=ORANGE_DARK if price > pivot else RED,weight="bold"),
+        ]},
     ])
     details = []
     for key,label,suffix in (("change_pct","漲跌幅","%"),("vol_ratio","量比","x"),("volume_zhang","目前成交量"," 張")):
