@@ -61,14 +61,14 @@ def build_vcp_flex(event):
         {"type":"box","layout":"horizontal","spacing":"sm","margin":"lg","contents":[
             {"type":"box","layout":"vertical","flex":1,"backgroundColor":ORANGE,
              "cornerRadius":"lg","paddingAll":"md","contents":[
-                _text("突破門檻 · Pivot",color="#FFFFFF",size="xs"),
-                _text(f"{pivot:g} 元",color="#FFFFFF",size="xl",weight="bold")]},
+                _text("突破門檻 · Pivot",color=C_MUTED,size="xs"),
+                _text(f"{pivot:g} 元",color=ORANGE,size="xl",weight="bold")]},
             {"type":"box","layout":"vertical","flex":1,"backgroundColor":ORANGE,
              "cornerRadius":"lg","paddingAll":"md","contents":[
-                _text("目前成交價",color="#FFFFFF",size="xs"),
-                _text(f"{price:g} 元",color="#FFFFFF",size="xl",weight="bold")]},
+                _text("目前成交價",color=C_MUTED,size="xs"),
+                _text(f"{price:g} 元",color=ORANGE,size="xl",weight="bold")]},
         ]},
-        {"type":"box","layout":"vertical","backgroundColor":ORANGE,
+        {"type":"box","layout":"vertical","backgroundColor":"#F5F5F5",
          "cornerRadius":"md","paddingAll":"md","margin":"sm","contents":[
             _text("↗ 已突破 Pivot" if price > pivot else
                   ("＝ 位於突破門檻" if price == pivot else "↘ 回落至突破價下方"),
@@ -85,9 +85,9 @@ def build_vcp_flex(event):
     if event.get("osc_label"):
         contents.append(_text(str(event["osc_label"]),color=RED,weight="bold"))
     for label in event.get("indicator_labels") or []:
-        contents.append(_text(str(label),color=RED,weight="bold"))
+        contents.append(_text(str(label),color=ORANGE if ("黃金交叉" in str(label) or "準備交叉" in str(label)) else RED,weight="bold"))
     contents.extend([
-        {"type":"box","layout":"vertical","backgroundColor":ORANGE,"cornerRadius":"lg",
+        {"type":"box","layout":"vertical","backgroundColor":"#FFFFFF","cornerRadius":"lg",
          "paddingAll":"md","margin":"xl","contents":[
             {"type":"text","text":"◆  VCP 突破確認","size":"md","weight":"bold","color":"#FFFFFF","align":"center"}]},
         _text(f"◷  VCP 辨識成立  {str(event['recognition_time'])[:5]}",color=C_MUTED),
