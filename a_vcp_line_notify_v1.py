@@ -34,12 +34,10 @@ def notify_once(event, sent, *, sender=None):
     key = str(event["date"]) + "|" + str(event["stock_id"])
     if key in sent:
         return False
+    flex = build_vcp_flex(event)  # validate all prices before any network call
     # A proposal can be pending; do not label it a confirmed breakout below Pivot.
-    pivot = float(event["pivot"])
-    price = float(event["price"])
-    if not (price > pivot):
+    if not (float(event["price"]) > float(event["pivot"])):
         return False
-    flex = build_vcp_flex(event)  # validate before any network call
     if sender is None:
         sender = send_line
     sender(flex, key)
