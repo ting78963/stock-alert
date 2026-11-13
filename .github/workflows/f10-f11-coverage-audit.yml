@@ -1,0 +1,18 @@
+name: F10 F11 read-only coverage audit tests
+on:
+  pull_request:
+    paths:
+      - 'research/audit_f10_f11_coverage_v1.py'
+      - 'test_audit_f10_f11_coverage_v1.py'
+      - '.github/workflows/f10-f11-coverage-audit.yml'
+  workflow_dispatch:
+jobs:
+  offline:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Offline coverage tests (no API, no production writes)
+        run: python -m unittest -v test_audit_f10_f11_coverage_v1
