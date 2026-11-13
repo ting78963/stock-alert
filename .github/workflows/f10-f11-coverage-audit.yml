@@ -1,9 +1,11 @@
-name: F10 F11 read-only coverage audit tests
+name: F10 F11 coverage and staging offline tests
 on:
   pull_request:
     paths:
       - 'research/audit_f10_f11_coverage_v1.py'
+      - 'research/stage_f11_from_f10_v1.py'
       - 'test_audit_f10_f11_coverage_v1.py'
+      - 'test_stage_f11_from_f10_v1.py'
       - '.github/workflows/f10-f11-coverage-audit.yml'
   workflow_dispatch:
 jobs:
@@ -14,5 +16,5 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Offline coverage tests (no API, no production writes)
-        run: python -m unittest -v test_audit_f10_f11_coverage_v1
+      - name: Offline coverage and staging tests (no API or production writes)
+        run: python -m unittest -v test_audit_f10_f11_coverage_v1 test_stage_f11_from_f10_v1
