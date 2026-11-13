@@ -2058,7 +2058,21 @@ class Scanner:
                     "reason": "PINNED_VCP_PENDING_OR_CONFIRMED_BREAKOUT" if decision.get("proposals") else "VCP_NOT_HANDOFF_READY",
                     "hit": (decision.get("proposals") or [None])[0],
                     "state": decision.get("vcp_state"), "watch": decision.get("watch"),
+                    "pivot_track": decision.get("pivot_track"), "raw_vr5": raw_vr5,
                 }
+                # Independent A->LINE path: VCP PASS, not A->B already_sent.
+                # Explicit opt-in only; never alter B's existing handoff or notification.
+                if decision.get("proposals") and os.environ.get("A_VCP_LINE_ENABLED") == "1":
+                    try:
+                        from a_vcp_line_notify_v1 import make_event, notify_once
+                        sent = self.state.setdefault("vcp_line_sent", {})
+                        if notify_once(make_event(row, vcp_decisions[symbol], snap_date,
+                                                  now_tw().strftime("%H:%M:%S")), sent):
+                            save_json_atomic(STATE_FILE, self.state)
+                            append_event({"ts": iso_now(), "type": "vcp_line_sent",
+                                          "symbol": symbol, "date": snap_date})
+                    except Exception as exc:
+                        print(f"[A VCP LINE RETRY NEXT SCAN] symbol={symbol} error={exc}", flush=True)
                 if decision.get("fire_event"):
                     append_event({"ts": iso_now(), "type": "vcp_fire", **decision["fire_event"]})
             layered_vcp_seconds = time.monotonic() - vcp_t0
