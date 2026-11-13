@@ -1,0 +1,21 @@
+name: A VCP FLEX isolated tests
+on:
+  push:
+    branches:
+      - feature/a-vcp-flex-notify-20261112
+  pull_request:
+  workflow_dispatch:
+jobs:
+  vcp-offline:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Compile changed Python files
+        run: python -m py_compile a_vcp_flex_v1.py a_vcp_line_notify_v1.py fugle_a_scanner_v2_4.py test_a_vcp_flex_v1.py test_a_vcp_line_notify_v1.py
+      - name: Run VCP isolated tests (no LINE calls)
+        run: python -m unittest -v test_a_vcp_flex_v1 test_a_vcp_line_notify_v1
