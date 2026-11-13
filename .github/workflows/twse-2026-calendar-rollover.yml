@@ -1,0 +1,20 @@
+name: TWSE 2026 calendar rollover regression
+on:
+  push:
+    branches: [fix/twse-2026-calendar-fallback-20261113]
+  pull_request:
+    paths:
+      - twse_session_gate_v1.py
+      - test_twse_calendar_rollover_2026.py
+      - .github/workflows/twse-2026-calendar-rollover.yml
+  workflow_dispatch:
+jobs:
+  calendar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install requests
+      - run: python -m unittest -v test_twse_calendar_rollover_2026

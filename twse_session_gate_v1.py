@@ -15,6 +15,16 @@ class SessionGateError(RuntimeError): pass
 # Extraordinary market-wide closure absent from the annual TWSE holiday calendar.
 EXTRAORDINARY_CLOSED_DAYS = frozenset({date(2026, 10, 23)})
 
+# Frozen from TWSE's published 115 (2026) annual trading calendar.
+# The live OpenAPI endpoint can switch to the next year's schedule early.
+TWSE_2026_CLOSED = frozenset(date.fromisoformat(x) for x in (
+    "2026-01-01", "2026-02-12", "2026-02-13", "2026-02-16",
+    "2026-02-17", "2026-02-18", "2026-02-19", "2026-02-20",
+    "2026-02-27", "2026-04-03", "2026-04-06", "2026-05-01",
+    "2026-06-19", "2026-09-25", "2026-09-28", "2026-10-09",
+    "2026-10-26", "2026-12-25",
+))
+
 def _ymd(x):
     s=str(x or "").strip().replace("/","-")
     digits=''.join(ch for ch in s if ch.isdigit())
@@ -54,6 +64,8 @@ def is_scheduled_open(day=None, rows=None):
         raise SessionGateError("TWSE holiday schedule has no parseable Date rows")
     # Fail closed if the returned annual schedule is for a different year.
     if day.year not in {d.year for d in parsed_dates}:
+        if day.year == 2026:
+            return day not in TWSE_2026_CLOSED
         raise SessionGateError(f"TWSE holiday schedule does not cover {day.year}")
     if not same:
         return True
