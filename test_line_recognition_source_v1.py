@@ -15,6 +15,14 @@ class RecognitionSourceTest(unittest.TestCase):
         self.assertIn('self.recognition_source=str(recognition_source or "").strip()', runner)
         self.assertEqual(runner.count('"recognition_source":self.recognition_source'), 2)
 
+    def test_layered_flow_source_is_not_legacy_no_vcp(self):
+        a = (ROOT / "fugle_a_scanner_v2_4.py").read_text(encoding="utf-8")
+        self.assertIn('"source": "FLOW" if self.layered_a_enabled else "NO_VCP"', a)
+        self.assertIn('if chosen and self.layered_a_enabled and chosen.get("source") == "NO_VCP":', a)
+        self.assertIn('chosen["source"] = "FLOW"', a)
+        self.assertIn('"source": "SURGE"', a)
+        self.assertIn('result["source"] = "VCP"', a)
+
     def test_flex_displays_source_without_changing_retry_key(self):
         src = (ROOT / "line_signal_notifier_v3.py").read_text(encoding="utf-8")
         self.assertIn('f"辨識來源：{source}"', src)
