@@ -90,7 +90,7 @@ def build_vcp_flex(event):
         {"type":"box","layout":"vertical","backgroundColor":ORANGE,"cornerRadius":"lg",
          "paddingAll":"md","margin":"xl","contents":[
             {"type":"text","text":"◆  VCP 突破確認","size":"md","weight":"bold","color":"#FFFFFF","align":"center"}]},
-        _text(f"◷  VCP 辨識成立  {str(event['recognition_time'])[:5]}",color=C_MUTED),
+        {**_text(f"◷  VCP 辨識成立  {str(event['recognition_time'])[:5]}",color=C_MUTED), "align":"center"},
         {"type":"separator","color":C_BORDER,"margin":"xl"},
         {"type":"box","layout":"horizontal","contents":[
             {"type":"text","text":"辨識訊號・僅供參考","size":"xxs","color":C_MUTED,"flex":1},
