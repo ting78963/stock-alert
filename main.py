@@ -306,6 +306,53 @@ def maintenance_flex_test():
         print("[MAINT FLEX WEB TEST] LINE API success", flush=True)
         return jsonify(ok=True, sent=True, destination="LINE_TO_ID", type="flex")
 
+
+# Browser-triggered, token-protected VCP Flex smoke test. Never invokes A/B.
+_vcp_web_test_lock = threading.Lock()
+_vcp_web_test_sent = False
+
+@app.get("/audit/vcp-flex-test")
+def audit_vcp_flex_test():
+    global _vcp_web_test_sent
+    import hmac
+    import uuid
+    expected = os.environ.get("VCP_FLEX_TEST_TOKEN", "").strip()
+    supplied = request.args.get("token", "")
+    if not expected or not hmac.compare_digest(supplied, expected):
+        return jsonify(ok=False, error="unauthorized"), 403
+    with _vcp_web_test_lock:
+        if _vcp_web_test_sent:
+            return jsonify(ok=True, already_sent=True, message="VCP test already sent"), 200
+        to = os.environ.get("LINE_TO_ID", "").strip()
+        token = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "").strip() or os.environ.get("LINE_TOKEN", "").strip()
+        if not token or not to:
+            return jsonify(ok=False, error="LINE configuration missing"), 503
+        from a_vcp_flex_v1 import build_vcp_flex
+        card = build_vcp_flex({
+            "stock_id": "6150", "name": "VCP測試標的",
+            "date": "2026-11-13", "recognition_time": "09:26:00",
+            "pivot": 77.5, "price": 78.4,
+            "change_pct": 1.82, "vol_ratio": 2.66, "volume_zhang": 8824,
+        })
+        card["altText"] = "【測試】VCP LINE FLEX 發送驗證"
+        card["contents"]["body"]["contents"].insert(0, {
+            "type": "text", "text": "【測試訊息】非真實股票訊號",
+            "size": "sm", "weight": "bold", "color": "#B4232C", "wrap": True
+        })
+        retry_key = str(uuid.uuid5(uuid.NAMESPACE_URL, "stock-alert-vcp-web-smoke-v1"))
+        try:
+            response = requests.post("https://api.line.me/v2/bot/message/push",
+                headers={"Authorization": "Bearer " + token, "X-Line-Retry-Key": retry_key},
+                json={"to": to, "messages": [card]}, timeout=12)
+            if response.status_code not in (200, 409):
+                response.raise_for_status()
+        except requests.RequestException as exc:
+            print("[VCP WEB SMOKE] failed: " + type(exc).__name__, flush=True)
+            return jsonify(ok=False, error="LINE push failed"), 502
+        _vcp_web_test_sent = True
+        print("[VCP WEB SMOKE] accepted by LINE", flush=True)
+        return jsonify(ok=True, sent=True, test_only=True, destination="LINE_TO_ID")
+
 @app.get("/status")
 def status():
     return jsonify(
