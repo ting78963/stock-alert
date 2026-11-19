@@ -79,5 +79,27 @@ class ZeroSignalRestartTests(unittest.TestCase):
         registry_path.write_text(json.dumps(registry), encoding="utf-8")
         self.assertFalse(trajectory.report_and_trajectory_complete(self.day))
 
+    def test_unsent_line_signal_blocks_zero_certification(self):
+        FakeDatetime.now_value = RealDatetime(2026, 11, 19, 16, 31)
+        event_dir = report.EVENTS / self.day / "2330"
+        event_dir.mkdir(parents=True)
+        (event_dir / "signal_event.json").write_text(json.dumps({
+            "date": self.day, "stock_id": "2330", "signal_class": "A",
+            "recognition_time": "09:30:00", "line_sent": False
+        }), encoding="utf-8")
+        self.assertEqual(report.process_day(self.day), "no_events")
+        self.assertFalse(trajectory.report_and_trajectory_complete(self.day))
+
+    def test_unsent_event_after_zero_certification_blocks_restart(self):
+        FakeDatetime.now_value = RealDatetime(2026, 11, 19, 16, 31)
+        self.assertEqual(report.process_day(self.day), "zero_verified")
+        event_dir = report.EVENTS / self.day / "2330"
+        event_dir.mkdir(parents=True)
+        (event_dir / "signal_event.json").write_text(json.dumps({
+            "date": self.day, "stock_id": "2330", "signal_class": "A",
+            "recognition_time": "09:30:00", "line_sent": False
+        }), encoding="utf-8")
+        self.assertFalse(trajectory.report_and_trajectory_complete(self.day))
+
 if __name__ == "__main__":
     unittest.main()

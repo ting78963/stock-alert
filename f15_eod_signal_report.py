@@ -39,6 +39,20 @@ def load_events(day):
   k=(e["date"],str(e["stock_id"]).zfill(4),e["signal_class"],e["recognition_time"])
   if k not in seen:seen.add(k);out.append(e)
  return out
+def has_unsent_signal_events(day):
+ # A generated signal whose LINE delivery is not confirmed is NOT a zero-signal day.
+ root=EVENTS/day
+ if not root.is_dir():return False
+ for sd in sorted(root.iterdir()):
+  if not sd.is_dir():continue
+  for name in ("p1_signal_event.json","signal_event.json"):
+   p=sd/name
+   if not p.is_file():continue
+   e=json.loads(p.read_text(encoding="utf-8"))
+   if e.get("date")!=day or str(e.get("stock_id","")).zfill(4)!=sd.name.zfill(4):
+    raise RuntimeError(f"F15 event identity mismatch {p}")
+   if e.get("line_sent") is not True:return True
+ return False
 def build_report(day):
  ev=load_events(day)
  if not ev:return None
@@ -130,7 +144,7 @@ def process_day(day,send_line=True):
    return "no_events"
   if day>now.date().isoformat():return "no_events"
   # Recheck authoritative delivered events before persisting zero.
-  if load_events(day):return "no_events"
+  if load_events(day) or has_unsent_signal_events(day):return "no_events"
   r["dates"][day]={"total":0,"zero_signals_verified_at_taipei":now.isoformat(timespec="seconds")}
   atomic(p,r)
   print(f"[F15 ZERO DAY] {day} total=0 verified",flush=True)

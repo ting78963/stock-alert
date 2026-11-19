@@ -83,7 +83,7 @@ def report_and_trajectory_complete(day):
    stamp=datetime.fromisoformat(verified)
    if stamp.date().isoformat()!=day or (stamp.hour,stamp.minute)<(15,30):return False
   except (TypeError,ValueError):return False
-  return len(f15.load_events(day))==0
+  return len(f15.load_events(day))==0 and not f15.has_unsent_signal_events(day)
  events=f15.load_events(day)
  if len(events)!=expected:return False
  manifest_path=OUT/day/"manifest.json"
