@@ -122,7 +122,19 @@ def process_day(day,send_line=True):
  p,r=reg()
  if day in r["dates"]:return "already_sent"
  x=build_report(day)
- if x is None:return "no_events"
+ if x is None:
+  # A zero-signal trading day is complete only after the post-close
+  # maintenance window; never certify an empty intraday snapshot.
+  now=datetime.now(TPE)
+  if day==now.date().isoformat() and (now.hour,now.minute)<(15,30):
+   return "no_events"
+  if day>now.date().isoformat():return "no_events"
+  # Recheck authoritative delivered events before persisting zero.
+  if load_events(day):return "no_events"
+  r["dates"][day]={"total":0,"zero_signals_verified_at_taipei":now.isoformat(timespec="seconds")}
+  atomic(p,r)
+  print(f"[F15 ZERO DAY] {day} total=0 verified",flush=True)
+  return "zero_verified"
  if not send_line:return x
  send(x);r["dates"][day]={"sent_at_taipei":datetime.now(TPE).isoformat(timespec="seconds"),"total":x["total"]};atomic(p,r);print(f"[F15 SENT] {day} total={x['total']} delayed={x['delayed']}",flush=True);return "sent"
 def days():
@@ -145,7 +157,7 @@ def loop():
    if d in completed or (d==today and (n.hour,n.minute)<(13,40)):continue
    try:
     result=process_day(d,True)
-    if result in ("sent","already_sent"):
+    if result in ("sent","already_sent","zero_verified"):
      completed.add(d)
    except BaseException as e:print(f"[F15 FAIL] {d} {type(e).__name__}: {e}",flush=True)
   time.sleep(300)

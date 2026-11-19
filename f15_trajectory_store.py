@@ -73,7 +73,17 @@ def report_and_trajectory_complete(day):
  sent=registry["dates"].get(day)
  if not isinstance(sent,dict):return False
  expected=sent.get("total")
- if not isinstance(expected,int) or expected<=0:return False
+ if not isinstance(expected,int) or expected<0:return False
+ if expected==0:
+  # Zero days have no trajectory files, but must have an explicit
+  # post-close zero certificate and still have zero delivered events.
+  verified=sent.get("zero_signals_verified_at_taipei")
+  if not isinstance(verified,str):return False
+  try:
+   stamp=datetime.fromisoformat(verified)
+   if stamp.date().isoformat()!=day or (stamp.hour,stamp.minute)<(15,30):return False
+  except (TypeError,ValueError):return False
+  return len(f15.load_events(day))==0
  events=f15.load_events(day)
  if len(events)!=expected:return False
  manifest_path=OUT/day/"manifest.json"
