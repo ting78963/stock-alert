@@ -58,5 +58,26 @@ class ZeroSignalRestartTests(unittest.TestCase):
         self.assertFalse(trajectory.report_and_trajectory_complete(self.day))
 
 
+    def test_cleanup_and_restart_both_use_f15_gate(self):
+        # Check the actual production orchestration, not only F15 helpers.
+        import ast
+        worker = (Path(__file__).resolve().parents[1] / "production_worker_v2_shared_ws.py").read_text(encoding="utf-8")
+        tree = ast.parse(worker)
+        for name in ("maybe_cleanup_after_maintenance", "maybe_restart_after_maintenance"):
+            fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == name)
+            src = ast.get_source_segment(worker, fn)
+            self.assertIn("report_and_trajectory_complete(day)", src)
+        self.assertIn("maybe_cleanup_after_maintenance(day,stage_done,notified_at)", worker)
+        self.assertIn("maybe_restart_after_maintenance(day,stage_done,notified_at)", worker)
+
+    def test_zero_day_rejected_if_certificate_missing_or_malformed(self):
+        FakeDatetime.now_value = RealDatetime(2026, 11, 19, 16, 31)
+        self.assertEqual(report.process_day(self.day), "zero_verified")
+        registry_path = report.OUT / "sent_registry.json"
+        registry = json.loads(registry_path.read_text(encoding="utf-8"))
+        del registry["dates"][self.day]["zero_signals_verified_at_taipei"]
+        registry_path.write_text(json.dumps(registry), encoding="utf-8")
+        self.assertFalse(trajectory.report_and_trajectory_complete(self.day))
+
 if __name__ == "__main__":
     unittest.main()
