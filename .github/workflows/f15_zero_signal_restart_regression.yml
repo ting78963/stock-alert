@@ -1,0 +1,23 @@
+name: F15 zero-signal restart regression
+
+on:
+  push:
+    branches:
+      - 'codex/zero-signal-restart-gate-*'
+  pull_request:
+    paths:
+      - 'f15_eod_signal_report.py'
+      - 'f15_trajectory_store.py'
+      - 'tests/test_f15_zero_signal_restart.py'
+      - '.github/workflows/f15_zero_signal_restart_regression.yml'
+
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m py_compile f15_eod_signal_report.py f15_trajectory_store.py tests/test_f15_zero_signal_restart.py
+      - run: python -m unittest discover -s tests -p 'test_f15_zero_signal_restart.py' -v
