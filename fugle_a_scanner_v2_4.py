@@ -1948,8 +1948,12 @@ class Scanner:
             bars = adapter.daily_history_local_ready(symbol, snap_date)
         except Exception as exc:
             return meta, None, f"VCP_LOCAL_HISTORY_ERROR:{type(exc).__name__}"
-        if not isinstance(bars, list) or len(bars) < 60:
-            return meta, None, "VCP_PRIOR_60_DAILY_BARS_NOT_READY"
+        # Match the original analyzeVCP input guard: n >= 30 including today's
+        # snapshot, therefore 29 prior completed daily bars. The original JS
+        # intentionally evaluates its slices at that guard; do not impose a
+        # new 60-prior-session gate that could suppress a source-confirmed hit.
+        if not isinstance(bars, list) or len(bars) < 29:
+            return meta, None, "VCP_PRIOR_29_DAILY_BARS_NOT_READY"
         dates = [str(getattr(bar, "date", "")) for bar in bars]
         if dates != sorted(set(dates)) or any(day >= snap_date for day in dates):
             return meta, None, "VCP_HISTORY_IDENTITY_OR_CAUSAL_ORDER"
@@ -2015,50 +2019,79 @@ class Scanner:
             print("[A WARMUP] 09:00: EVG/EstimatedVR5 disabled until 09:01", flush=True)
             return []
 
-        # Pinned VCP watches start from 800 snapshot lots and remain independent
-        # of FLOW's rising/liquidity/ARM gates. Existing watches, pending retries,
-        # and active Pivot tracks continue even after any route has handed off.
+        # VCP evaluates every eligible common-stock snapshot independently of
+        # FLOW's price/liquidity/ARM gates. No volume threshold or prior watch is
+        # required for a confirmed breakout. Existing Pivot tracks keep updating
+        # even after any route has handed off.
         vcp_decisions: Dict[str, Dict[str, Any]] = {}
         layered_vcp_seconds = 0.0
         if self.layered_a_enabled:
             vcp_runtime = self._layered_vcp_runtime()
             vcp_t0 = time.monotonic()
+            if not hasattr(self, "_layered_vcp_unknown_logged"):
+                self._layered_vcp_unknown_logged = set()
+            else:
+                self._layered_vcp_unknown_logged = {
+                    item for item in self._layered_vcp_unknown_logged if item[0] == snap_date
+                }
             for row in snaps:
                 symbol = str(row.get("stock_id") or "")
                 if not self.selector.basic_code_ok(symbol):
                     continue
-                volume = float(row.get("total_volume") or 0.0)
-                should_track = (
-                    volume >= 800
-                    or vcp_runtime.has_pending(snap_date, symbol)
-                    or vcp_runtime.has_watch(snap_date, symbol)
-                    or vcp_runtime.has_active_track(symbol)
-                )
-                if not should_track:
+                # SnapshotAdapter maps Fugle tradeVolume to total_volume in
+                # lots. Read the same row value directly; do not reintroduce
+                # the removed 800-lot VCP eligibility gate.
+                try:
+                    volume = float(row.get("total_volume"))
+                    if volume < 0:
+                        raise ValueError("negative cumulative volume")
+                except (TypeError, ValueError):
+                    reason = "VCP_SNAPSHOT_VOLUME_INVALID"
+                    vcp_decisions[symbol] = {"status": "UNKNOWN", "reason": reason}
+                    unknown_key = (snap_date, symbol, reason)
+                    if unknown_key not in self._layered_vcp_unknown_logged:
+                        self._layered_vcp_unknown_logged.add(unknown_key)
+                        append_event({"ts": iso_now(), "type": "vcp_unknown", "symbol": symbol,
+                                      "date": snap_date, "reason": reason})
                     continue
                 meta, bars, reason = self._layered_vcp_inputs(symbol, snap_date)
                 if reason:
                     vcp_decisions[symbol] = {"status": "UNKNOWN", "reason": reason}
-                    append_event({"ts": iso_now(), "type": "vcp_unknown", "symbol": symbol,
-                                  "date": snap_date, "reason": reason,
-                                  "source_sha": "c1cc4c968c3288c32e167b52a01d34cc260cb02baac4ce7b6ef06f6f37298da7"})
+                    unknown_key = (snap_date, symbol, reason)
+                    if unknown_key not in self._layered_vcp_unknown_logged:
+                        self._layered_vcp_unknown_logged.add(unknown_key)
+                        append_event({"ts": iso_now(), "type": "vcp_unknown", "symbol": symbol,
+                                      "date": snap_date, "reason": reason,
+                                      "source_sha": "c1cc4c968c3288c32e167b52a01d34cc260cb02baac4ce7b6ef06f6f37298da7"})
                     continue
                 prior5 = [float(bar.volume_zhang) for bar in bars[-5:] if float(bar.volume_zhang) >= 0]
                 if len(prior5) != 5 or sum(prior5) <= 0:
                     reason = "VCP_PRIOR5_VOLUME_INVALID"
                     vcp_decisions[symbol] = {"status": "UNKNOWN", "reason": reason}
-                    append_event({"ts": iso_now(), "type": "vcp_unknown", "symbol": symbol,
-                                  "date": snap_date, "reason": reason})
+                    unknown_key = (snap_date, symbol, reason)
+                    if unknown_key not in self._layered_vcp_unknown_logged:
+                        self._layered_vcp_unknown_logged.add(unknown_key)
+                        append_event({"ts": iso_now(), "type": "vcp_unknown", "symbol": symbol,
+                                      "date": snap_date, "reason": reason})
                     continue
                 raw_vr5 = volume / (sum(prior5) / 5.0)
                 priority = self.queue_priority(raw_vr5, volume)
-                decision = vcp_runtime.evaluate(row, bars, meta, raw_vr5, priority)
+                try:
+                    decision = vcp_runtime.evaluate(row, bars, meta, raw_vr5, priority)
+                except Exception as exc:
+                    reason = f"VCP_EVALUATION_ERROR:{type(exc).__name__}"
+                    vcp_decisions[symbol] = {"status": "UNKNOWN", "reason": reason}
+                    unknown_key = (snap_date, symbol, reason)
+                    if unknown_key not in self._layered_vcp_unknown_logged:
+                        self._layered_vcp_unknown_logged.add(unknown_key)
+                        append_event({"ts": iso_now(), "type": "vcp_unknown", "symbol": symbol,
+                                      "date": snap_date, "reason": reason})
+                    continue
                 vcp_decisions[symbol] = {
-                    "status": "PASS" if decision.get("proposals") else "FAIL",
-                    "reason": "PINNED_VCP_PENDING_OR_CONFIRMED_BREAKOUT" if decision.get("proposals") else "VCP_NOT_HANDOFF_READY",
+                    "status": decision.get("status", "UNKNOWN"),
+                    "reason": decision.get("reason", "VCP_NOT_CONFIRMED_BREAKOUT"),
                     "hit": (decision.get("proposals") or [None])[0],
                     "state": decision.get("vcp_state"), "watch": decision.get("watch"),
-                    "pivot_track": decision.get("pivot_track"), "raw_vr5": raw_vr5,
                 }
                 # Independent A->LINE path: VCP PASS, not A->B already_sent.
                 # Explicit opt-in only; never alter B's existing handoff or notification.
@@ -2108,6 +2141,9 @@ class Scanner:
                 hit = decision.get("hit")
                 if decision.get("status") != "PASS" or not isinstance(hit, dict):
                     continue
+                vcp_event_id = str(hit.get("vcpEventId") or "")
+                if vcp_runtime.has_handoff_event(vcp_event_id):
+                    continue
                 if self.already_sent(snap_date, symbol):
                     continue
                 hit = dict(hit)
@@ -2121,6 +2157,9 @@ class Scanner:
                     print(f"[A VCP HANDOFF RETRY NEXT SCAN] symbol={symbol} error={exc}", flush=True)
                 attempted_symbols.add(symbol)
                 if handed:
+                    vcp_runtime.mark_handoff_event(vcp_event_id)
+                    self.state["layered_vcp_state"] = vcp_runtime.export_state()
+                    save_json_atomic(STATE_FILE, self.state)
                     selected.append(hit)
                     decided_symbols.add(symbol)
                 append_event({"ts": iso_now(), "type": "layered_vcp_handoff", "symbol": symbol,
