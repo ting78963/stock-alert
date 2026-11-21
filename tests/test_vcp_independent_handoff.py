@@ -3,6 +3,17 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import sys
+import types
+
+# Offline B test: replace unrelated market calendar / group watcher integrations.
+gate = types.ModuleType("twse_session_gate_v1")
+gate.is_scheduled_open = lambda day: True
+group = types.ModuleType("group_limit_up")
+group.monitor_loop = lambda *args, **kwargs: None
+sys.modules["twse_session_gate_v1"] = gate
+sys.modules["group_limit_up"] = group
+
 import fugle_a_scanner_v2_4 as a
 import production_worker_v2_shared_ws as b
 
