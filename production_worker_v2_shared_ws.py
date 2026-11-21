@@ -151,8 +151,7 @@ def launch_vcp_flex(payload, dry_run=False):
         return {"ok":True,"key":k,"launched":True,"dry_run":True}
     # Persist VCP receipts on the Render disk; preserve isolated-test state roots.
     vcp_root = (Path("/var/data/stock-alert/vcp_b_line")
-                if Path("/var/data").is_dir() and not str(STATE_ROOT).startswith("/var/data")
-                and str(STATE_ROOT) == str(BASE/"_production_output")
+                if Path("/var/data").is_dir()
                 else STATE_ROOT/"vcp_b_line")
     path=vcp_root/f"{day}.json"
     with _lock:
