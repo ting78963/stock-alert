@@ -2137,10 +2137,9 @@ class Scanner:
                 except RuntimeError as exc:
                     handed = False
                     print(f"[A VCP HANDOFF RETRY NEXT SCAN] symbol={symbol} error={exc}", flush=True)
-                attempted_symbols.add(symbol)
+                # VCP is independent: do not consume SURGE/FLOW handoff eligibility.
                 if handed:
                     selected.append(hit)
-                    decided_symbols.add(symbol)
                 append_event({"ts": iso_now(), "type": "layered_vcp_handoff", "symbol": symbol,
                               "date": snap_date, "handed": bool(handed), "disposition": "VCP_FIRST"})
 
