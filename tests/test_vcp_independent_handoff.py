@@ -82,6 +82,25 @@ class VcpIndependentHandoffTests(unittest.TestCase):
             self.assertTrue(b.launch_b(self.payload)["duplicate"])
             self.assertEqual(send.call_count, 2)
 
+    def test_a_vcp_first_does_not_consume_surge(self):
+        scanner = a.Scanner.__new__(a.Scanner)
+        scanner.state = {"discovered": {}}
+        scanner.layered_a_enabled = True
+        scanner.bridge_url = "mock://b"
+        sources = []
+        def bridge(payload):
+            sources.append(payload["source"])
+            return {"http_status": 200, "body": {"ok": True, "key": payload["date"] + "|" + payload["stock_id"], "launched": True}}
+        scanner.bridge_send = bridge
+        vcp = {"code": "3141", "source": "VCP", "name": "TEST", "volRatio": 2.0, "chgPct": 3.0, "vcp": self.payload["vcp"]}
+        surge = dict(vcp, source="SURGE")
+        with patch.object(a, "save_json_atomic"), patch.object(a, "append_event"):
+            self.assertTrue(scanner.handoff_hit(vcp, self.day))
+            self.assertTrue(scanner.handoff_hit(surge, self.day))
+            self.assertFalse(scanner.handoff_hit(vcp, self.day))
+            self.assertFalse(scanner.handoff_hit(surge, self.day))
+        self.assertEqual(sources, ["VCP", "SURGE"])
+
     def test_a_handoff_dedupe_independent_of_surge(self):
         scanner = a.Scanner.__new__(a.Scanner)
         scanner.state = {"discovered": {}}
