@@ -126,10 +126,50 @@ def worker_loop(k,r,q):
         finally:
             q.task_done()
 
+def launch_vcp_flex(payload, dry_run=False):
+    """Independent VCP notification: no ABC runner, shared WS or F14 claim."""
+    from a_vcp_line_notify_v1 import notify_once
+    sid=str(payload["stock_id"]).zfill(4)
+    day=str(payload["date"])[:10]
+    k=key(day,sid)
+    vcp=payload.get("vcp")
+    if not isinstance(vcp,dict):
+        raise ValueError("VCP payload missing confirmed breakout data")
+    event={
+        "stock_id":sid, "name":str(payload.get("name") or sid),
+        "date":day, "recognition_time":str(vcp.get("recognition_time") or payload["discovered_at"]),
+        "pivot":vcp.get("pivot"), "price":vcp.get("price"),
+        "change_pct":payload.get("change_pct"), "vol_ratio":payload.get("vol_ratio"),
+        "volume_zhang":vcp.get("volume_zhang"),
+    }
+    # Validate the actual breakout even if the caller supplies source=VCP.
+    from a_vcp_flex_v1 import build_vcp_flex
+    build_vcp_flex(event)
+    if not float(event["price"])>float(event["pivot"]):
+        raise ValueError("VCP price has not broken pivot")
+    if dry_run:
+        return {"ok":True,"key":k,"launched":True,"dry_run":True}
+    path=STATE_ROOT/"vcp_b_line"/f"{day}.json"
+    with _lock:
+        path.parent.mkdir(parents=True,exist_ok=True)
+        sent=json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+        if k in sent:
+            return {"ok":True,"key":k,"duplicate":True,"launched":False}
+        if not LINE_SEND:
+            raise RuntimeError("VCP LINE sending disabled; retry when enabled")
+        # notify_once uses LINE's deterministic retry key for uncertain responses.
+        if not notify_once(event,sent):
+            raise RuntimeError("VCP notification not sent")
+        _atomic_json(path,sent)
+    print(f"[B VCP FLEX SENT] {k}",flush=True)
+    return {"ok":True,"key":k,"launched":True,"vcp_flex_sent":True}
+
 def launch_b(payload,dry_run=False):
     for x in ("stock_id","date","discovered_at"):
         if not payload.get(x): raise ValueError("missing: "+x)
     sid=str(payload["stock_id"]).zfill(4); day=str(payload["date"])[:10]; disc=str(payload["discovered_at"]); stock_name=str(payload.get("name") or payload.get("stock_name") or "").strip(); k=key(day,sid)
+    if str(payload.get("source") or "").upper()=="VCP":
+        return launch_vcp_flex(payload,dry_run)
     f14_ensure_day(day)
     with _lock:
         if not dry_run and b_time_expired():
