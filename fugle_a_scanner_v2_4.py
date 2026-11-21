@@ -2071,7 +2071,8 @@ class Scanner:
                 }
                 # Independent A->LINE path: VCP PASS, not A->B already_sent.
                 # Explicit opt-in only; never alter B's existing handoff or notification.
-                if decision.get("proposals") and os.environ.get("A_VCP_LINE_ENABLED") == "1":
+                if (not self.layered_a_enabled and decision.get("proposals")
+                        and os.environ.get("A_VCP_LINE_ENABLED") == "1"):
                     try:
                         from a_vcp_line_notify_v1 import make_event, notify_once
                         sent = self.state.setdefault("vcp_line_sent", {})
@@ -2127,6 +2128,17 @@ class Scanner:
                 watch = decision.get("watch") or {}
                 track = decision.get("pivot_track") or {}
                 pivot = watch.get("pivot") if watch.get("pivot") is not None else track.get("pivot")
+                # A may have a pending proposal; only confirmed current-price
+                # breakout can enter the direct-to-Flex B route.
+                try:
+                    confirmed_now = float(row.get("close")) > float(pivot)
+                except (TypeError, ValueError):
+                    confirmed_now = False
+                if not confirmed_now:
+                    append_event({"ts": iso_now(), "type": "vcp_handoff_deferred",
+                                  "symbol": symbol, "date": snap_date,
+                                  "reason": "PIVOT_NOT_BROKEN_ON_CURRENT_SNAPSHOT"})
+                    continue
                 hit["vcp"] = {
                     "pivot": pivot, "price": row.get("close"),
                     "volume_zhang": row.get("total_volume"),
