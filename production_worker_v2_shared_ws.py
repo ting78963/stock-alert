@@ -149,7 +149,12 @@ def launch_vcp_flex(payload, dry_run=False):
         raise ValueError("VCP price has not broken pivot")
     if dry_run:
         return {"ok":True,"key":k,"launched":True,"dry_run":True}
-    # Prefer the existing persistent Render disk for VCP-only delivery receipts.\n    # Keep the test/local STATE_ROOT fallback when no disk is mounted.\n    vcp_root = (Path("/var/data/stock-alert/vcp_b_line")\n                if Path("/var/data").is_dir() and not str(STATE_ROOT).startswith("/var/data")\n                else STATE_ROOT/"vcp_b_line")\n    path=vcp_root/f"{day}.json"
+    # Persist VCP receipts on the Render disk; preserve isolated-test state roots.
+    vcp_root = (Path("/var/data/stock-alert/vcp_b_line")
+                if Path("/var/data").is_dir() and not str(STATE_ROOT).startswith("/var/data")
+                and str(STATE_ROOT) == str(BASE/"_production_output")
+                else STATE_ROOT/"vcp_b_line")
+    path=vcp_root/f"{day}.json"
     with _lock:
         path.parent.mkdir(parents=True,exist_ok=True)
         sent=json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
