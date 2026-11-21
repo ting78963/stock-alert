@@ -1870,7 +1870,10 @@ class Scanner:
 
     def handoff_hit(self, hit: Dict[str, Any], snap_date: str) -> bool:
         symbol = hit["code"]
-        if self.already_sent(snap_date, symbol):
+        if hit.get("source") == "VCP":
+            if symbol in self.state.setdefault("vcp_handed", {}).get(snap_date, {}):
+                return False
+        elif self.already_sent(snap_date, symbol):
             return False
         payload = {
             "stock_id": symbol,
@@ -1881,6 +1884,8 @@ class Scanner:
             "vol_ratio": hit["volRatio"],
             "change_pct": hit["chgPct"],
         }
+        if hit.get("source") == "VCP":
+            payload["vcp"] = hit.get("vcp")
         # Reuse legacy A handoff semantics for all routes:
         # mark success only after bridge_send returns; failures remain retryable.
         ack = self.bridge_send(payload)
@@ -1895,7 +1900,11 @@ class Scanner:
                 raise RuntimeError("B_HANDOFF_ACK_INVALID")
             if not any(body.get(k) is True for k in ("launched", "duplicate", "already_done")):
                 raise RuntimeError("B_HANDOFF_NOT_ACCEPTED")
-        self.mark_sent(snap_date, symbol, payload)
+        if hit.get("source") == "VCP":
+            self.state.setdefault("vcp_handed", {}).setdefault(snap_date, {})[symbol] = True
+            save_json_atomic(STATE_FILE, self.state)
+        else:
+            self.mark_sent(snap_date, symbol, payload)
         append_event({"ts": iso_now(), "type": "discovery", **payload})
         return True
 
@@ -2108,12 +2117,21 @@ class Scanner:
                 hit = decision.get("hit")
                 if decision.get("status") != "PASS" or not isinstance(hit, dict):
                     continue
-                if self.already_sent(snap_date, symbol):
+                if symbol in self.state.setdefault("vcp_handed", {}).get(snap_date, {}):
                     continue
                 hit = dict(hit)
                 hit.setdefault("name", next(
                     (row.get("name") for row in snaps if str(row.get("stock_id") or "") == symbol), symbol
                 ))
+                row = next((x for x in snaps if str(x.get("stock_id") or "") == symbol), {})
+                watch = decision.get("watch") or {}
+                track = decision.get("pivot_track") or {}
+                pivot = watch.get("pivot") if watch.get("pivot") is not None else track.get("pivot")
+                hit["vcp"] = {
+                    "pivot": pivot, "price": row.get("close"),
+                    "volume_zhang": row.get("total_volume"),
+                    "recognition_time": now_tw().strftime("%H:%M:%S"),
+                }
                 try:
                     handed = self.handoff_hit(hit, snap_date)
                 except RuntimeError as exc:
