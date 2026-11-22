@@ -6,7 +6,8 @@ import os
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
-import requests
+import urllib.parse
+import urllib.request
 from taiex_market_history_v1 import normalize_daily, snapshot
 
 FUGLE_URL = "https://api.fugle.tw/marketdata/v1.0/stock/historical/candles/IX0001"
@@ -27,14 +28,15 @@ def fetch_range(start, end, session=None, api_key=None):
     key = api_key or os.getenv("FUGLE_API_KEY", "").strip()
     if not key:
         raise RuntimeError("FUGLE_API_KEY missing")
-    client = session or requests
-    response = client.get(FUGLE_URL, params={"from": start.isoformat(), "to": end.isoformat(), "timeframe": "D", "fields": "close", "sort": "asc"}, headers={"X-API-KEY": key}, timeout=20)
-    if response.status_code == 404:
-        # Empty historical ranges can return 404. Do not mistake an invalid symbol for a holiday.
-        raise RuntimeError(f"Fugle IX0001 historical data unavailable: {start}..{end}")
-    response.raise_for_status()
-    payload = response.json()
-    if payload.get("symbol") != "IX0001" or payload.get("timeframe") != "D" or not isinstance(payload.get("data"), list):
+    params = urllib.parse.urlencode({"from":start.isoformat(),"to":end.isoformat(),"timeframe":"D","fields":"close","sort":"asc"})
+    url = FUGLE_URL + "?" + params
+    request = urllib.request.Request(url,headers={"X-API-KEY":key,"Accept":"application/json"})
+    if session is not None:
+        payload = session(request)
+    else:
+        with urllib.request.urlopen(request,timeout=20) as response:
+            payload = json.load(response)
+    if payload.get("symbol") != "IX0001" or str(payload.get("timeframe")) != "D" or not isinstance(payload.get("data"),list):
         raise ValueError("Fugle IX0001 response identity/schema mismatch")
     rows = normalize_daily([{"date": r["date"], "close": r["close"]} for r in payload["data"]])
     if any(not (start.isoformat() <= r["date"] <= end.isoformat()) for r in rows):
