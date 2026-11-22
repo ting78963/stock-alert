@@ -60,7 +60,7 @@ def write_store(path, rows):
     tmp.replace(path)
 
 
-def update(as_of=None, path=STORE, session=None, api_key=None):
+def update(as_of=None, path=STORE, session=None, api_key=None, max_chunks=2):
     today = as_of or datetime.now(TPE).date()
     if isinstance(today, str):
         today = date.fromisoformat(today)
@@ -68,7 +68,9 @@ def update(as_of=None, path=STORE, session=None, api_key=None):
     start = date(today.year - 3, today.month, 1) if not existing else date.fromisoformat(existing[-1]["date"]) + timedelta(days=1)
     merged = {r["date"]: r for r in existing}
     fetched = 0
-    for a, b in date_ranges(start, today):
+    for index, (a, b) in enumerate(date_ranges(start, today)):
+        if index >= max_chunks:
+            break
         new_rows = fetch_range(a, b, session=session, api_key=api_key)
         for row in new_rows:
             merged[row["date"]] = row
