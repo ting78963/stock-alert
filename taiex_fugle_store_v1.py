@@ -63,7 +63,7 @@ def update(as_of=None, path=STORE, session=None, api_key=None):
     if isinstance(today, str):
         today = date.fromisoformat(today)
     existing = read_store(path)
-    start = date(today.year - 3, today.month, 1) if not existing else date.fromisoformat(existing[-1]["date"])
+    start = date(today.year - 3, today.month, 1) if not existing else date.fromisoformat(existing[-1]["date"]) + timedelta(days=1)
     merged = {r["date"]: r for r in existing}
     fetched = 0
     for a, b in date_ranges(start, today):
