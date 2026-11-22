@@ -183,12 +183,6 @@ def loop():
    completed.update(sent_registry['dates'].keys())
   except Exception as e:
    print(f'[F15 REGISTRY READ FAIL] {type(e).__name__}: {e}',flush=True)
-  # TAIEX is part of the same F15 maintenance cycle; failures do not block stock reports.
-  if (n.hour,n.minute)>=(15,30):
-   try:
-    maintain_taiex_once(n)
-   except Exception as e:
-    print(f"[F15 TAIEX FAIL] {today} {type(e).__name__}: {e}",flush=True)
   window=days()
   completed.intersection_update(window)
   for d in window:
@@ -198,4 +192,10 @@ def loop():
     if result in ("sent","already_sent","zero_verified"):
      completed.add(d)
    except BaseException as e:print(f"[F15 FAIL] {d} {type(e).__name__}: {e}",flush=True)
+  # Always finish existing F15 stock reports before fetching TAIEX history.
+  if (n.hour,n.minute)>=(15,30):
+   try:
+    maintain_taiex_once(n)
+   except Exception as e:
+    print(f"[F15 TAIEX FAIL] {today} {type(e).__name__}: {e}",flush=True)
   time.sleep(300)
