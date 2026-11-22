@@ -153,6 +153,22 @@ def process_day(day,send_line=True):
  send(x);r["dates"][day]={"sent_at_taipei":datetime.now(TPE).isoformat(timespec="seconds"),"total":x["total"]};atomic(p,r);print(f"[F15 SENT] {day} total={x['total']} delayed={x['delayed']}",flush=True);return "sent"
 def days():
  d=datetime.now(TPE).date();return [(d-timedelta(days=i)).isoformat() for i in range(7,-1,-1)]
+def maintain_taiex_once(now):
+ # Reuse the existing F15 maintenance loop; do not launch another scheduler.
+ from taiex_twse_store_v1 import update, read_store
+ from twse_session_gate_v1 import is_scheduled_open
+ if (now.hour, now.minute) < (15, 30) or not is_scheduled_open(now.date()):
+  return "not_due"
+ day = now.date().isoformat()
+ rows = read_store()
+ if rows and rows[-1]["date"] == day:
+  return "already_updated"
+ result = update(as_of=now.date())
+ if result["latest"] != day:
+  raise RuntimeError(f"TAIEX official close not ready: {result['latest']}")
+ print(f"[F15 TAIEX UPDATED] {day} stored={result['stored']}",flush=True)
+ return "updated"
+
 def loop():
  OUT.mkdir(parents=True,exist_ok=True)
  # Completed LINE reports are authoritative across process restarts.
@@ -165,6 +181,12 @@ def loop():
    completed.update(sent_registry['dates'].keys())
   except Exception as e:
    print(f'[F15 REGISTRY READ FAIL] {type(e).__name__}: {e}',flush=True)
+  # TAIEX is part of the same F15 maintenance cycle; failures do not block stock reports.
+  if (n.hour,n.minute)>=(15,30):
+   try:
+    maintain_taiex_once(n)
+   except Exception as e:
+    print(f"[F15 TAIEX FAIL] {today} {type(e).__name__}: {e}",flush=True)
   window=days()
   completed.intersection_update(window)
   for d in window:
