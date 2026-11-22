@@ -156,13 +156,15 @@ def days():
 def maintain_taiex_once(now):
  # Reuse the existing F15 maintenance loop; do not launch another scheduler.
  from taiex_twse_store_v1 import update, read_store
- from twse_session_gate_v1 import is_scheduled_open
- if (now.hour, now.minute) < (15, 30) or not is_scheduled_open(now.date()):
+ if (now.hour, now.minute) < (15, 30) or now.weekday() >= 5:
   return "not_due"
  day = now.date().isoformat()
  rows = read_store()
  if rows and rows[-1]["date"] == day:
   return "already_updated"
+ from twse_session_gate_v1 import is_scheduled_open
+ if not is_scheduled_open(now.date()):
+  return "market_closed"
  result = update(as_of=now.date())
  if result["latest"] != day:
   raise RuntimeError(f"TAIEX official close not ready: {result['latest']}")
