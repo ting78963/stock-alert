@@ -172,6 +172,9 @@ def maintain_taiex_once(now):
   return "market_closed"
  result = update(as_of=now.date())
  if result["latest"] != day:
+  if result["snapshot"]["weekly_ma100"] is None:
+   print(f"[F15 TAIEX BOOTSTRAP] {day} stored={result['stored']} latest={result['latest']}",flush=True)
+   return "bootstrapping"
   raise RuntimeError(f"TAIEX official close not ready: {result['latest']}")
  if result["snapshot"]["weekly_ma100"] is None or result["snapshot"]["daily_ma100"] is None:
   raise RuntimeError("TAIEX history insufficient for MA100")
