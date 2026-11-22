@@ -24,6 +24,9 @@ def completed_week_closes(daily, as_of):
     """Only fully ended ISO calendar weeks. A holiday-shortened week is complete after Friday."""
     day = date.fromisoformat(str(as_of)[:10])
     cutoff = day - timedelta(days=day.weekday())  # Monday of current week
+    # Completed means its Friday has passed; a Friday close becomes usable on Saturday.
+    if day.weekday() >= 5:
+        cutoff += timedelta(days=7)
     weeks = {}
     for row in normalize_daily(daily):
         d = date.fromisoformat(row["date"])
