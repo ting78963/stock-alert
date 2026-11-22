@@ -7,7 +7,7 @@ No background threads, no LINE, no modifications to A/B or F15 signal archives.
 from __future__ import annotations
 import json
 import os
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 import requests
@@ -98,7 +98,7 @@ def update(as_of=None, path=STORE, session=None):
     if len(rows) < len(existing):
         raise RuntimeError("TAIEX history unexpectedly shrank")
     write_store(path, rows)
-    return {"stored": len(rows), "fetched_rows": fetched, "latest": rows[-1]["date"] if rows else None, "snapshot": snapshot(rows, today.isoformat())}
+    return {"stored": len(rows), "fetched_rows": fetched, "latest": rows[-1]["date"] if rows else None, "snapshot": snapshot(rows, (today + timedelta(days=1)).isoformat() if rows and rows[-1]["date"] == today.isoformat() else today.isoformat())}
 
 
 if __name__ == "__main__":
