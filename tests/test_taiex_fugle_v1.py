@@ -31,6 +31,20 @@ class FugleTAIEXTest(unittest.TestCase):
         self.assertEqual(ranges[0][0],date(2023,11,1))
         self.assertEqual(ranges[-1][1],date(2026,11,22))
 
+    def test_incremental_fetch_starts_after_last_saved_day(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/"taiex.json"
+            from taiex_fugle_store_v1 import write_store
+            write_store(path,[{"date":"2026-11-20","close":27000.0}])
+            called=[]
+            def fake(a,b,session=None,api_key=None):
+                called.append((a,b))
+                return []
+            with patch("taiex_fugle_store_v1.fetch_range",side_effect=fake):
+                result=update("2026-11-22",path=path)
+            self.assertEqual(called,[(date(2026,11,21),date(2026,11,22))])
+            self.assertEqual(result["latest"],"2026-11-20")
+
     def test_bootstrap_checkpoint_and_resume(self):
         with tempfile.TemporaryDirectory() as tmp:
             path=Path(tmp)/"taiex.json"
