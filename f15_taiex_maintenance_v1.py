@@ -4,6 +4,7 @@ from datetime import datetime
 from time import sleep
 from zoneinfo import ZoneInfo
 from taiex_twse_store_v1 import update
+from twse_session_gate_v1 import is_scheduled_open
 
 TPE = ZoneInfo("Asia/Taipei")
 
@@ -18,6 +19,9 @@ def loop():
     while True:
         now = datetime.now(TPE)
         if should_run(now, last_success):
+            if not is_scheduled_open(now.date()):
+                sleep(1800)
+                continue
             try:
                 # TWSE index history is refreshed after the official close.
                 result = update(as_of=now.date())
