@@ -14,11 +14,11 @@ class FakeResponse:
 
 
 class FakeSession:
-    def get(self, url, params, headers, timeout):
-        assert url.endswith("/IX0001")
-        assert params["timeframe"]=="D"
-        assert headers["X-API-KEY"]=="fake"
-        return FakeResponse()
+    def __call__(self, request):
+        assert "/IX0001?" in request.full_url
+        assert "timeframe=D" in request.full_url
+        assert request.get_header("X-api-key")=="fake"
+        return FakeResponse().json()
 
 
 class FugleTAIEXTest(unittest.TestCase):
