@@ -155,7 +155,7 @@ def days():
  d=datetime.now(TPE).date();return [(d-timedelta(days=i)).isoformat() for i in range(7,-1,-1)]
 def maintain_taiex_once(now):
  # Reuse the existing F15 maintenance loop; do not launch another scheduler.
- from taiex_twse_store_v1 import update, read_store
+ from taiex_fugle_store_v1 import update, read_store
  if (now.hour, now.minute) < (15, 30) or now.weekday() >= 5:
   return "not_due"
  day = now.date().isoformat()
