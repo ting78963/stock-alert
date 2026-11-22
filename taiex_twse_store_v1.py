@@ -82,18 +82,20 @@ def update(as_of=None, path=STORE, session=None):
     if isinstance(today, str):
         today = date.fromisoformat(today)
     existing = read_store(path)
-    # Initial bootstrap: 30 months gives margin above 100 complete trading weeks.
+    # Bootstrap three years, then fetch only the latest month on subsequent updates.
     start = date(today.year - 3, today.month, 1) if not existing else date.fromisoformat(existing[-1]["date"]).replace(day=1)
-    if not existing:
-        # 36 months of calendar data, deliberately conservative.
-        start = date(today.year - 3, today.month, 1)
     merged = {r["date"]: r for r in existing}
     fetched = 0
     for month in month_starts(start, today):
-        for row in fetch_month(month, session):
+        month_rows = fetch_month(month, session)
+        for row in month_rows:
+            if not row["date"].startswith(month.strftime("%Y-%m")):
+                raise ValueError(f"TWSE response contains date outside requested month: {month}")
             if row["date"] <= today.isoformat():
                 merged[row["date"]] = row
                 fetched += 1
+        # Checkpoint each successful month. A failed request will not restart a 36-month bootstrap.
+        write_store(path, merged.values())
     rows = normalize_daily(merged.values())
     if len(rows) < len(existing):
         raise RuntimeError("TAIEX history unexpectedly shrank")
