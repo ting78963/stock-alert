@@ -45,6 +45,23 @@ class FugleTAIEXTest(unittest.TestCase):
             self.assertEqual(called,[(date(2026,11,21),date(2026,11,22))])
             self.assertEqual(result["latest"],"2026-11-20")
 
+    def test_current_day_missing_is_retried_after_publication(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/"taiex.json"
+            from taiex_fugle_store_v1 import write_store
+            write_store(path,[{"date":"2026-11-20","close":27000.0}],covered_through="2026-11-22")
+            # Recheck on a new open day: first call has no candle, next has one.
+            calls=[]
+            def fake(a,b,session=None,api_key=None):
+                calls.append((a,b))
+                return [] if len(calls)==1 else [{"date":"2026-11-23","close":27100.0}]
+            with patch("taiex_fugle_store_v1.fetch_range",side_effect=fake):
+                first=update("2026-11-23",path=path)
+                second=update("2026-11-23",path=path)
+            self.assertEqual(first["latest"],"2026-11-20")
+            self.assertEqual(second["latest"],"2026-11-23")
+            self.assertEqual(calls,[(date(2026,11,23),date(2026,11,23))]*2)
+
     def test_bootstrap_is_bounded_and_resumes(self):
         with tempfile.TemporaryDirectory() as tmp:
             path=Path(tmp)/"taiex.json"
