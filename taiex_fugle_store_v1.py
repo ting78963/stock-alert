@@ -53,10 +53,10 @@ def read_store(path=STORE):
     return normalize_daily(obj["rows"])
 
 
-def write_store(path, rows):
+def write_store(path, rows, covered_through=None):
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps({"schema": "taiex_daily_v1", "rows": normalize_daily(rows)}, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+    tmp.write_text(json.dumps({"schema": "taiex_daily_v1", "rows": normalize_daily(rows), "covered_through": covered_through}, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
     tmp.replace(path)
 
 
@@ -65,7 +65,10 @@ def update(as_of=None, path=STORE, session=None, api_key=None, max_chunks=2):
     if isinstance(today, str):
         today = date.fromisoformat(today)
     existing = read_store(path)
-    start = date(today.year - 3, today.month, 1) if not existing else date.fromisoformat(existing[-1]["date"]) + timedelta(days=1)
+    metadata = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    covered = metadata.get("covered_through")
+    last = max(filter(None, [covered, existing[-1]["date"] if existing else None]), default=None)
+    start = date(today.year - 3, today.month, 1) if last is None else date.fromisoformat(last) + timedelta(days=1)
     merged = {r["date"]: r for r in existing}
     fetched = 0
     for index, (a, b) in enumerate(date_ranges(start, today)):
@@ -76,7 +79,7 @@ def update(as_of=None, path=STORE, session=None, api_key=None, max_chunks=2):
             merged[row["date"]] = row
             fetched += 1
         # Checkpoint successful chunks so bootstrap can resume after network failures.
-        write_store(path, merged.values())
+        write_store(path, merged.values(), covered_through=b.isoformat())
     rows = normalize_daily(merged.values())
     if len(rows) < len(existing):
         raise RuntimeError("TAIEX history unexpectedly shrank")
