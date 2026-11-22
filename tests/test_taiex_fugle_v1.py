@@ -55,7 +55,7 @@ class FugleTAIEXTest(unittest.TestCase):
                 return [{"date":a.isoformat(),"close":100.0}]
             with patch("taiex_fugle_store_v1.fetch_range",side_effect=fake):
                 with self.assertRaises(ConnectionError):
-                    update("2026-11-22",path=path)
+                    update("2026-11-22",path=path,max_chunks=3)
             self.assertEqual(len(read_store(path)),2)
             self.assertEqual(read_store(path)[-1]["date"],calls[1][0].isoformat())
 
