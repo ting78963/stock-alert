@@ -36,7 +36,7 @@ class TAIEXUpdateTest(unittest.TestCase):
                 with self.assertRaises(ConnectionError):
                     update("2026-11-22", path=p)
             self.assertEqual(len(read_store(p)),2)
-            with patch("taiex_twse_store_v1.fetch_month",return_value=[{"date":"2023-12-01","close":100.0}]) as fake:
+            with patch("taiex_twse_store_v1.fetch_month",return_value=[{"date":"2024-02-01","close":100.0}]) as fake:
                 with self.assertRaises(ValueError):
                     update("2026-11-22", path=p)
                 self.assertEqual(fake.call_count,1)
