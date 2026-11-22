@@ -79,7 +79,10 @@ def update(as_of=None, path=STORE, session=None, api_key=None, max_chunks=2):
             merged[row["date"]] = row
             fetched += 1
         # Checkpoint successful chunks so bootstrap can resume after network failures.
-        write_store(path, merged.values(), covered_through=b.isoformat())
+        # Do not mark the current trading day as fully covered before its candle is published.
+        # Otherwise a 15:30 empty response would permanently skip the 16:30 retry.
+        covered_end = b - timedelta(days=1) if b == today and not any(r["date"] == today.isoformat() for r in new_rows) else b
+        write_store(path, merged.values(), covered_through=covered_end.isoformat())
     rows = normalize_daily(merged.values())
     if len(rows) < len(existing):
         raise RuntimeError("TAIEX history unexpectedly shrank")
