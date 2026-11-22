@@ -176,8 +176,13 @@ def loop():
  # Completed LINE reports are authoritative across process restarts.
  # Avoid repeatedly rebuilding historical dates after an OOM restart.
  completed=set()
+ last_taiex_day=None
+ next_taiex_attempt=0
  while True:
   n=datetime.now(TPE);today=n.date().isoformat()
+  if today!=last_taiex_day:
+   last_taiex_day=today
+   next_taiex_attempt=0
   try:
    _,sent_registry=reg()
    completed.update(sent_registry['dates'].keys())
@@ -193,7 +198,9 @@ def loop():
      completed.add(d)
    except BaseException as e:print(f"[F15 FAIL] {d} {type(e).__name__}: {e}",flush=True)
   # Always finish existing F15 stock reports before fetching TAIEX history.
-  if (n.hour,n.minute)>=(15,30):
+  # Failed or unpublished daily candles retry at most once per 30 minutes.
+  if (n.hour,n.minute)>=(15,30) and (n.hour*60+n.minute)>=next_taiex_attempt:
+   next_taiex_attempt=n.hour*60+n.minute+30
    try:
     maintain_taiex_once(n)
    except Exception as e:
