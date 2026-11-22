@@ -3,7 +3,7 @@ on:
   pull_request:
     paths:
       - 'taiex_market_history_v1.py'
-      - 'taiex_twse_store_v1.py'
+      - 'taiex_fugle_store_v1.py'
       - 'f15_taiex_maintenance_v1.py'
       - 'tests/test_taiex_*.py'
       - '.github/workflows/taiex-f15-tests.yml'
