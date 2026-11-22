@@ -4,7 +4,7 @@ on:
     paths:
       - 'taiex_market_history_v1.py'
       - 'taiex_fugle_store_v1.py'
-      - 'f15_taiex_maintenance_v1.py'
+      - 'f15_eod_signal_report.py'
       - 'tests/test_taiex_*.py'
       - '.github/workflows/taiex-f15-tests.yml'
   workflow_dispatch:
@@ -16,5 +16,22 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - run: python -m pip install requests
       - run: python -m unittest discover -s tests -p 'test_taiex_*.py' -v
+      - name: Read-only live Fugle IX0001 check (only when API key configured)
+        env:
+          FUGLE_API_KEY: ${{ secrets.FUGLE_API_KEY }}
+        run: |
+          python - <<'PY'
+          import os
+          from datetime import date, timedelta
+          from taiex_fugle_store_v1 import fetch_range
+          if not os.getenv("FUGLE_API_KEY"):
+              print("LIVE_FUGLE_CHECK=SKIPPED (GitHub Actions FUGLE_API_KEY secret unavailable)")
+          else:
+              end=date.today()-timedelta(days=1)
+              start=end-timedelta(days=14)
+              rows=fetch_range(start,end)
+              if not rows:
+                  raise RuntimeError("LIVE_FUGLE_CHECK=FAIL (no index daily candles)")
+              print("LIVE_FUGLE_CHECK=PASS", "rows=",len(rows),"latest=",rows[-1]["date"])
+          PY
