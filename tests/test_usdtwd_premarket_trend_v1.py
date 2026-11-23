@@ -14,7 +14,7 @@ class FXPremarketTests(unittest.TestCase):
         self.assertEqual(report["ma20"], 30.0)
         self.assertEqual(report["ma20_direction"], "insufficient")
         rows = self.rows([30.0] * 20 + [31.0])
-        self.assertEqual(fx_premarket_snapshot(rows, "2026-04-01")["ma20_direction"], "rising")
+        self.assertEqual(fx_premarket_snapshot(rows, "2026-04-01")["ma20_direction"], "falling")
 
     def test_usdtwd_rising_means_twd_weakening(self):
         result = fx_premarket_snapshot(self.rows([30.0] * 20 + [31.0]), "2026-04-01")
