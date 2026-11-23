@@ -23,6 +23,13 @@ class CachedPanelTests(unittest.TestCase):
             self.assertIn("20,200.00",content)
             self.assertIn("+200.00 (+1.00%)",content)
             self.assertIn("2026-11-20 收盤",content)
+    def test_tx_missing_quote_is_not_mislabeled_as_live_day_session(self):
+        with tempfile.TemporaryDirectory() as td:
+            card=build_taiex_preview(as_of="2026-11-23",path=Path(td)/"missing.json")
+            content=" ".join(all_text(card))
+            self.assertIn("最近可用行情（非當日日盤）",content)
+            self.assertNotIn("當日日盤即時行情",content)
+
     def test_no_cache_keeps_missing_placeholder(self):
         with tempfile.TemporaryDirectory() as td:
             card=build_taiex_preview(as_of="2026-11-23",path=Path(td)/"missing.json")
