@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Read-only USD/TWD MA5/20 and MA20/60 for approved morning brief.
+"""Read-only USD/TWD MA5/20 for approved morning brief.
 
 Uses official CBC daily closes, not a live FX quote. Never touches scanner.
 """
@@ -39,6 +39,25 @@ def fx_premarket_snapshot(rows, as_of):
                 return "prepare_death"
         return "above" if a > b else "below" if a < b else "equal"
 
+    def direction(period):
+        current, previous = ma(period), ma(period, 1)
+        if current is None or previous is None:
+            return "insufficient"
+        return "rising" if current > previous else "falling" if current < previous else "flat"
+
+    def twd_interpretation(status):
+        return {
+            "golden_cross": "TWD_weakening",
+            "prepare_golden": "TWD_may_weaken",
+            "death_cross": "TWD_strengthening",
+            "prepare_death": "TWD_may_strengthen",
+            "above": "TWD_weak_bias",
+            "below": "TWD_strong_bias",
+            "equal": "neutral",
+            "insufficient": "insufficient",
+        }[status]
+
+    cross = compare(5, 20)
     return {
         "as_of": day,
         "source": "cbc_interbank_daily_close",
@@ -48,7 +67,10 @@ def fx_premarket_snapshot(rows, as_of):
         "count": len(closes),
         "ma5": ma(5),
         "ma20": ma(20),
-        "ma60": ma(60),
-        "ma5_20": compare(5, 20),
-        "ma20_60": compare(20, 60),
+        "ma5_direction": direction(5),
+        "ma20_direction": direction(20),
+        "ma5_20": cross,
+        "twd_ma5_20_interpretation": twd_interpretation(cross),
+        "twd_ma5_direction": {"rising":"TWD_weakening", "falling":"TWD_strengthening", "flat":"neutral", "insufficient":"insufficient"}[direction(5)],
+        "twd_ma20_direction": {"rising":"TWD_weakening", "falling":"TWD_strengthening", "flat":"neutral", "insufficient":"insufficient"}[direction(20)],
     }
