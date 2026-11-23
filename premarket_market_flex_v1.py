@@ -12,7 +12,7 @@ INDICATORS=(
     ("usdtwd","美元／台幣","USD/TWD"),
     ("sox","費城半導體 SOX","前一交易日"),
     ("taiex","臺灣加權指數","前一交易日"),
-    ("tx","臺指期貨","最近可用行情（非當日日盤）"),
+    ("tx","臺指期貨","08:45 日盤開盤｜顯示實際報價時間"),
 )
 
 def txt(s,size="sm",color=WHITE,weight=None,**kwargs):
