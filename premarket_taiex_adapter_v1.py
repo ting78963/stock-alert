@@ -5,6 +5,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 from taiex_fugle_store_v1 import STORE, read_store
 from taiex_trend_narrative_v1 import analyze_taiex
+from taiex_market_history_v1 import completed_week_closes
 from premarket_market_flex_v1 import build_premarket_flex
 
 TPE=ZoneInfo("Asia/Taipei")
@@ -21,6 +22,9 @@ def load_taiex_trend(as_of=None,path=None):
     trend["last_close_date"]=prior[-1]["date"] if prior else None
     trend["last_close"]=prior[-1]["close"] if prior else None
     trend["as_of"]=report_date
+    trend["daily_count"]=len(prior)
+    trend["completed_week_count"]=len(completed_week_closes(prior,report_date))
+    trend["weekly_ma100_ready"]=trend["completed_week_count"]>=102
     return trend
 
 def build_taiex_preview(as_of=None,path=None,indicators=None,system_status="待確認"):
