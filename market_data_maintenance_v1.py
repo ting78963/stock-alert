@@ -49,6 +49,9 @@ def loop():
             next_minute = minute + 30
             try:
                 outcome = maintain_taiex_once(now)
+                if outcome == 'bootstrapping':
+                    next_minute = minute + 5
+                    print(f'[MARKET TAIEX BOOTSTRAP RETRY] {day} next_attempt_in=5m', flush=True)
                 if outcome in ("updated", "already_updated", "market_closed"):
                     finished_day = day
                     print(f"[MARKET TAIEX DAILY DONE] {day} {outcome}", flush=True)
