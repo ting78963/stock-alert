@@ -31,6 +31,11 @@ class DeliveryTests(unittest.TestCase):
         self.assertFalse(self.state.exists())
         self.assertEqual(deliver_once(NOW,lambda card:None,state_path=self.state,report_builder=lambda now:CARD),"sent")
 
+    def test_false_response_not_marked(self):
+        with self.assertRaises(RuntimeError):
+            deliver_once(NOW,lambda card:False,state_path=self.state,report_builder=lambda now:CARD)
+        self.assertFalse(self.state.exists())
+
     def test_outside_window(self):
         self.assertEqual(deliver_once(NOW.replace(hour=16),lambda card:None,state_path=self.state),"not_due")
         self.assertFalse(self.state.exists())
