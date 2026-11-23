@@ -16,6 +16,9 @@ def market_trend_snapshot(rows, as_of):
     def analyze(series):
         return {
             "count": len(series),
+            "ma100_ready": len(series) >= 100,
+            "cross_ready": len(series) >= 101,
+            "day5_history_ready": len(series) >= 105,
             "last_date": series[-1]["date"] if series else None,
             "ma": ma_trend(series, (20, 100)),
             "cross_20_100": ma_cross_full(series, 100),
