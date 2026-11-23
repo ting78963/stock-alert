@@ -37,6 +37,7 @@ def loop():
     import time
     last_day = None
     next_minute = 0
+    finished_day = None
     while True:
         now = datetime.now(TPE)
         day = now.date().isoformat()
@@ -44,10 +45,13 @@ def loop():
             last_day = day
             next_minute = 0
         minute = now.hour * 60 + now.minute
-        if minute >= 870 and minute >= next_minute:
+        if minute >= 870 and minute >= next_minute and finished_day != day:
             next_minute = minute + 30
             try:
-                maintain_taiex_once(now)
+                outcome = maintain_taiex_once(now)
+                if outcome in ("updated", "already_updated", "market_closed"):
+                    finished_day = day
+                    print(f"[MARKET TAIEX DAILY DONE] {day} {outcome}", flush=True)
             except Exception as exc:
                 print(f'[MARKET TAIEX FAIL] {day} {type(exc).__name__}: {exc}', flush=True)
         time.sleep(300)
