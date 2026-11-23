@@ -48,5 +48,8 @@ def trend_snapshot(rows,as_of):
     data["schema"]="usdtwd_cbc_daily_ma_v1"
     data["source"]="cbc_interbank_daily_close"
     data["quote_kind"]="official_daily_close"
-    data["direction"]="TWD_depreciation" if len(rows)>=2 and data["last_close"] is not None and data["last_close"]>sorted(rows,key=lambda x:x["date"])[-2]["close"] else None
+    prior=[r for r in sorted(rows,key=lambda x:x["date"]) if r["date"]<str(as_of)[:10]]
+    data["direction"]=("TWD_depreciation" if prior[-1]["close"]>prior[-2]["close"] else
+                       "TWD_appreciation" if prior[-1]["close"]<prior[-2]["close"] else
+                       "unchanged") if len(prior)>=2 else None
     return data
