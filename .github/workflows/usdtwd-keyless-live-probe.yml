@@ -1,0 +1,47 @@
+name: USD TWD keyless live rate source probe
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/usdtwd-keyless-live-probe.yml'
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check keyless USD/TWD price timestamp and response status
+        run: |
+          python - <<'PY'
+          import datetime,json,urllib.error,urllib.request
+          url="https://www.live-rates.com/api/price?rate=USDTWD"
+          req=urllib.request.Request(url,headers={"User-Agent":"stock-alert-fx-source-probe/1.0"})
+          try:
+              with urllib.request.urlopen(req,timeout=20) as response:
+                  body=response.read(30000)
+                  print("HTTP_STATUS",response.status)
+                  print("CONTENT_TYPE",response.headers.get("Content-Type"))
+              payload=json.loads(body)
+              rows=payload if isinstance(payload,list) else [payload]
+              for row in rows[:1]:
+                  if not isinstance(row,dict):
+                      print("RESULT=UNRECOGNIZED_SHAPE")
+                      continue
+                  print("RESPONSE_KEYS",sorted(row.keys()))
+                  print("SYMBOL",row.get("currency"))
+                  print("HAS_BID",row.get("bid") is not None)
+                  print("HAS_ASK",row.get("ask") is not None)
+                  print("HAS_RATE",row.get("rate") is not None)
+                  ts=row.get("timestamp")
+                  if isinstance(ts,(int,float)):
+                      seconds=ts/1000 if ts>1e11 else ts
+                      stamp=datetime.datetime.fromtimestamp(seconds,datetime.timezone.utc)
+                      age=(datetime.datetime.now(datetime.timezone.utc)-stamp).total_seconds()
+                      print("QUOTE_TIMESTAMP_UTC",stamp.isoformat())
+                      print("QUOTE_AGE_SECONDS",round(age))
+                      print("FRESH_WITHIN_180_SECONDS",0<=age<=180)
+                  else:
+                      print("QUOTE_TIMESTAMP=UNAVAILABLE")
+          except urllib.error.HTTPError as exc:
+              print("RESULT=HTTP_ERROR",exc.code)
+          except Exception as exc:
+              print("RESULT=UNVERIFIED",type(exc).__name__,str(exc)[:180])
+          PY
