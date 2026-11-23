@@ -36,5 +36,21 @@ class MarketMaintenanceIsolationTests(unittest.TestCase):
             self.assertEqual(market.maintain_taiex_once(now),"not_due")
             update.assert_not_called()
 
+    def test_waits_for_postclose_completion(self):
+        now=datetime(2026,11,23,15,31,tzinfo=ZoneInfo("Asia/Taipei"))
+        with patch.object(market,"postclose_ready",return_value=False), patch("taiex_fugle_store_v1.update") as update:
+            self.assertEqual(market.maintain_taiex_once(now),"waiting_for_f15")
+            update.assert_not_called()
+
+    def test_completion_gate_checks_both_daily_stages_and_f15(self):
+        import json
+        from unittest.mock import mock_open
+        with patch("pathlib.Path.read_text",mock_open(read_data=json.dumps({"day":"2026-11-23","stage_done":["DAILY_K","F10"]}))), patch("f15_trajectory_store.report_and_trajectory_complete",return_value=True) as check:
+            self.assertTrue(market.postclose_ready("2026-11-23"))
+            check.assert_called_once_with("2026-11-23")
+        with patch("pathlib.Path.read_text",mock_open(read_data=json.dumps({"day":"2026-11-23","stage_done":["DAILY_K"]}))), patch("f15_trajectory_store.report_and_trajectory_complete") as check:
+            self.assertFalse(market.postclose_ready("2026-11-23"))
+            check.assert_not_called()
+
 if __name__=="__main__":
     unittest.main()
