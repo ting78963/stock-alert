@@ -17,9 +17,12 @@ class MarketMaintenanceIsolationTests(unittest.TestCase):
         self.assertNotIn("maintain_taiex_once",names)
         self.assertFalse(any(isinstance(node,ast.ImportFrom) and node.module=="market_data_maintenance_v1" for node in ast.walk(tree)))
 
-    def test_market_worker_is_standalone(self):
+    def test_market_maintenance_threads_are_independent_of_f15(self):
         production=ast.parse((ROOT/"production_worker_v1.py").read_text(encoding="utf-8"))
-        self.assertFalse(any(isinstance(node,ast.ImportFrom) and node.module=="market_data_maintenance_v1" for node in ast.walk(production)))
+        modules={node.module for node in ast.walk(production) if isinstance(node,ast.ImportFrom)}
+        self.assertIn("market_data_maintenance_v1",modules)
+        self.assertIn("usdtwd_cbc_maintenance_v1",modules)
+        self.assertIn("f15_eod_signal_report",modules)
         market_worker=ast.parse((ROOT/"market_data_worker_v1.py").read_text(encoding="utf-8"))
         modules={node.module for node in ast.walk(market_worker) if isinstance(node,ast.ImportFrom)}
         self.assertIn("market_data_maintenance_v1",modules)
