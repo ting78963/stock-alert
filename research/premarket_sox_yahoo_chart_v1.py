@@ -8,7 +8,7 @@ from math import isfinite
 from urllib.request import Request, urlopen
 import json
 
-URL = "https://query1.finance.yahoo.com/v8/finance/chart/%5ESOX?range=5d&interval=1d"
+URL = "https://query1.finance.yahoo.com/v8/finance/chart/%5ESOX?range=10d&interval=1d"
 
 
 def parse_sox_chart(payload):
