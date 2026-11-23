@@ -13,6 +13,8 @@ on:
       - 'taiex_fugle_store_v1.py'
       - 'f15_eod_signal_report.py'
       - 'tests/test_taiex_*.py'
+      - 'tests/test_premarket_quote_policy_v1.py'
+      - 'premarket_quote_policy_v1.py'
       - '.github/workflows/taiex-f15-tests.yml'
   workflow_dispatch:
 jobs:
@@ -23,7 +25,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - run: python -m unittest discover -s tests -p 'test_taiex_*.py' -v
+      - run: |
+          python -m unittest discover -s tests -p 'test_taiex_*.py' -v
+          python -m unittest discover -s tests -p 'test_premarket_quote_policy_v1.py' -v
       - name: Read-only live Fugle IX0001 check (only when API key configured)
         env:
           FUGLE_API_KEY: ${{ secrets.FUGLE_API_KEY }}
