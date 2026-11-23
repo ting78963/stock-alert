@@ -3,7 +3,7 @@
 from __future__ import annotations
 from datetime import date
 from math import isfinite
-from taiex_market_history_v1 import snapshot as moving_average_snapshot
+from taiex_market_history_v1 import normalize_daily
 
 URL="https://cpx.cbc.gov.tw/api/OpenData/FTDOpenData_Day"
 
@@ -46,12 +46,24 @@ def fetch_daily(session=None,timeout=15):
     return parse_daily(response.json())
 
 def trend_snapshot(rows,as_of):
-    data=moving_average_snapshot(rows,as_of)
-    data["schema"]="usdtwd_cbc_daily_ma_v1"
-    data["source"]="cbc_interbank_daily_close"
-    data["quote_kind"]="official_daily_close"
-    prior=[r for r in sorted(rows,key=lambda x:x["date"]) if r["date"]<str(as_of)[:10]]
-    data["direction"]=("TWD_depreciation" if prior[-1]["close"]>prior[-2]["close"] else
-                       "TWD_appreciation" if prior[-1]["close"]<prior[-2]["close"] else
-                       "unchanged") if len(prior)>=2 else None
-    return data
+    """Only last published CBC daily closes before report date; MA5/MA20 only."""
+    report_day=date.fromisoformat(str(as_of)[:10]).isoformat()
+    prior=[r for r in normalize_daily(rows) if r["date"]<report_day]
+    values=[r["close"] for r in prior]
+    ma5=round(sum(values[-5:])/5,4) if len(values)>=5 else None
+    ma20=round(sum(values[-20:])/20,4) if len(values)>=20 else None
+    return {
+        "schema":"usdtwd_cbc_daily_ma5_ma20_v1",
+        "source":"cbc_interbank_daily_close",
+        "quote_kind":"official_daily_close",
+        "as_of":report_day,
+        "last_close_date":prior[-1]["date"] if prior else None,
+        "last_close":values[-1] if values else None,
+        "daily_count":len(values),
+        "daily_ma5":ma5,
+        "daily_ma20":ma20,
+        "ma5_vs_ma20":("above" if ma5>ma20 else "below" if ma5<ma20 else "equal") if ma5 is not None and ma20 is not None else None,
+        "direction":("TWD_depreciation" if values[-1]>values[-2] else
+                     "TWD_appreciation" if values[-1]<values[-2] else
+                     "unchanged") if len(values)>=2 else None,
+    }
