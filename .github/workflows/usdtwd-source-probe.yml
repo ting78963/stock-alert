@@ -34,6 +34,32 @@ jobs:
           except Exception as exc:
               print("LIVE_QUOTE_CHECK=UNVERIFIED",type(exc).__name__)
           PY
+      - name: Verify USD/TWD previous daily closes when secret exists
+        env:
+          TWELVEDATA_API_KEY: ${{ secrets.TWELVEDATA_API_KEY }}
+        run: |
+          python - <<'PY'
+          import json,os,urllib.parse,urllib.request
+          key=os.getenv("TWELVEDATA_API_KEY")
+          if not key:
+              print("DAILY_CLOSE_CHECK=SKIPPED (TWELVEDATA_API_KEY not configured)")
+              raise SystemExit(0)
+          params={"symbol":"USD/TWD","interval":"1day","outputsize":5,"apikey":key}
+          url="https://api.twelvedata.com/time_series?"+urllib.parse.urlencode(params)
+          try:
+              with urllib.request.urlopen(url,timeout=15) as response:
+                  payload=json.load(response)
+              if payload.get("status")=="error" or payload.get("code"):
+                  print("DAILY_CLOSE_CHECK=UNAVAILABLE",payload.get("code"),payload.get("message"))
+              else:
+                  values=payload.get("values") or []
+                  print("DAILY_CLOSE_CHECK="+("ROWS_RETURNED" if values else "NO_ROWS"))
+                  print("ROW_COUNT="+str(len(values)))
+                  print("HAS_DATE="+str(bool(values and values[0].get("datetime"))))
+                  print("NOTE: Exclude current unfinished day before comparison.")
+          except Exception as exc:
+              print("DAILY_CLOSE_CHECK=UNVERIFIED",type(exc).__name__)
+          PY
       - name: Check USD/TWD listed in Twelve Data public forex catalog
         run: |
           python - <<'PY'
