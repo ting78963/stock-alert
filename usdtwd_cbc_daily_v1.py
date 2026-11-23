@@ -3,7 +3,6 @@
 from __future__ import annotations
 from datetime import date
 from math import isfinite
-import requests
 from taiex_market_history_v1 import snapshot as moving_average_snapshot
 
 URL="https://cpx.cbc.gov.tw/api/OpenData/FTDOpenData_Day"
@@ -38,7 +37,10 @@ def parse_daily(payload):
     return [{"date":d,"close":result[d]} for d in sorted(result)]
 
 def fetch_daily(session=None,timeout=15):
-    client=session or requests
+    if session is None:
+        import requests
+        session=requests
+    client=session
     response=client.get(URL,timeout=timeout)
     response.raise_for_status()
     return parse_daily(response.json())
