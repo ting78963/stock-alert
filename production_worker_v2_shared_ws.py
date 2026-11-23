@@ -2,7 +2,7 @@
 """Trend production worker v2: A 5s -> in-process B runners -> ONE shared Fugle WS."""
 from __future__ import annotations
 import argparse,json,os,queue,runpy,sys,threading,time
-from datetime import datetime,timedelta
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -508,17 +508,6 @@ def maybe_restart_after_maintenance(day, stage_done, notified_at):
     # All stages, F15, UNKNOWN cleanup and archive lock must also be complete.
     import f15_trajectory_store
     if not f15_trajectory_store.report_and_trajectory_complete(day):
-        return
-    # Market maintenance must finish before the existing restart; never start a new scheduler.
-    from taiex_fugle_store_v1 import read_store
-    from taiex_market_history_v1 import snapshot as taiex_snapshot
-    market_rows=read_store()
-    if not market_rows or market_rows[-1]["date"] != day:
-        print("[DAILY RESTART] waiting for market history",flush=True)
-        return
-    market_snapshot=taiex_snapshot(market_rows,(now.date()+timedelta(days=1)).isoformat())
-    if market_snapshot["daily_ma100"] is None or market_snapshot["weekly_ma100"] is None:
-        print("[DAILY RESTART] market history MA100 incomplete",flush=True)
         return
     cleanup_marker=Path("/var/data/stock-alert")/"daily_unknown_cleanup"/f"{day}.json"
     try:
