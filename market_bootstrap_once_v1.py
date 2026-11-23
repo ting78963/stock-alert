@@ -31,7 +31,7 @@ def bootstrap_once(now):
     result=update(as_of=day,max_chunks=1)
     print(f"[MARKET BOOTSTRAP TAIEX] stored={result['stored']} latest={result['latest']} weekly_ma100_ready={result['snapshot']['weekly_ma100'] is not None}",flush=True)
     if result["snapshot"]["weekly_ma100"] is not None and result["snapshot"]["daily_ma100"] is not None:
-        return "complete" if result["latest"]==day.isoformat() else "waiting_close"
+        return "complete" if result["latest"]==day.isoformat() else "progress"
     return "progress"
 
 def loop():
