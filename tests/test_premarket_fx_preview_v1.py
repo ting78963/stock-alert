@@ -27,6 +27,11 @@ class MorningFxPreviewTests(unittest.TestCase):
                         for panel in child["contents"]:
                             if panel["contents"][0]["text"]=="美元／台幣":
                                 return panel
+        for row in panels:
+            if row.get("layout")=="horizontal":
+                for panel in row.get("contents",[]):
+                    if panel.get("contents") and panel["contents"][0].get("text")=="美元／台幣":
+                        return panel
         self.fail("USD/TWD panel missing")
 
     def test_live_fx_shows_cbc_comparison_and_ma(self):
