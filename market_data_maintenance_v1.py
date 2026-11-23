@@ -4,11 +4,27 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 TPE=ZoneInfo('Asia/Taipei')
 
+def postclose_ready(day):
+ # Reuse the production maintenance completion markers; no new shared state.
+ import json
+ from pathlib import Path
+ from f15_trajectory_store import report_and_trajectory_complete
+ marker=Path("/var/data/stock-alert/daily_maintenance_state")/f"{day}.json"
+ try:
+  state=json.loads(marker.read_text(encoding="utf-8"))
+ except (OSError,ValueError,TypeError):
+  return False
+ if state.get("day")!=day or set(state.get("stage_done",[]))!={"DAILY_K","F10"}:
+  return False
+ return report_and_trajectory_complete(day)
+
 def maintain_taiex_once(now):
  # Independent market history maintenance; no F15 stock report dependency.
  from taiex_fugle_store_v1 import update, read_store
  if (now.hour, now.minute) < (15, 30) or now.weekday() >= 5:
   return "not_due"
+ if not postclose_ready(now.date().isoformat()):
+  return "waiting_for_f15"
  day = now.date().isoformat()
  rows = read_store()
  if rows and rows[-1]["date"] == day:
