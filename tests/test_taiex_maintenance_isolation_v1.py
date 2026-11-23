@@ -45,10 +45,10 @@ class MarketMaintenanceIsolationTests(unittest.TestCase):
     def test_completion_gate_checks_both_daily_stages_and_f15(self):
         import json
         from unittest.mock import mock_open
-        with patch("pathlib.Path.read_text",mock_open(read_data=json.dumps({"day":"2026-11-23","stage_done":["DAILY_K","F10"]}))), patch("f15_trajectory_store.report_and_trajectory_complete",return_value=True) as check:
+        with patch("pathlib.Path.read_text",return_value=json.dumps({"day":"2026-11-23","stage_done":["DAILY_K","F10"]})), patch("f15_trajectory_store.report_and_trajectory_complete",return_value=True) as check:
             self.assertTrue(market.postclose_ready("2026-11-23"))
             check.assert_called_once_with("2026-11-23")
-        with patch("pathlib.Path.read_text",mock_open(read_data=json.dumps({"day":"2026-11-23","stage_done":["DAILY_K"]}))), patch("f15_trajectory_store.report_and_trajectory_complete") as check:
+        with patch("pathlib.Path.read_text",return_value=json.dumps({"day":"2026-11-23","stage_done":["DAILY_K"]})), patch("f15_trajectory_store.report_and_trajectory_complete") as check:
             self.assertFalse(market.postclose_ready("2026-11-23"))
             check.assert_not_called()
 
