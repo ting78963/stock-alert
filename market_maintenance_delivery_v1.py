@@ -36,6 +36,8 @@ def deliver_once(now,send_flex,state_path=STATE,report_builder=build_from_stores
             if data.get("sent_date")==day:
                 return "already_sent"
         card=report_builder(now)
+        if "未完成" in card.get("altText",""):
+            return "waiting_for_data"
         if card.get("type")!="flex":
             raise ValueError("Invalid LINE Flex report")
         # The sender must confirm success or raise. Only then persist sent marker.
