@@ -153,46 +153,13 @@ def process_day(day,send_line=True):
  send(x);r["dates"][day]={"sent_at_taipei":datetime.now(TPE).isoformat(timespec="seconds"),"total":x["total"]};atomic(p,r);print(f"[F15 SENT] {day} total={x['total']} delayed={x['delayed']}",flush=True);return "sent"
 def days():
  d=datetime.now(TPE).date();return [(d-timedelta(days=i)).isoformat() for i in range(7,-1,-1)]
-def maintain_taiex_once(now):
- # Reuse the existing F15 maintenance loop; do not launch another scheduler.
- from taiex_fugle_store_v1 import update, read_store
- if (now.hour, now.minute) < (15, 30) or now.weekday() >= 5:
-  return "not_due"
- day = now.date().isoformat()
- rows = read_store()
- if rows and rows[-1]["date"] == day:
-  from taiex_market_history_v1 import snapshot
-  from datetime import timedelta as _timedelta
-  s=snapshot(rows,(now.date()+_timedelta(days=1)).isoformat())
-  if s["weekly_ma100"] is not None and s["daily_ma100"] is not None:
-   return "already_updated"
-  raise RuntimeError("TAIEX history insufficient for MA100; manual history repair required")
- from twse_session_gate_v1 import is_scheduled_open
- if not is_scheduled_open(now.date()):
-  return "market_closed"
- result = update(as_of=now.date())
- if result["latest"] != day:
-  if result["snapshot"]["weekly_ma100"] is None:
-   print(f"[F15 TAIEX BOOTSTRAP] {day} stored={result['stored']} latest={result['latest']}",flush=True)
-   return "bootstrapping"
-  raise RuntimeError(f"TAIEX official close not ready: {result['latest']}")
- if result["snapshot"]["weekly_ma100"] is None or result["snapshot"]["daily_ma100"] is None:
-  raise RuntimeError("TAIEX history insufficient for MA100")
- print(f"[F15 TAIEX UPDATED] {day} stored={result['stored']}",flush=True)
- return "updated"
-
 def loop():
  OUT.mkdir(parents=True,exist_ok=True)
  # Completed LINE reports are authoritative across process restarts.
  # Avoid repeatedly rebuilding historical dates after an OOM restart.
  completed=set()
- last_taiex_day=None
- next_taiex_attempt=0
  while True:
   n=datetime.now(TPE);today=n.date().isoformat()
-  if today!=last_taiex_day:
-   last_taiex_day=today
-   next_taiex_attempt=0
   try:
    _,sent_registry=reg()
    completed.update(sent_registry['dates'].keys())
@@ -207,12 +174,4 @@ def loop():
     if result in ("sent","already_sent","zero_verified"):
      completed.add(d)
    except BaseException as e:print(f"[F15 FAIL] {d} {type(e).__name__}: {e}",flush=True)
-  # Always finish existing F15 stock reports before fetching TAIEX history.
-  # Failed or unpublished daily candles retry at most once per 30 minutes.
-  if (n.hour,n.minute)>=(15,30) and (n.hour*60+n.minute)>=next_taiex_attempt:
-   next_taiex_attempt=n.hour*60+n.minute+30
-   try:
-    maintain_taiex_once(n)
-   except Exception as e:
-    print(f"[F15 TAIEX FAIL] {today} {type(e).__name__}: {e}",flush=True)
   time.sleep(300)
