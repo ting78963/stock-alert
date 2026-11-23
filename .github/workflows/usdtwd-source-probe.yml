@@ -1,0 +1,33 @@
+name: USD TWD public symbol availability probe
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/usdtwd-source-probe.yml'
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check USD/TWD listed in Twelve Data public forex catalog
+        run: |
+          python - <<'PY'
+          import json,urllib.request
+          url="https://api.twelvedata.com/forex_pairs?symbol=USD%2FTWD"
+          try:
+              req=urllib.request.Request(url,headers={"User-Agent":"stock-alert-source-verification/1.0"})
+              with urllib.request.urlopen(req,timeout=15) as response:
+                  payload=json.load(response)
+              if isinstance(payload,dict) and "data" in payload:
+                  pairs=payload["data"]
+              elif isinstance(payload,list):
+                  pairs=payload
+              else:
+                  print("CATALOG_UNVERIFIED",str(payload)[:350])
+                  raise SystemExit(0)
+              found=[p for p in pairs if isinstance(p,dict) and p.get("symbol")=="USD/TWD"]
+              print("USD_TWD_LISTED="+str(bool(found)))
+              print("MATCHES="+str(found[:1]))
+              print("NOTE: Listing does not prove free tier entitlement or live quote freshness.")
+          except Exception as exc:
+              print("CATALOG_UNVERIFIED",type(exc).__name__,str(exc)[:200])
+          PY
