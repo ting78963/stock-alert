@@ -27,15 +27,15 @@ class MarketPremarketMATests(unittest.TestCase):
         self.assertEqual(s["weekly"]["cross_20_100"]["status"], "insufficient")
 
     def test_weekly_golden_cross_uses_same_algorithm(self):
-        # 102 complete weeks: 101 at 110 then one at 300 creates 20/100 cross.
-        values = [110.0] * (101 * 5) + [300.0] * 5
+        # 102 complete weeks: 20MA starts below 100MA, then crosses on final week.
+        values = [110.0] * (81 * 5) + [100.0] * (20 * 5) + [300.0] * 5
         rows, end = weekdays("2024-01-01", len(values), values)
         s = market_trend_snapshot(rows, end.isoformat())
         self.assertEqual(s["weekly"]["cross_20_100"]["status"], "golden_cross")
         self.assertEqual(s["weekly"]["ma"]["ma20"]["direction"], "rising")
 
     def test_weekly_bearish_cross_uses_same_algorithm(self):
-        values = [110.0] * (101 * 5) + [1.0] * 5
+        values = [100.0] * (81 * 5) + [110.0] * (20 * 5) + [1.0] * 5
         rows, end = weekdays("2024-01-01", len(values), values)
         s = market_trend_snapshot(rows, end.isoformat())
         self.assertEqual(s["weekly"]["cross_20_100"]["status"], "death_cross")
