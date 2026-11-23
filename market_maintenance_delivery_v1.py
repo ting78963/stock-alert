@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 from market_maintenance_report_v1 import build_from_stores
 
 TPE=ZoneInfo("Asia/Taipei")
-STATE=Path(os.getenv("MARKET_REPORT_SENT_STATE","/var/data/stock-alert/f15_market/market_report_sent.json"))
+STATE=Path(os.getenv("MARKET_REPORT_SENT_STATE","/var/data/stock-alert/market_data/market_report_sent.json"))
 
 def deliver_once(now,send_flex,state_path=STATE,report_builder=build_from_stores):
     """Exactly one successful invocation per date in a single worker process.
