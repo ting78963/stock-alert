@@ -24,33 +24,23 @@ class MarketMaintenanceIsolationTests(unittest.TestCase):
         self.assertTrue(any(alias.name=="loop" and alias.asname=="market_data_loop" for alias in imports[0].names))
         self.assertIn("market-data-maintenance",(ROOT/"production_worker_v1.py").read_text(encoding="utf-8"))
 
-    def test_before_1530_does_not_fetch(self):
-        now=datetime(2026,11,23,15,29,tzinfo=ZoneInfo("Asia/Taipei"))
+    def test_before_1430_does_not_fetch(self):
+        now=datetime(2026,11,23,14,29,tzinfo=ZoneInfo("Asia/Taipei"))
         with patch("taiex_fugle_store_v1.update") as update:
             self.assertEqual(market.maintain_taiex_once(now),"not_due")
             update.assert_not_called()
+
+    def test_1430_does_not_wait_for_f15(self):
+        now=datetime(2026,11,23,14,30,tzinfo=ZoneInfo("Asia/Taipei"))
+        with patch("taiex_fugle_store_v1.read_store",return_value=[]), patch("twse_session_gate_v1.is_scheduled_open",return_value=True), patch("taiex_fugle_store_v1.update",return_value={"latest":"2026-11-23","stored":500,"snapshot":{"daily_ma100":1,"weekly_ma100":1}}) as update:
+            self.assertEqual(market.maintain_taiex_once(now),"updated")
+            update.assert_called_once()
 
     def test_weekend_does_not_fetch(self):
         now=datetime(2026,11,22,16,0,tzinfo=ZoneInfo("Asia/Taipei"))
         with patch("taiex_fugle_store_v1.update") as update:
             self.assertEqual(market.maintain_taiex_once(now),"not_due")
             update.assert_not_called()
-
-    def test_waits_for_postclose_completion(self):
-        now=datetime(2026,11,23,15,31,tzinfo=ZoneInfo("Asia/Taipei"))
-        with patch.object(market,"postclose_ready",return_value=False), patch("taiex_fugle_store_v1.update") as update:
-            self.assertEqual(market.maintain_taiex_once(now),"waiting_for_f15")
-            update.assert_not_called()
-
-    def test_completion_gate_checks_both_daily_stages_and_f15(self):
-        import json
-        from unittest.mock import mock_open
-        with patch("pathlib.Path.read_text",return_value=json.dumps({"day":"2026-11-23","stage_done":["DAILY_K","F10"]})), patch("f15_trajectory_store.report_and_trajectory_complete",return_value=True) as check:
-            self.assertTrue(market.postclose_ready("2026-11-23"))
-            check.assert_called_once_with("2026-11-23")
-        with patch("pathlib.Path.read_text",return_value=json.dumps({"day":"2026-11-23","stage_done":["DAILY_K"]})), patch("f15_trajectory_store.report_and_trajectory_complete") as check:
-            self.assertFalse(market.postclose_ready("2026-11-23"))
-            check.assert_not_called()
 
 if __name__=="__main__":
     unittest.main()
