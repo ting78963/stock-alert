@@ -17,8 +17,7 @@ def maintain_taiex_once(now):
   s=snapshot(rows,(now.date()+_timedelta(days=1)).isoformat())
   if s["weekly_ma100"] is not None and s["daily_ma100"] is not None:
    return "already_updated"
-  print(f"[MARKET TAIEX BOOTSTRAP] {day} current candle cached; MA100 history incomplete",flush=True)
-  return "bootstrapping"
+  print(f"[MARKET TAIEX BOOTSTRAP] {day} current candle cached; continuing history repair",flush=True)
  from twse_session_gate_v1 import is_scheduled_open
  if not is_scheduled_open(now.date()):
   return "market_closed"
