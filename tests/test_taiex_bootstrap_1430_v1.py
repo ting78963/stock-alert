@@ -43,6 +43,23 @@ class Bootstrap1430Tests(unittest.TestCase):
             self.assertEqual(result["latest"],today.isoformat())
             self.assertEqual(result["stored"],2)
 
+    def test_completed_history_fetches_only_new_day(self):
+        with tempfile.TemporaryDirectory() as td:
+            path=Path(td)/"index.json"
+            today=date(2026,11,23)
+            yesterday=today-timedelta(days=1)
+            store.write_store(path,[{"date":yesterday.isoformat(),"close":20000}],covered_through=yesterday.isoformat())
+            calls=[]
+            def fake_fetch(a,b,**kwargs):
+                calls.append((a,b))
+                return [{"date":today.isoformat(),"close":20010}]
+            with patch.object(store,"fetch_range",side_effect=fake_fetch):
+                result=store.update(as_of=today,path=path)
+                again=store.update(as_of=today,path=path)
+            self.assertEqual(calls,[(today,today)])
+            self.assertEqual(result["latest"],today.isoformat())
+            self.assertEqual(again["fetched_rows"],0)
+
     def test_missing_today_candle_does_not_mark_today_covered(self):
         with tempfile.TemporaryDirectory() as td:
             path=Path(td)/"index.json"
