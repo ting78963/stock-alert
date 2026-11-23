@@ -32,3 +32,22 @@ def maintain_taiex_once(now):
  print(f"[MARKET TAIEX UPDATED] {day} stored={result['stored']}",flush=True)
  return "updated"
 
+
+def loop():
+    import time
+    last_day = None
+    next_minute = 0
+    while True:
+        now = datetime.now(TPE)
+        day = now.date().isoformat()
+        if day != last_day:
+            last_day = day
+            next_minute = 0
+        minute = now.hour * 60 + now.minute
+        if minute >= 930 and minute >= next_minute:
+            next_minute = minute + 30
+            try:
+                maintain_taiex_once(now)
+            except Exception as exc:
+                print(f'[MARKET TAIEX FAIL] {day} {type(exc).__name__}: {exc}', flush=True)
+        time.sleep(300)
