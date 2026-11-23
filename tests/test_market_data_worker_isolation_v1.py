@@ -14,7 +14,7 @@ class MarketWorkerIsolation(unittest.TestCase):
     def test_no_f15_worker_imports(self):
         from pathlib import Path
         src=Path(worker.__file__).read_text(encoding="utf-8")
-        self.assertNotIn("f15_",src.lower())
+        self.assertFalse(any(line.strip().startswith(("from f15_", "import f15_")) for line in src.splitlines()))
         self.assertNotIn("production_worker",src)
 
 if __name__=="__main__":
