@@ -24,13 +24,15 @@ def parse_usdtwd(payload):
         raise ValueError("Invalid USD/TWD price")
     result={"value":price,"quoted_at":ts.isoformat(),"quote_kind":"market_spot",
             "source":"live_rates"}
-    for field in ("bid","ask","close"):
+    for field in ("bid","ask"):
         try:
             value=float(row[field])
             if isfinite(value) and value>0:
                 result[field]=value
         except (KeyError,ValueError,TypeError):
             pass
+    # Provider close is not documented as the prior trading-day close.
+    # Never expose it as a baseline for appreciation/depreciation.
     return result
 
 def fetch_once(timeout=15,opener=None):
