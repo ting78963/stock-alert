@@ -27,6 +27,22 @@ class Bootstrap1430Tests(unittest.TestCase):
                 self.assertEqual(len(calls),4)
                 self.assertGreater(second["stored"],first["stored"])
 
+    def test_recent_cached_candle_does_not_skip_older_coverage(self):
+        with tempfile.TemporaryDirectory() as td:
+            path=Path(td)/"index.json"
+            today=date(2026,11,23)
+            start=date(2023,11,1)
+            store.write_store(path,[{"date":today.isoformat(),"close":20000}],covered_through=start.isoformat())
+            calls=[]
+            def fake_fetch(a,b,**kwargs):
+                calls.append((a,b))
+                return [{"date":a.isoformat(),"close":19000}]
+            with patch.object(store,"fetch_range",side_effect=fake_fetch):
+                result=store.update(as_of=today,path=path,max_chunks=1)
+            self.assertEqual(calls[0][0],start+timedelta(days=1))
+            self.assertEqual(result["latest"],today.isoformat())
+            self.assertEqual(result["stored"],2)
+
     def test_missing_today_candle_does_not_mark_today_covered(self):
         with tempfile.TemporaryDirectory() as td:
             path=Path(td)/"index.json"
