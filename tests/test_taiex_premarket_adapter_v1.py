@@ -14,6 +14,8 @@ class TaiexPremarketAdapterTests(unittest.TestCase):
             trend=load_taiex_trend("2026-11-23",path)
             self.assertEqual(trend["headline"],"資料不足")
             self.assertIsNone(trend["last_close"])
+            self.assertEqual(trend["completed_week_count"],0)
+            self.assertFalse(trend["weekly_ma100_ready"])
             preview=build_taiex_preview("2026-11-23",path)
             self.assertEqual(preview["type"],"flex")
             self.assertIn("資料不足",json.dumps(preview,ensure_ascii=False))
@@ -35,6 +37,8 @@ class TaiexPremarketAdapterTests(unittest.TestCase):
             self.assertNotEqual(trend["last_close"],999999)
             self.assertEqual(trend["as_of"],report)
             self.assertIn(trend["headline"],("多頭趨勢維持","多頭仍在，但漲勢放緩","空頭趨勢持續","空頭仍在，短線出現改善","多空轉換期","資料不足"))
+            self.assertTrue(trend["weekly_ma100_ready"])
+            self.assertGreaterEqual(trend["completed_week_count"],102)
             self.assertEqual(trend["weekly"]["structure"],"偏多")
             self.assertEqual(trend["daily"]["structure"],"偏多")
 
