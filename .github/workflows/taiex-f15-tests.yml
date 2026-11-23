@@ -26,6 +26,8 @@ on:
       - 'tests/test_usdtwd_cbc_store_v1.py'
       - 'usdtwd_cbc_maintenance_v1.py'
       - 'tests/test_usdtwd_cbc_maintenance_v1.py'
+      - 'market_maintenance_flex_v1.py'
+      - 'tests/test_market_maintenance_flex_v1.py'
       - '.github/workflows/taiex-f15-tests.yml'
   workflow_dispatch:
 jobs:
@@ -45,6 +47,7 @@ jobs:
           python -m unittest discover -s tests -p 'test_premarket_fx_preview_v1.py' -v
           python -m unittest discover -s tests -p 'test_usdtwd_cbc_store_v1.py' -v
           python -m unittest discover -s tests -p 'test_usdtwd_cbc_maintenance_v1.py' -v
+          python -m unittest discover -s tests -p 'test_market_maintenance_flex_v1.py' -v
       - name: Read-only live Fugle IX0001 check (only when API key configured)
         env:
           FUGLE_API_KEY: ${{ secrets.FUGLE_API_KEY }}
