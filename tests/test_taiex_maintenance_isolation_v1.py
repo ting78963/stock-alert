@@ -32,7 +32,10 @@ class MarketMaintenanceIsolationTests(unittest.TestCase):
 
     def test_1430_does_not_wait_for_f15(self):
         now=datetime(2026,11,23,14,30,tzinfo=ZoneInfo("Asia/Taipei"))
-        with patch("taiex_fugle_store_v1.read_store",return_value=[]), patch("twse_session_gate_v1.is_scheduled_open",return_value=True), patch("taiex_fugle_store_v1.update",return_value={"latest":"2026-11-23","stored":500,"snapshot":{"daily_ma100":1,"weekly_ma100":1}}) as update:
+        from types import ModuleType
+        gate=ModuleType("twse_session_gate_v1")
+        gate.is_scheduled_open=lambda day: True
+        with patch.dict("sys.modules",{"twse_session_gate_v1":gate}), patch("taiex_fugle_store_v1.read_store",return_value=[]), patch("taiex_fugle_store_v1.update",return_value={"latest":"2026-11-23","stored":500,"snapshot":{"daily_ma100":1,"weekly_ma100":1}}) as update:
             self.assertEqual(market.maintain_taiex_once(now),"updated")
             update.assert_called_once()
 
