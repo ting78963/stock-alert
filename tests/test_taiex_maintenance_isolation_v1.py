@@ -17,12 +17,14 @@ class MarketMaintenanceIsolationTests(unittest.TestCase):
         self.assertNotIn("maintain_taiex_once",names)
         self.assertFalse(any(isinstance(node,ast.ImportFrom) and node.module=="market_data_maintenance_v1" for node in ast.walk(tree)))
 
-    def test_worker_starts_separate_market_thread(self):
-        tree=ast.parse((ROOT/"production_worker_v1.py").read_text(encoding="utf-8"))
-        imports=[node for node in ast.walk(tree) if isinstance(node,ast.ImportFrom) and node.module=="market_data_maintenance_v1"]
-        self.assertEqual(len(imports),1)
-        self.assertTrue(any(alias.name=="loop" and alias.asname=="market_data_loop" for alias in imports[0].names))
-        self.assertIn("market-data-maintenance",(ROOT/"production_worker_v1.py").read_text(encoding="utf-8"))
+    def test_market_worker_is_standalone(self):
+        production=ast.parse((ROOT/"production_worker_v1.py").read_text(encoding="utf-8"))
+        self.assertFalse(any(isinstance(node,ast.ImportFrom) and node.module=="market_data_maintenance_v1" for node in ast.walk(production)))
+        market_worker=ast.parse((ROOT/"market_data_worker_v1.py").read_text(encoding="utf-8"))
+        modules={node.module for node in ast.walk(market_worker) if isinstance(node,ast.ImportFrom)}
+        self.assertIn("market_data_maintenance_v1",modules)
+        self.assertIn("usdtwd_cbc_maintenance_v1",modules)
+        self.assertFalse(any(m and m.startswith("f15_") for m in modules))
 
     def test_before_1430_does_not_fetch(self):
         now=datetime(2026,11,23,14,29,tzinfo=ZoneInfo("Asia/Taipei"))
