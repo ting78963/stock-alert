@@ -8,6 +8,7 @@ from taiex_trend_narrative_v1 import analyze_taiex
 from taiex_market_history_v1 import completed_week_closes
 from premarket_market_flex_v1 import build_premarket_flex
 from premarket_quote_policy_v1 import validate_quote
+from usdtwd_premarket_compare_v1 import compare_live_to_cbc_close
 
 TPE=ZoneInfo("Asia/Taipei")
 
@@ -28,16 +29,25 @@ def load_taiex_trend(as_of=None,path=None):
     trend["weekly_ma100_ready"]=trend["completed_week_count"]>=102
     return trend
 
-def build_taiex_preview(as_of=None,path=None,indicators=None,system_status="待確認",report_at=None):
+def build_taiex_preview(as_of=None,path=None,indicators=None,system_status="待確認",report_at=None,cbc_fx_rows=None):
     """Preview only. Never infer system health, market prices, or send LINE."""
     trend=load_taiex_trend(as_of,path)
     values=dict(indicators or {})
+    raw_fx=values.get("usdtwd")
     if any(k in values for k in ("tx","usdtwd","sox")):
         if report_at is None:
             raise ValueError("report_at required for externally sourced market quotes")
         for key in ("tx","usdtwd","sox"):
             if key in values:
                 values[key]=validate_quote(key,values[key],report_at)
+    if raw_fx is not None and cbc_fx_rows is not None:
+        comparison=compare_live_to_cbc_close(raw_fx,cbc_fx_rows,report_at)
+        fx=values.get("usdtwd") or {}
+        if comparison["status"]=="ok" and fx.get("status")=="live":
+            fx["change"]=f"{comparison['usd_twd_change']:+.4f} ({comparison['usd_twd_change_percent']:+.2f}%) · "+("臺幣貶值" if comparison["direction"]=="TWD_depreciation" else "臺幣升值" if comparison["direction"]=="TWD_appreciation" else "持平")
+            fx["timestamp"]+=f"｜對照央行 {comparison['previous_close_date']} 收盤（不同來源）"
+        elif fx.get("status")=="live":
+            fx["timestamp"]+="｜央行前收比較資料不足"
     if "taiex" not in values:
         target=Path(path) if path is not None else STORE
         rows=[r for r in read_store(target) if r["date"] < trend["as_of"]]
