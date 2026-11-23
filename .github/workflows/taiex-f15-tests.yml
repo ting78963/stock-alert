@@ -13,6 +13,7 @@ on:
       - 'taiex_fugle_store_v1.py'
       - 'f15_eod_signal_report.py'
       - 'tests/test_taiex_*.py'
+      - 'tests/test_taiex_bootstrap_resume_v1.py'
       - 'tests/test_premarket_quote_policy_v1.py'
       - 'premarket_quote_policy_v1.py'
       - 'usdtwd_cbc_daily_v1.py'
