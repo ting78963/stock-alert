@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 from usdtwd_cbc_daily_v1 import fetch_daily, trend_snapshot
 
 TPE=ZoneInfo("Asia/Taipei")
-STORE=Path(os.getenv("USDTWD_CBC_HISTORY_PATH","/var/data/stock-alert/f15_market/usdtwd_cbc_daily.json"))
+STORE=Path(os.getenv("USDTWD_CBC_HISTORY_PATH","/var/data/stock-alert/market_data/usdtwd_cbc_daily.json"))
 
 def read_store(path=STORE):
     if not path.exists():
