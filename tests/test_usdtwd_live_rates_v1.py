@@ -18,6 +18,18 @@ class LiveRatesTests(unittest.TestCase):
         self.assertEqual(r["bid"],31.54)
         self.assertEqual(r["ask"],31.56)
         self.assertEqual(r["quoted_at"],datetime.fromtimestamp(1795416900,timezone.utc).isoformat())
+    def test_provider_close_never_used_as_previous_close(self):
+        rows=payload()
+        rows[1]["close"]="n/a"
+        r=parse_usdtwd(rows)
+        self.assertNotIn("close",r)
+        self.assertNotIn("previous_close",r)
+        self.assertEqual(r["value"],31.55)
+        self.assertNotEqual(r["value"],r["bid"])
+    def test_even_numeric_provider_close_not_assumed_baseline(self):
+        r=parse_usdtwd(payload())
+        self.assertNotIn("close",r)
+        self.assertNotIn("previous_close",r)
     def test_missing_symbol_rejected(self):
         with self.assertRaises(ValueError): parse_usdtwd([])
     def test_duplicate_symbol_rejected(self):
