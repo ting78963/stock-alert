@@ -69,7 +69,7 @@ def update(as_of=None, path=STORE, session=None, api_key=None, max_chunks=2):
     covered = metadata.get("covered_through")
     # Coverage cursor is authoritative: a cached recent candle must not skip missing older chunks.
     last = covered if covered is not None else (existing[-1]["date"] if existing else None)
-    start = date(today.year - 3, today.month, 1) if last is None else date.fromisoformat(last) + timedelta(days=1)
+    start = today - timedelta(weeks=105) if last is None else date.fromisoformat(last) + timedelta(days=1)
     merged = {r["date"]: r for r in existing}
     fetched = 0
     for index, (a, b) in enumerate(date_ranges(start, today)):
