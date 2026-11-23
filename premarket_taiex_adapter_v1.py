@@ -9,6 +9,7 @@ from taiex_market_history_v1 import completed_week_closes
 from premarket_market_flex_v1 import build_premarket_flex
 from premarket_quote_policy_v1 import validate_quote
 from usdtwd_premarket_compare_v1 import compare_live_to_cbc_close
+from usdtwd_cbc_daily_v1 import trend_snapshot as fx_trend_snapshot
 
 TPE=ZoneInfo("Asia/Taipei")
 
@@ -48,6 +49,10 @@ def build_taiex_preview(as_of=None,path=None,indicators=None,system_status="待�
             fx["timestamp"]+=f"｜對照央行 {comparison['previous_close_date']} 收盤（不同來源）"
         elif fx.get("status")=="live":
             fx["timestamp"]+="｜央行前收比較資料不足"
+        fx_trend=fx_trend_snapshot(cbc_fx_rows,report_at.astimezone(TPE).date())
+        ma5,ma20=fx_trend["daily_ma5"],fx_trend["daily_ma20"]
+        if ma5 is not None and ma20 is not None:
+            fx["timestamp"]+=f"｜央行日 MA5 {ma5:.3f} / MA20 {ma20:.3f}"
     if "taiex" not in values:
         target=Path(path) if path is not None else STORE
         rows=[r for r in read_store(target) if r["date"] < trend["as_of"]]
