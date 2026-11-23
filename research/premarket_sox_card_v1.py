@@ -17,4 +17,4 @@ def build_premarket_sox_flex(now, section_builder=build_sox_brief_section):
                 {"type":"text","text":day,"size":"sm","color":"#A3B3C9"},
                 {"type":"separator","color":"#34465F"},
                 section_builder(day),
-            ]}}}}
+            ]}}}
