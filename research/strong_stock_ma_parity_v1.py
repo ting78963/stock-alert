@@ -48,3 +48,51 @@ def daily_ma_cross(rows, long_period):
 def daily_ma_values(rows):
     cl = _closes(rows)
     return {f"ma{n}": (sum(cl[-n:])/n if len(cl) >= n else None) for n in (20, 60, 100)}
+
+
+def ma_trend(rows, periods=(20, 60, 100)):
+    """Independent direction for each MA; no arbitrary flat tolerance."""
+    closes = _closes(rows)
+    result = {}
+    for period in periods:
+        if len(closes) < period + 1:
+            result[f"ma{period}"] = {"value": None, "direction": "insufficient"}
+            continue
+        now = sum(closes[-period:]) / period
+        previous = sum(closes[-period-1:-1]) / period
+        direction = "rising" if now > previous else ("falling" if now < previous else "flat")
+        result[f"ma{period}"] = {"value": now, "previous": previous, "direction": direction}
+    return result
+
+
+def ma_cross_full(rows, long_period, threshold_pct=0.75):
+    """Extended market status: original golden cross + symmetric bearish states.
+
+    'golden' and 'prepare_golden' reuse strong-stock criteria.
+    Bearish states are new symmetric rules, not claimed as original strong-stock behavior.
+    """
+    golden = daily_ma_cross(rows, long_period)
+    closes = _closes(rows)
+    if len(closes) < long_period + 1:
+        return {"status": "insufficient", "golden_label": golden}
+    def ma(end, n):
+        return sum(closes[end-n:end]) / n
+    n = len(closes)
+    short_now, long_now = ma(n, 20), ma(n, long_period)
+    short_prev, long_prev = ma(n-1, 20), ma(n-1, long_period)
+    gap_pct = (short_now-long_now)/long_now*100 if long_now > 0 else None
+    if golden.startswith("golden_cross"):
+        status = "golden_cross"
+    elif golden == "prepare":
+        status = "prepare_golden"
+    elif short_prev > long_prev and short_now <= long_now:
+        status = "death_cross"
+    elif (long_now > 0 and long_prev > 0 and short_now > long_now
+          and short_prev > long_prev
+          and 0 < gap_pct <= threshold_pct
+          and gap_pct < (short_prev-long_prev)/long_prev*100):
+        status = "prepare_death"
+    else:
+        status = "above" if short_now > long_now else ("below" if short_now < long_now else "equal")
+    return {"status": status, "golden_label": golden, "gap_pct": gap_pct,
+            "short_ma": short_now, "long_ma": long_now}
