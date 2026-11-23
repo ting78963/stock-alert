@@ -7,7 +7,7 @@ TPE=ZoneInfo('Asia/Taipei')
 def maintain_taiex_once(now):
  # Independent market history maintenance; no F15 stock report dependency.
  from taiex_fugle_store_v1 import update, read_store
- if not ((14, 30) <= (now.hour, now.minute) < (15, 30)) or now.weekday() >= 5:
+ if not ((14, 30) <= (now.hour, now.minute) < (15, 5)) or now.weekday() >= 5:
   return "not_due"
  day = now.date().isoformat()
  rows = read_store()
@@ -45,7 +45,7 @@ def loop():
             last_day = day
             next_minute = 0
         minute = now.hour * 60 + now.minute
-        if 870 <= minute < 930 and minute >= next_minute and finished_day != day:
+        if 870 <= minute < 905 and minute >= next_minute and finished_day != day:
             next_minute = minute + 30
             try:
                 outcome = maintain_taiex_once(now)
