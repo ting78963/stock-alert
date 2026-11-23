@@ -2,7 +2,7 @@
 from urllib.request import Request, urlopen
 from research.sox_nasdaq_web_v1 import parse_nasdaq_sox_html
 
-SOX_URL = "https://www.nasdaq.com/market-activity/index/sox"
+SOX_URL = "https://indexes.nasdaq.com/Index/Overview/sox"
 
 
 def fetch_sox_close(opener=urlopen, timeout=8):
