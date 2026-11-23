@@ -41,3 +41,12 @@ def fetch_once(timeout=15,opener=None):
     if len(raw)>2_000_000:
         raise ValueError("Live-Rates response exceeds 2 MB")
     return parse_usdtwd(json.loads(raw))
+
+def fetch_validated_once(report_at,timeout=15,opener=None):
+    """One network call; reject stale/future quotes before they reach the LINE preview."""
+    from premarket_quote_policy_v1 import validate_quote
+    quote=fetch_once(timeout=timeout,opener=opener)
+    checked=validate_quote("usdtwd",quote,report_at)
+    if checked["status"]!="live":
+        return {"status":checked["status"],"value":None,"timestamp":checked["timestamp"]}
+    return checked
