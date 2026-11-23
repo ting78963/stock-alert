@@ -27,7 +27,18 @@ def validate_quote(key, quote, report_at, max_age_seconds=180):
         return {"value":None,"timestamp":"報價時間異常","status":"future"}
     if key in LIVE_KEYS and seconds > max_age_seconds:
         return {"value":None,"timestamp":f"報價逾時（{ts.astimezone(TPE):%H:%M:%S}）","status":"stale"}
+    if key == "usdtwd" and quote.get("quote_kind") not in ("market_spot","bank_spot_bid_ask"):
+        return {"value":None,"timestamp":"匯率種類未確認","status":"invalid_kind"}
+    if key == "tx" and quote.get("session") != "day":
+        return {"value":None,"timestamp":"非當日日盤報價","status":"invalid_session"}
+    if key == "sox" and quote.get("source") != "nasdaq":
+        return {"value":None,"timestamp":"費半來源未確認","status":"invalid_source"}
     result={k:v for k,v in quote.items() if k in ("value","change")}
     result["timestamp"]=ts.astimezone(TPE).strftime("%Y-%m-%d %H:%M:%S")
     result["status"]="live" if key in LIVE_KEYS else "close"
+    result["source"]=quote.get("source")
+    if key == "usdtwd":
+        result["quote_kind"]=quote["quote_kind"]
+    if key == "tx":
+        result["session"]="day"
     return result
