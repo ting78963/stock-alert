@@ -1,0 +1,29 @@
+name: Market Data minimal regression
+on:
+  pull_request:
+    paths:
+      - 'market_*.py'
+      - 'taiex_*.py'
+      - 'usdtwd_*.py'
+      - 'production_worker_v1.py'
+      - 'tests/test_market_*.py'
+      - 'tests/test_taiex_*.py'
+      - 'tests/test_usdtwd_*.py'
+      - '.github/workflows/market-data-minimal-tests.yml'
+  workflow_dispatch:
+jobs:
+  market-data:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Compile market modules
+        run: python -m py_compile market_*.py taiex_*.py usdtwd_*.py production_worker_v1.py
+      - name: Run isolated market tests
+        run: |
+          python -m unittest discover -s tests -p 'test_market_*.py' -v
+          python -m unittest discover -s tests -p 'test_taiex_fugle_v1.py' -v
+          python -m unittest discover -s tests -p 'test_taiex_market_history_v1.py' -v
+          python -m unittest discover -s tests -p 'test_usdtwd_cbc_*.py' -v
