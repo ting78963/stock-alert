@@ -33,8 +33,39 @@ def panel(key,title,subtitle,data):
     return {"type":"box","layout":"vertical","backgroundColor":PANEL,"cornerRadius":"12px",
             "paddingAll":"12px","flex":1,"spacing":"sm","contents":lines}
 
+def trend_color(value):
+    value=str(value or "")
+    if value.startswith("接近") or "放緩" in value or "轉換" in value:
+        return AMBER
+    if "多頭" in value or "偏多" in value or "黃金交叉" in value or "走強" in value:
+        return RED
+    if "空頭" in value or "偏空" in value or "死亡交叉" in value or "轉弱" in value:
+        return GREEN
+    return MUTED
+
+def trend_section(trend):
+    trend=trend or {}
+    headline=trend.get("headline") or "資料待取得"
+    result=[txt("01 · TAIEX MARKET TREND","xs",MUTED),
+            txt("大盤多空趨勢","md",WHITE,"bold"),
+            {"type":"box","layout":"vertical","backgroundColor":PANEL,
+             "cornerRadius":"12px","paddingAll":"12px","spacing":"sm",
+             "contents":[txt("目前市場階段","xs",MUTED),
+                         txt(headline,"lg",trend_color(headline),"bold"),
+                         txt(trend.get("explanation") or "大盤歷史資料待補齊。","sm",WHITE)]}]
+    for label,key in (("短期 · 日線 MA20 / MA100","daily"),
+                      ("中長期 · 週線 MA20 / MA100","weekly")):
+        item=trend.get(key) or {}
+        state=item.get("label") or "資料不足"
+        cross=item.get("cross") or "待判斷"
+        result.append({"type":"box","layout":"vertical","spacing":"xs","contents":[
+            txt(label,"xs",MUTED),
+            txt(state,"sm",trend_color(state),"bold"),
+            txt(cross,"xs",trend_color(cross))]})
+    return result
+
 def build_premarket_flex(indicators,observed_at="08:55",observation=None,
-                         system_status="待確認",system_ok=None):
+                         system_status="待確認",system_ok=None,trend=None,outlook=None):
     """Build exactly one LINE Flex message; caller handles market data and delivery.
 
     indicators: dict of usdtwd/sox/taiex/tx with formatted value/change/timestamp.
@@ -58,11 +89,15 @@ def build_premarket_flex(indicators,observed_at="08:55",observation=None,
                 txt("SURGE / FLOW / VCP","sm",WHITE,"bold",align="end")]}
         ]},
         {"type":"separator","margin":"lg","color":DIVIDER},
-        txt("國際市場與匯率","md",WHITE),
+        *trend_section(trend),
+        {"type":"separator","margin":"lg","color":DIVIDER},
+        txt("02 · GLOBAL MARKET & FUTURES","xs",MUTED),
+        txt("國際市場、匯率與期貨","md",WHITE),
         {"type":"box","layout":"vertical","spacing":"sm","contents":rows},
         {"type":"separator","margin":"lg","color":DIVIDER},
+        txt("03 · MARKET OUTLOOK","xs",MUTED),
         txt("今日市場多空研判","md",WHITE),
-        txt("待評估" if not observation else "綜合觀察","md",AMBER,"bold"),
+        txt(outlook or "待評估","md",trend_color(outlook),"bold"),
         {"type":"box","layout":"vertical","backgroundColor":PANEL,
          "cornerRadius":"12px","paddingAll":"12px","contents":[
             txt(observation or "觀察美股、臺指期、匯率及前日台股趨勢，綜合判斷今日市場偏多、偏空或中性。","sm",MUTED)]},
