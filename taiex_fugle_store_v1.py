@@ -67,7 +67,8 @@ def update(as_of=None, path=STORE, session=None, api_key=None, max_chunks=2):
     existing = read_store(path)
     metadata = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
     covered = metadata.get("covered_through")
-    last = max(filter(None, [covered, existing[-1]["date"] if existing else None]), default=None)
+    # Coverage cursor is authoritative: a cached recent candle must not skip missing older chunks.
+    last = covered if covered is not None else (existing[-1]["date"] if existing else None)
     start = date(today.year - 3, today.month, 1) if last is None else date.fromisoformat(last) + timedelta(days=1)
     merged = {r["date"]: r for r in existing}
     fetched = 0
