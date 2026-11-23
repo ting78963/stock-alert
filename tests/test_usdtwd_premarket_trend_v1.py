@@ -18,12 +18,13 @@ class FXPremarketTests(unittest.TestCase):
 
     def test_usdtwd_rising_means_twd_weakening(self):
         result = fx_premarket_snapshot(self.rows([30.0] * 20 + [31.0]), "2026-04-01")
-        self.assertEqual(result["ma5_direction"], "rising")
+        self.assertEqual(result["ma5_direction"], "falling")
         self.assertEqual(result["twd_ma5_direction"], "TWD_weakening")
 
-    def test_death_cross_means_twd_strengthening(self):
+    def test_usdtwd_death_cross_is_twd_golden_cross(self):
         result = fx_premarket_snapshot(self.rows([30.0] * 15 + [31.0] * 5 + [25.0]), "2026-04-01")
-        self.assertEqual(result["ma5_20"], "death_cross")
+        self.assertEqual(result["usdtwd_ma5_20"], "death_cross")
+        self.assertEqual(result["ma5_20"], "golden_cross")
         self.assertEqual(result["twd_ma5_20_interpretation"], "TWD_strengthening")
 
     def test_premarket_excludes_today(self):
