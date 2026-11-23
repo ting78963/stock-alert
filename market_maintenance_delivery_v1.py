@@ -39,7 +39,11 @@ def deliver_once(now,send_flex,state_path=STATE,report_builder=build_from_stores
         if card.get("type")!="flex":
             raise ValueError("Invalid LINE Flex report")
         # The sender must confirm success or raise. Only then persist sent marker.
-        send_flex(card)
+        response=send_flex(card)
+        # False is an explicit failure; None is allowed for existing senders that
+        # raise on HTTP errors and return no value.
+        if response is False:
+            raise RuntimeError("LINE sender reported failure")
         path.parent.mkdir(parents=True,exist_ok=True)
         temp=path.with_suffix(path.suffix+".tmp")
         temp.write_text(json.dumps({"sent_date":day},ensure_ascii=False),encoding="utf-8")
