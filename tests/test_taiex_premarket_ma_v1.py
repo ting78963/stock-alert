@@ -26,6 +26,21 @@ class MarketPremarketMATests(unittest.TestCase):
         s = market_trend_snapshot(rows, end.isoformat())
         self.assertEqual(s["weekly"]["cross_20_100"]["status"], "insufficient")
 
+    def test_weekly_golden_cross_uses_same_algorithm(self):
+        # 102 complete weeks: 101 at 110 then one at 300 creates 20/100 cross.
+        values = [110.0] * (101 * 5) + [300.0] * 5
+        rows, end = weekdays("2024-01-01", len(values), values)
+        s = market_trend_snapshot(rows, end.isoformat())
+        self.assertEqual(s["weekly"]["cross_20_100"]["status"], "golden_cross")
+        self.assertEqual(s["weekly"]["ma"]["ma20"]["direction"], "rising")
+
+    def test_weekly_bearish_cross_uses_same_algorithm(self):
+        values = [110.0] * (101 * 5) + [1.0] * 5
+        rows, end = weekdays("2024-01-01", len(values), values)
+        s = market_trend_snapshot(rows, end.isoformat())
+        self.assertEqual(s["weekly"]["cross_20_100"]["status"], "death_cross")
+        self.assertEqual(s["weekly"]["ma"]["ma20"]["direction"], "falling")
+
     def test_premarket_does_not_include_report_day(self):
         rows, _ = weekdays("2024-01-01", 530, [100.0] * 529 + [200.0])
         as_of = rows[-1]["date"]
