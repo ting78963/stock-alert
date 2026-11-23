@@ -4,6 +4,7 @@ import threading
 from production_worker_v2_shared_ws import main
 from f15_eod_signal_report import loop as f15_eod_loop
 from market_data_maintenance_v1 import loop as market_data_loop
+from market_bootstrap_once_v1 import loop as market_bootstrap_loop
 from usdtwd_cbc_maintenance_v1 import maintain_cbc_once
 from market_maintenance_delivery_v1 import deliver_once
 from market_line_sender_v1 import send_market_flex
@@ -49,6 +50,7 @@ if __name__=="__main__":
     threading.Thread(target=queue_archive_loop,name="queue-archive-maintenance",daemon=True).start()
     threading.Thread(target=f15_eod_loop,name="f15-eod",daemon=True).start()
     threading.Thread(target=market_data_loop,name="market-taiex",daemon=True).start()
+    threading.Thread(target=market_bootstrap_loop,name="market-history-bootstrap",daemon=True).start()
     threading.Thread(target=market_fx_loop,name="market-cbc",daemon=True).start()
     threading.Thread(target=market_report_loop,name="market-line-report",daemon=True).start()
     threading.Thread(target=f15_uniform_history_run,name="f15-uniform-history",daemon=True).start()
