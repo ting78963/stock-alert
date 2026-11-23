@@ -5,6 +5,7 @@ PANEL="#1d2d45"
 WHITE="#f3f6fc"
 MUTED="#a3b3c9"
 GREEN="#63d4a6"
+RED="#ff6868"
 AMBER="#ffc65a"
 DIVIDER="#34465f"
 INDICATORS=(
@@ -27,7 +28,7 @@ def panel(key,title,subtitle,data):
     lines=[txt(title,"xs",MUTED),txt(value if has_value else "待取得","sm",WHITE,"bold")]
     change=item.get("change")
     if has_value and change is not None and str(change).strip():
-        lines.append(txt(change,"xs",GREEN if str(change).lstrip().startswith("+") else MUTED))
+        lines.append(txt(change,"xs",RED if str(change).lstrip().startswith("+") else GREEN if str(change).lstrip().startswith(("-", "−")) else MUTED))
     lines.append(txt(item.get("timestamp") or subtitle,"xxs",MUTED))
     return {"type":"box","layout":"vertical","backgroundColor":PANEL,"cornerRadius":"12px",
             "paddingAll":"12px","flex":1,"spacing":"sm","contents":lines}
