@@ -45,19 +45,9 @@ def fx_premarket_snapshot(rows, as_of):
             return "insufficient"
         return "rising" if current > previous else "falling" if current < previous else "flat"
 
-    def twd_interpretation(status):
-        return {
-            "golden_cross": "TWD_weakening",
-            "prepare_golden": "TWD_may_weaken",
-            "death_cross": "TWD_strengthening",
-            "prepare_death": "TWD_may_strengthen",
-            "above": "TWD_weak_bias",
-            "below": "TWD_strong_bias",
-            "equal": "neutral",
-            "insufficient": "insufficient",
-        }[status]
-
-    cross = compare(5, 20)
+    raw_cross = compare(5, 20)
+    reversed_cross = {"golden_cross":"death_cross", "death_cross":"golden_cross", "prepare_golden":"prepare_death", "prepare_death":"prepare_golden", "above":"below", "below":"above", "equal":"equal", "insufficient":"insufficient"}
+    cross = reversed_cross[raw_cross]
     return {
         "as_of": day,
         "source": "cbc_interbank_daily_close",
@@ -67,10 +57,18 @@ def fx_premarket_snapshot(rows, as_of):
         "count": len(closes),
         "ma5": ma(5),
         "ma20": ma(20),
-        "ma5_direction": direction(5),
-        "ma20_direction": direction(20),
+        "usdtwd_ma5_direction": direction(5),
+        "usdtwd_ma20_direction": direction(20),
+        "ma5_direction": {"rising":"falling", "falling":"rising", "flat":"flat", "insufficient":"insufficient"}[direction(5)],
+        "ma20_direction": {"rising":"falling", "falling":"rising", "flat":"flat", "insufficient":"insufficient"}[direction(20)],
+        "usdtwd_ma5_20": raw_cross,
         "ma5_20": cross,
-        "twd_ma5_20_interpretation": twd_interpretation(cross),
+        "twd_ma5_20_interpretation": {
+            "golden_cross":"TWD_strengthening", "death_cross":"TWD_weakening",
+            "prepare_golden":"TWD_may_strengthen", "prepare_death":"TWD_may_weaken",
+            "above":"TWD_strong_bias", "below":"TWD_weak_bias",
+            "equal":"neutral", "insufficient":"insufficient",
+        }[cross],
         "twd_ma5_direction": {"rising":"TWD_weakening", "falling":"TWD_strengthening", "flat":"neutral", "insufficient":"insufficient"}[direction(5)],
         "twd_ma20_direction": {"rising":"TWD_weakening", "falling":"TWD_strengthening", "flat":"neutral", "insufficient":"insufficient"}[direction(20)],
     }
