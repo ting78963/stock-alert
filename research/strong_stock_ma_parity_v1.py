@@ -55,10 +55,13 @@ def ma_trend(rows, periods=(20, 60, 100)):
     closes = _closes(rows)
     result = {}
     for period in periods:
-        if len(closes) < period + 1:
+        if len(closes) < period:
             result[f"ma{period}"] = {"value": None, "direction": "insufficient"}
             continue
         now = sum(closes[-period:]) / period
+        if len(closes) == period:
+            result[f"ma{period}"] = {"value": now, "previous": None, "direction": "insufficient"}
+            continue
         previous = sum(closes[-period-1:-1]) / period
         direction = "rising" if now > previous else ("falling" if now < previous else "flat")
         result[f"ma{period}"] = {"value": now, "previous": previous, "direction": direction}
