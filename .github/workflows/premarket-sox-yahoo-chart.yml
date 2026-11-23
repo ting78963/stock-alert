@@ -10,6 +10,9 @@ on:
       - 'research/premarket_sox_flex_section_v1.py'
       - 'research/premarket_sox_brief_section_v1.py'
       - 'tests/test_premarket_sox_brief_section_v1.py'
+      - 'research/premarket_sox_card_v1.py'
+      - 'research/premarket_sox_delivery_v1.py'
+      - 'tests/test_premarket_sox_delivery_v1.py'
       - '.github/workflows/premarket-sox-yahoo-chart.yml'
 jobs:
   unit:
@@ -23,3 +26,4 @@ jobs:
           python -m unittest discover -s tests -p test_premarket_sox_yahoo_chart_v1.py -v
           python -m unittest discover -s tests -p test_premarket_sox_flex_section_v1.py -v
           python -m unittest discover -s tests -p test_premarket_sox_brief_section_v1.py -v
+          python -m unittest discover -s tests -p test_premarket_sox_delivery_v1.py -v
