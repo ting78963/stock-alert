@@ -8,6 +8,7 @@ on:
       - 'premarket_taiex_adapter_v1.py'
       - 'taiex_cache_audit_v1.py'
       - 'production_worker_v1.py'
+      - 'production_worker_v2_shared_ws.py'
       - 'market_data_maintenance_v1.py'
       - 'taiex_fugle_store_v1.py'
       - 'f15_eod_signal_report.py'
