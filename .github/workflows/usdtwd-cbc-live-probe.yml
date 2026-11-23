@@ -1,0 +1,40 @@
+name: USD TWD CBC daily close live probe
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/usdtwd-cbc-live-probe.yml'
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Inspect CBC official API shape and parse actual records
+        run: |
+          python - <<'PY'
+          import json,urllib.request,datetime
+          from usdtwd_cbc_daily_v1 import parse_daily
+          url="https://cpx.cbc.gov.tw/api/OpenData/FTDOpenData_Day"
+          req=urllib.request.Request(url,headers={"User-Agent":"Mozilla/5.0","Accept":"application/json"})
+          with urllib.request.urlopen(req,timeout=25) as response:
+              body=response.read(5_000_001)
+              print("HTTP_STATUS",response.status)
+              print("CONTENT_TYPE",response.headers.get("Content-Type"))
+          if len(body)>5_000_000: raise ValueError("CBC payload too large")
+          payload=json.loads(body)
+          print("TOP_LEVEL_TYPE",type(payload).__name__)
+          print("TOP_LEVEL_KEYS",list(payload.keys())[:15] if isinstance(payload,dict) else "LIST")
+          rows=payload if isinstance(payload,list) else next((payload[k] for k in ("data","Data","DataSet","dataset","records") if isinstance(payload.get(k),list)),[])
+          print("ROW_COUNT",len(rows))
+          print("FIRST_ROW_KEYS",list(rows[0].keys()) if rows and isinstance(rows[0],dict) else "UNAVAILABLE")
+          normalized=parse_daily(payload)
+          print("PARSED_ROWS",len(normalized))
+          print("LATEST_DATE",normalized[-1]["date"])
+          print("LATEST_CLOSE",normalized[-1]["close"])
+          if normalized[-1]["date"]>datetime.date.today().isoformat():
+              raise ValueError("Future CBC date")
+          if len(normalized)<20: raise ValueError("Not enough CBC history for MA20")
+          PY
