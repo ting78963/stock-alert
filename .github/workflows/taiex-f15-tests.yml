@@ -10,6 +10,8 @@ on:
       - 'production_worker_v1.py'
       - 'production_worker_v2_shared_ws.py'
       - 'market_data_maintenance_v1.py'
+      - 'market_data_worker_v1.py'
+      - 'tests/test_market_data_worker_isolation_v1.py'
       - 'taiex_fugle_store_v1.py'
       - 'f15_eod_signal_report.py'
       - 'tests/test_taiex_*.py'
@@ -45,6 +47,7 @@ jobs:
           python-version: '3.11'
       - run: |
           python -m unittest discover -s tests -p 'test_taiex_*.py' -v
+          python -m unittest discover -s tests -p 'test_market_data_worker_isolation_v1.py' -v
           python -m unittest discover -s tests -p 'test_premarket_quote_policy_v1.py' -v
           python -m unittest discover -s tests -p 'test_usdtwd_cbc_daily_v1.py' -v
           python -m unittest discover -s tests -p 'test_usdtwd_premarket_compare_v1.py' -v
