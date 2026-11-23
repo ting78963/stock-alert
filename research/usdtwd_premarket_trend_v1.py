@@ -45,7 +45,26 @@ def fx_premarket_snapshot(rows, as_of):
             return "insufficient"
         return "rising" if current > previous else "falling" if current < previous else "flat"
 
+    def recent_cross():
+        # Search last five published closes; label is relative to the latest close.
+        for age in range(5):
+            end = len(closes) - age
+            if end < 21:
+                break
+            short_now = sum(closes[end-5:end]) / 5
+            long_now = sum(closes[end-20:end]) / 20
+            short_prev = sum(closes[end-6:end-1]) / 5
+            long_prev = sum(closes[end-21:end-1]) / 20
+            if short_prev < long_prev and short_now >= long_now:
+                return "golden_cross", age + 1
+            if short_prev > long_prev and short_now <= long_now:
+                return "death_cross", age + 1
+        return None, None
+
     raw_cross = compare(5, 20)
+    recent_status, cross_day = recent_cross()
+    if recent_status:
+        raw_cross = recent_status
     reversed_cross = {"golden_cross":"death_cross", "death_cross":"golden_cross", "prepare_golden":"prepare_death", "prepare_death":"prepare_golden", "above":"below", "below":"above", "equal":"equal", "insufficient":"insufficient"}
     cross = reversed_cross[raw_cross]
     return {
@@ -62,6 +81,7 @@ def fx_premarket_snapshot(rows, as_of):
         "ma5_direction": {"rising":"falling", "falling":"rising", "flat":"flat", "insufficient":"insufficient"}[direction(5)],
         "ma20_direction": {"rising":"falling", "falling":"rising", "flat":"flat", "insufficient":"insufficient"}[direction(20)],
         "usdtwd_ma5_20": raw_cross,
+        "cross_day": cross_day,
         "ma5_20": cross,
         "twd_ma5_20_interpretation": {
             "golden_cross":"TWD_strengthening", "death_cross":"TWD_weakening",
