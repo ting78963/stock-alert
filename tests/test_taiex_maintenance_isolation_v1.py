@@ -39,6 +39,12 @@ class MarketMaintenanceIsolationTests(unittest.TestCase):
             self.assertEqual(market.maintain_taiex_once(now),"updated")
             update.assert_called_once()
 
+    def test_1530_is_reserved_for_existing_stock_maintenance(self):
+        now=datetime(2026,11,23,15,30,tzinfo=ZoneInfo("Asia/Taipei"))
+        with patch("taiex_fugle_store_v1.update") as update:
+            self.assertEqual(market.maintain_taiex_once(now),"not_due")
+            update.assert_not_called()
+
     def test_weekend_does_not_fetch(self):
         now=datetime(2026,11,22,16,0,tzinfo=ZoneInfo("Asia/Taipei"))
         with patch("taiex_fugle_store_v1.update") as update:
