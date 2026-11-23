@@ -36,6 +36,14 @@ class DeliveryTests(unittest.TestCase):
             deliver_once(NOW,lambda card:False,state_path=self.state,report_builder=lambda now:CARD)
         self.assertFalse(self.state.exists())
 
+    def test_incomplete_report_waits_without_marking_sent(self):
+        card={"type":"flex","altText":"2026-11-23 市場資料維護未完成","contents":{"type":"bubble"}}
+        sent=[]
+        result=deliver_once(NOW,lambda payload:sent.append(payload),state_path=self.state,report_builder=lambda now:card)
+        self.assertEqual(result,"waiting_for_data")
+        self.assertFalse(sent)
+        self.assertFalse(self.state.exists())
+
     def test_outside_window(self):
         self.assertEqual(deliver_once(NOW.replace(hour=16),lambda card:None,state_path=self.state),"not_due")
         self.assertFalse(self.state.exists())
