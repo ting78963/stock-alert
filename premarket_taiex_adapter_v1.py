@@ -30,4 +30,16 @@ def load_taiex_trend(as_of=None,path=None):
 def build_taiex_preview(as_of=None,path=None,indicators=None,system_status="待確認"):
     """Preview only. Never infer system health, market prices, or send LINE."""
     trend=load_taiex_trend(as_of,path)
-    return build_premarket_flex(indicators or {},trend=trend,system_status=system_status)
+    values=dict(indicators or {})
+    if "taiex" not in values:
+        target=Path(path) if path is not None else STORE
+        rows=[r for r in read_store(target) if r["date"] < trend["as_of"]]
+        if rows:
+            current=rows[-1]
+            change=None
+            if len(rows)>=2:
+                delta=current["close"]-rows[-2]["close"]
+                change=f"{delta:+,.2f} ({delta/rows[-2]['close']:+.2%})"
+            values["taiex"]={"value":f"{current['close']:,.2f}","change":change,
+                             "timestamp":f"{current['date']} 收盤"}
+    return build_premarket_flex(values,trend=trend,system_status=system_status)
