@@ -16,7 +16,9 @@ jobs:
           req=urllib.request.Request(url,headers={"User-Agent":"stock-alert-fx-source-probe/1.0"})
           try:
               with urllib.request.urlopen(req,timeout=20) as response:
-                  body=response.read(30000)
+                  body=response.read(2_000_001)
+                  if len(body)>2_000_000:
+                      raise ValueError("Response exceeds 2 MB safety limit")
                   print("HTTP_STATUS",response.status)
                   print("CONTENT_TYPE",response.headers.get("Content-Type"))
               payload=json.loads(body)
