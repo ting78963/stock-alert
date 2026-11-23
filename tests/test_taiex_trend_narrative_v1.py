@@ -29,7 +29,7 @@ class TaiexNarrativeTests(unittest.TestCase):
         first=analyze_taiex(rows,report.isoformat())
         # The latest Monday bar must not alter weekly trend until week completes.
         monday={"date":report.isoformat(),"close":100000}
-        second=analyze_taiex(rows+[monday],report.isoformat())
+        # Replace an existing same-date observation rather than introducing a conflict.\n        second=analyze_taiex([r for r in rows if r["date"]!=report.isoformat()]+[monday],report.isoformat())
         self.assertEqual(first["weekly"],second["weekly"])
 
 if __name__=="__main__":
