@@ -5,6 +5,7 @@ on:
       - 'taiex_market_history_v1.py'
       - 'taiex_trend_narrative_v1.py'
       - 'premarket_market_flex_v1.py'
+      - 'premarket_taiex_adapter_v1.py'
       - 'taiex_fugle_store_v1.py'
       - 'f15_eod_signal_report.py'
       - 'tests/test_taiex_*.py'
