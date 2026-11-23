@@ -22,7 +22,7 @@ class FXPremarketTests(unittest.TestCase):
         self.assertEqual(result["twd_ma5_direction"], "TWD_weakening")
 
     def test_death_cross_means_twd_strengthening(self):
-        result = fx_premarket_snapshot(self.rows([30.0] * 15 + [31.0] * 6 + [29.0]), "2026-04-01")
+        result = fx_premarket_snapshot(self.rows([30.0] * 15 + [31.0] * 5 + [25.0]), "2026-04-01")
         self.assertEqual(result["ma5_20"], "death_cross")
         self.assertEqual(result["twd_ma5_20_interpretation"], "TWD_strengthening")
 
