@@ -27,6 +27,16 @@ class FXPremarketTests(unittest.TestCase):
         self.assertEqual(result["ma5_20"], "golden_cross")
         self.assertEqual(result["twd_ma5_20_interpretation"], "TWD_strengthening")
 
+    def test_cross_persists_through_day5_then_expires(self):
+        # USD/TWD crosses down at 25.0; TWD shows golden cross.
+        base = [30.0] * 15 + [31.0] * 5 + [25.0]
+        for age in range(1, 6):
+            result = fx_premarket_snapshot(self.rows(base + [25.0] * (age-1)), "2026-04-01")
+            self.assertEqual(result["cross_day"], age)
+            self.assertEqual(result["ma5_20"], "golden_cross")
+        result = fx_premarket_snapshot(self.rows(base + [25.0] * 5), "2026-04-01")
+        self.assertIsNone(result["cross_day"])
+
     def test_premarket_excludes_today(self):
         rows = self.rows([30.0] * 61)
         rows.append({"date": "2026-04-01", "close": 999.0})
