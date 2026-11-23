@@ -12,7 +12,7 @@ from taiex_market_history_v1 import normalize_daily, snapshot
 
 FUGLE_URL = "https://api.fugle.tw/marketdata/v1.0/stock/historical/candles/IX0001"
 TPE = ZoneInfo("Asia/Taipei")
-STORE = Path(os.getenv("TAIEX_HISTORY_PATH", "/var/data/stock-alert/f15_market/taiex_daily.json"))
+STORE = Path(os.getenv("TAIEX_HISTORY_PATH", "/var/data/stock-alert/market_data/taiex_daily.json"))
 
 
 def date_ranges(start, end):
