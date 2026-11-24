@@ -66,5 +66,26 @@ class SeasonalIntegrationTests(unittest.TestCase):
         self.assertEqual(pending["seasonal_bias"]["status"],"ok")
         self.assertIn("季線乖離率",json.dumps(trend_section({"waterline":pending}),ensure_ascii=False))
 
+class TouchTests(unittest.TestCase):
+    def test_touch_preserves_side_and_other_cap(self):
+        from research.premarket_risk_waterline_v1 import snapshot
+        closes=[200]*95+[98,99,101,102,100]
+        for side in (True,False):
+            result=snapshot(closes,90,{5:side})
+            self.assertIn(5,result["touching"])
+            self.assertEqual(result["above"][5],side)
+            self.assertEqual(result["caps"][100],30)
+            self.assertLessEqual(result["target"],30)
+    def test_week_cap_during_daily_touch(self):
+        closes=list(range(1,97))+[98,99,101,102,100]
+        result=analyze(closes,110,50)
+        self.assertEqual(result["target"],30)
+        self.assertNotIn(5,result["events"])
+        self.assertEqual(result["events"]["week20"],"跌破")
+    def test_consecutive_touch_conservative(self):
+        result=analyze([100]*101,100,100)
+        self.assertEqual(result["target"],20)
+        self.assertEqual(result["events"],{})
+
 if __name__=="__main__":
     unittest.main()
