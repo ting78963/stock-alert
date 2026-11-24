@@ -70,10 +70,18 @@ def trend_section(trend):
         result.extend([
             txt(f"建議持股 {water['target']}%｜現金 {water['cash']}%","md",WHITE,"bold"),
             txt(f"{water['action']}｜水位變動 {water['delta']:+d} 個百分點","sm",MUTED),
-            txt(events+"；"+caps,"xs",MUTED),
-            txt("收盤乖離率："+ " / ".join(f"{names[n]} {water['bias'][n]:+.2f}%" for n in (5,10,20)),"xs",MUTED)])
+            txt(events+"；"+caps,"xs",MUTED)])
     elif water:
         result.append(txt("持股水位待確認｜不產生新調整建議","sm",AMBER))
+    seasonal=water.get("seasonal_bias") or {}
+    if seasonal.get("status")=="ok":
+        labels={"normal":("正常區間",MUTED),"early":("初步警戒｜留意追高風險",AMBER),
+                "high":("高度警戒｜留意回檔",AMBER),"extreme":("極端警戒｜市場過熱",RED),
+                "negative":("負乖離過大｜留意反彈，不代表落底",GREEN)}
+        note,color=labels[seasonal["level"]]
+        result.append(txt(f"季線乖離率 {seasonal['bias']:+.2f}%｜{note}","sm",color))
+    elif seasonal:
+        result.append(txt("季線乖離率｜資料不足","xs",MUTED))
     return result
 
 def build_premarket_flex(indicators,observed_at="08:55",observation=None,
