@@ -2,6 +2,7 @@
 import json
 import os
 import urllib.request
+from urllib.error import HTTPError
 import uuid
 
 
@@ -17,7 +18,12 @@ def send_premarket_flex(card, opener=urllib.request.urlopen):
     retry=str(uuid.uuid5(uuid.NAMESPACE_URL,"premarket-brief-0855:"+day))
     req=urllib.request.Request("https://api.line.me/v2/bot/message/push",data=body,method="POST",headers={
         "Authorization":"Bearer "+token,"Content-Type":"application/json","X-Line-Retry-Key":retry})
-    with opener(req,timeout=15) as response:
-        if response.status!=200:
-            raise RuntimeError("Premarket LINE push HTTP "+str(response.status))
+    try:
+        with opener(req,timeout=15) as response:
+            if response.status!=200:
+                raise RuntimeError("Premarket LINE push HTTP "+str(response.status))
+    except HTTPError as exc:
+        # LINE already accepted this retry key; persist the local sent marker.
+        if exc.code != 409 or not exc.headers or not exc.headers.get('x-line-accepted-request-id'):
+            raise
     return True
