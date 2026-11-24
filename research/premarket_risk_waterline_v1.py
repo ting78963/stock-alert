@@ -1,5 +1,5 @@
 """Deterministic research-only exposure rules; completed daily closes only."""
-from math import isfinite
+from math import isfinite, fsum
 
 PERIODS = (5, 10, 20, 100)
 
@@ -52,17 +52,18 @@ def analyze(closes, week20, previous_week20, previous_target=None):
 def seasonal_bias(closes):
     if len(closes)<60 or any(not isfinite(x) or x<=0 for x in closes[-60:]):
         return {"status":"pending"}
-    ma=sum(closes[-60:])/60
+    ma=fsum(closes[-60:])/60
     price=closes[-1]
     bias=(price/ma-1)*100
-    # Compare prices directly to avoid floating-point drift at exact thresholds.
-    if price>=ma*1.14:
+    # Remove numerical noise only, not economically meaningful differences.
+    boundary=round(bias, 10)
+    if boundary>=14:
         level="extreme"
-    elif price>=ma*1.10:
+    elif boundary>=10:
         level="high"
-    elif price>=ma*1.08:
+    elif boundary>=8:
         level="early"
-    elif price<ma*0.90:
+    elif boundary< -10:
         level="negative"
     else:
         level="normal"
