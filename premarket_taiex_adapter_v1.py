@@ -28,9 +28,13 @@ def load_taiex_trend(as_of=None,path=None):
         regime="偏多" if above[20] and above[100] else "偏空" if not above[20] and not above[100] else "整理"
         trend["price_regime"]=regime
         trend["headline"]={"偏多":"大盤偏多","偏空":"大盤偏空","整理":"大盤多空整理"}[regime]
+        positions="、".join(f"日{n}MA{'站上' if above[n] else '低於'}" for n in (20,100))
+        trend["explanation"]=f"收盤價位置：{positions}；大盤{regime}。均線排列僅供結構參考：日線{trend['daily']['label']}，週線{trend['weekly']['label']}。"
+        trend["explanation"]+=f" 週20MA{'站上' if above['week20'] else '低於'}。"
     else:
         trend["price_regime"]=None
         trend["headline"]="大盤價格趨勢待確認"
+        trend["explanation"]="價格位置或均線資料待確認，暫不判定多空。"
     prior=[r for r in rows if r["date"]<report_date]
     trend["last_close_date"]=prior[-1]["date"] if prior else None
     trend["last_close"]=prior[-1]["close"] if prior else None
