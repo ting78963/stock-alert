@@ -31,7 +31,7 @@ def parse_tx(payload, report_at, previous_day_close=None):
         local = stamp.astimezone(TPE)
         if local.date() != now.date() or not time(8,45) <= local.time() <= time(13,45):
             return None
-        if not 0 <= (now-local).total_seconds() <= 180:
+        if not -30 <= (now-local).total_seconds() <= 180:
             return None
         price = float(trade["price"])
         if not isfinite(price) or price <= 0:
