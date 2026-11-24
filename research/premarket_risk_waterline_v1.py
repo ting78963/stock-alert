@@ -49,13 +49,34 @@ def analyze(closes, week20, previous_week20, previous_target=None):
             "評估減碼、回收現金" if delta<0 else "維持"}
 
 
+def seasonal_bias(closes):
+    if len(closes)<60 or any(not isfinite(x) or x<=0 for x in closes[-60:]):
+        return {"status":"pending"}
+    ma=sum(closes[-60:])/60
+    price=closes[-1]
+    bias=(price/ma-1)*100
+    # Compare prices directly to avoid floating-point drift at exact thresholds.
+    if price>=ma*1.14:
+        level="extreme"
+    elif price>=ma*1.10:
+        level="high"
+    elif price>=ma*1.08:
+        level="early"
+    elif price<ma*0.90:
+        level="negative"
+    else:
+        level="normal"
+    return {"status":"ok","ma60":ma,"bias":bias,"level":level}
+
+
 def analyze_history(rows, as_of):
     """Use the same completed-week convention as the existing market report."""
     from datetime import date, timedelta
     from taiex_market_history_v1 import normalize_daily, completed_week_closes
     daily = [r for r in normalize_daily(rows) if r["date"] < str(as_of)[:10]]
+    seasonal = seasonal_bias([r["close"] for r in daily])
     if len(daily) < 101:
-        return {"status":"pending","target":None,"action":"待確認"}
+        return {"status":"pending","target":None,"action":"待確認","seasonal_bias":seasonal}
     def week_ma(history, cutoff):
         values = [r["close"] for r in completed_week_closes(history, cutoff)]
         return sum(values[-20:])/20 if len(values)>=20 else None
@@ -63,4 +84,4 @@ def analyze_history(rows, as_of):
     result = analyze([r["close"] for r in daily],
                      week_ma(daily, as_of),
                      week_ma(daily[:-1], previous_cutoff))
-    return {**result,"close_date":daily[-1]["date"]}
+    return {**result,"close_date":daily[-1]["date"],"seasonal_bias":seasonal}
