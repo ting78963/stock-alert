@@ -38,10 +38,11 @@ def analyze_taiex(rows,as_of):
     """Report on as_of morning: exclude as_of daily bar and unfinished weekly bar."""
     daily=[r for r in normalize_daily(rows) if r["date"]<str(as_of)[:10]]
     weekly=completed_week_closes(daily,as_of)
+    short_term=short_term_snapshot([r["close"] for r in daily])
     d=_state([r["close"] for r in daily])
     w=_state([r["close"] for r in weekly])
     if d["structure"] is None or w["structure"] is None:
-        return {"headline":"資料不足","daily":d,"weekly":w,
+        return {"headline":"資料不足","daily":d,"weekly":w,"short_term":short_term,
                 "explanation":"歷史收盤資料尚未補齊，暫不判斷大盤趨勢。"}
     if w["structure"]=="偏多":
         headline="多頭仍在，但漲勢放緩" if d["momentum"]=="轉弱" or d["structure"]=="偏空" else "多頭趨勢維持"
@@ -53,4 +54,26 @@ def analyze_taiex(rows,as_of):
              if part["cross"] not in ("無新交叉","無法判斷")]
     explanation=(f"短期日線{d['label']}；中長期週線{w['label']}。"
                  +(f"轉折觀察：{'、'.join(crosses)}。" if crosses else "目前沒有新的均線交叉訊號。"))
-    return {"headline":headline,"daily":d,"weekly":w,"explanation":explanation}
+    return {"headline":headline,"daily":d,"weekly":w,"explanation":explanation,"short_term":short_term}
+
+
+def short_term_snapshot(closes):
+    """Completed daily closes only; compare unrounded values."""
+    if len(closes)<21:
+        return {"label":"短線資料不足","levels":{}}
+    close=closes[-1]
+    levels={}
+    for n in (5,10,20):
+        ma,prev=_ma(closes,n),_ma(closes,n,1)
+        levels[n]={"ma":round(ma,2),"direction":"↗" if ma>prev else "↘" if ma<prev else "→",
+                   "bias":round((close/ma-1)*100,2),"above":close>=ma}
+    a,b,c=(levels[n]["above"] for n in (5,10,20))
+    if a and b:
+        label="短線偏多" if c else "短線回穩，月線仍有壓力"
+    elif not a and b:
+        label="跌破五日線，十日線仍守穩"
+    elif a and not b:
+        label="站回五日線，十日線仍有壓力"
+    else:
+        label="短線轉弱" if c else "短線全面轉弱"
+    return {"label":label,"levels":levels,"close":close}
