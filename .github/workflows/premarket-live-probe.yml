@@ -4,6 +4,10 @@ on:
     branches: [codex/premarket-sox-yahoo-isolated-20261124]
     paths:
       - '.github/workflows/premarket-live-probe.yml'
+  pull_request:
+    paths:
+      - '.github/workflows/premarket-live-probe.yml'
+      - 'research/premarket_live_probe_v1.py'
   workflow_dispatch:
 jobs:
   public-quotes:
