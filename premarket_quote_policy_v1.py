@@ -31,7 +31,7 @@ def validate_quote(key, quote, report_at, max_age_seconds=180):
         return {"value":None,"timestamp":"匯率種類未確認","status":"invalid_kind"}
     if key == "tx" and quote.get("session") != "day":
         return {"value":None,"timestamp":"非當日日盤報價","status":"invalid_session"}
-    if key == "sox" and quote.get("source") != "nasdaq":
+    if key == "sox" and quote.get("source") not in ("nasdaq", "yahoo_chart_sox"):
         return {"value":None,"timestamp":"費半來源未確認","status":"invalid_source"}
     result={k:v for k,v in quote.items() if k in ("value","change")}
     result["timestamp"]=ts.astimezone(TPE).strftime("%Y-%m-%d %H:%M:%S")
