@@ -47,3 +47,20 @@ def analyze(closes, week20, previous_week20, previous_target=None):
     return {**current,"status":"ok","previous_target":prior,"delta":delta,
             "events":events,"action":"評估增碼" if delta>0 else
             "評估減碼、回收現金" if delta<0 else "維持"}
+
+
+def analyze_history(rows, as_of):
+    """Use the same completed-week convention as the existing market report."""
+    from datetime import date, timedelta
+    from taiex_market_history_v1 import normalize_daily, completed_week_closes
+    daily = [r for r in normalize_daily(rows) if r["date"] < str(as_of)[:10]]
+    if len(daily) < 101:
+        return {"status":"pending","target":None,"action":"待確認"}
+    def week_ma(history, cutoff):
+        values = [r["close"] for r in completed_week_closes(history, cutoff)]
+        return sum(values[-20:])/20 if len(values)>=20 else None
+    previous_cutoff = date.fromisoformat(daily[-2]["date"]) + timedelta(days=1)
+    result = analyze([r["close"] for r in daily],
+                     week_ma(daily, as_of),
+                     week_ma(daily[:-1], previous_cutoff))
+    return {**result,"close_date":daily[-1]["date"]}
