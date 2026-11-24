@@ -29,5 +29,19 @@ class WaterlineTests(unittest.TestCase):
     def test_missing(self):
         self.assertEqual(analyze([1],None,None,30)["status"],"pending")
 
+class SeasonalBiasTests(unittest.TestCase):
+    def test_boundaries(self):
+        from research.premarket_risk_waterline_v1 import seasonal_bias
+        for price,level in [(107.99,"normal"),(108,"early"),(109.99,"early"),
+                            (110,"high"),(113.99,"high"),(114,"extreme"),
+                            (90,"normal"),(89.99,"negative")]:
+            with self.subTest(price=price):
+                closes=[(6000-price)/59]*59+[price]
+                self.assertEqual(seasonal_bias(closes)["level"],level)
+    def test_missing(self):
+        from research.premarket_risk_waterline_v1 import seasonal_bias
+        self.assertEqual(seasonal_bias([100]*59)["status"],"pending")
+        self.assertEqual(seasonal_bias([100]*59+[0])["status"],"pending")
+
 if __name__=="__main__":
     unittest.main()
