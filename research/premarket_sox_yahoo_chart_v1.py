@@ -8,7 +8,7 @@ from math import isfinite
 from urllib.request import Request, urlopen
 import json
 
-URL = "https://query1.finance.yahoo.com/v8/finance/chart/%5ESOX?range=10d&interval=1d"
+URL = "https://query1.finance.yahoo.com/v8/finance/chart/%5ESOX?range=1mo&interval=1d"
 
 
 def parse_sox_chart(payload):
@@ -28,11 +28,12 @@ def parse_sox_chart(payload):
             day = datetime.fromtimestamp(int(ts), timezone.utc).astimezone(us).date()
             # Exclude today's session unless the US market has already closed.
             now_us = datetime.now(timezone.utc).astimezone(us)
-            if day >= now_us.date() and (now_us.hour, now_us.minute) < (16, 0):
+            if day > now_us.date() or (day == now_us.date() and (now_us.hour, now_us.minute) < (16, 0)):
                 continue
             value = float(raw)
             if isfinite(value) and value > 0:
                 completed.append((day, value))
+        completed = sorted(dict(completed).items())
         if len(completed) < 2:
             raise ValueError("insufficient completed daily bars")
         day, close = completed[-1]
