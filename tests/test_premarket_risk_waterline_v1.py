@@ -43,5 +43,28 @@ class SeasonalBiasTests(unittest.TestCase):
         self.assertEqual(seasonal_bias([100]*59)["status"],"pending")
         self.assertEqual(seasonal_bias([100]*59+[0])["status"],"pending")
 
+class SeasonalIntegrationTests(unittest.TestCase):
+    def test_independent_warning_and_card(self):
+        from datetime import date, timedelta
+        from research.premarket_risk_waterline_v1 import analyze_history
+        from premarket_market_flex_v1 import trend_section
+        import json
+        rows=[]
+        day=date(2025,1,1)
+        while len(rows)<120:
+            if day.weekday()<5:
+                rows.append({"date":day.isoformat(),"close":100+len(rows)})
+            day+=timedelta(days=1)
+        result=analyze_history(rows,day)
+        self.assertEqual(result["target"],80)
+        self.assertEqual(result["seasonal_bias"]["level"],"extreme")
+        card=json.dumps(trend_section({"waterline":result}),ensure_ascii=False)
+        self.assertIn("極端警戒",card)
+        self.assertIn("建議持股 80%",card)
+        pending=analyze_history(rows[-60:],day)
+        self.assertEqual(pending["status"],"pending")
+        self.assertEqual(pending["seasonal_bias"]["status"],"ok")
+        self.assertIn("季線乖離率",json.dumps(trend_section({"waterline":pending}),ensure_ascii=False))
+
 if __name__=="__main__":
     unittest.main()
