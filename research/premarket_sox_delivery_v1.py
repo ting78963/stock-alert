@@ -4,12 +4,12 @@ from pathlib import Path
 from threading import Lock
 from zoneinfo import ZoneInfo
 import json
-from research.premarket_sox_card_v1 import build_premarket_sox_flex
+
 
 TPE=ZoneInfo("Asia/Taipei")
 _LOCK=Lock()
 
-def deliver_premarket_once(now, sender, state_path, card_builder=build_premarket_sox_flex):
+def deliver_premarket_once(now, sender, state_path, card_builder=None):
     if not isinstance(now,datetime) or now.tzinfo is None:
         raise ValueError("aware datetime required")
     local=now.astimezone(TPE)
@@ -19,6 +19,9 @@ def deliver_premarket_once(now, sender, state_path, card_builder=build_premarket
         path=Path(state_path)
         if path.exists() and json.loads(path.read_text(encoding="utf-8")).get("sent_date")==local.date().isoformat():
             return "already_sent"
+        if card_builder is None:
+            from research.premarket_market_brief_v1 import build_market_brief
+            card_builder=build_market_brief
         card=card_builder(now)
         if card.get("type")!="flex":
             raise ValueError("invalid card")
