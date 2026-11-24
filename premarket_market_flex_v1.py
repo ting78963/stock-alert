@@ -62,6 +62,18 @@ def trend_section(trend):
             txt(label,"xs",MUTED),
             txt(state,"sm",trend_color(state),"bold"),
             txt(cross,"xs",trend_color(cross))]})
+    water=trend.get("waterline") or {}
+    if water.get("status")=="ok":
+        names={5:"日5MA",10:"日10MA",20:"日20MA",100:"日100MA","week20":"週20MA"}
+        events="、".join(names[n]+v for n,v in water["events"].items()) or "無新突破或跌破"
+        caps="、".join(f"{names[n]}失守，上限{v}%" for n,v in water["caps"].items()) or "無額外風險限制"
+        result.extend([
+            txt(f"建議持股 {water['target']}%｜現金 {water['cash']}%","md",WHITE,"bold"),
+            txt(f"{water['action']}｜水位變動 {water['delta']:+d} 個百分點","sm",MUTED),
+            txt(events+"；"+caps,"xs",MUTED),
+            txt("收盤乖離率："+ " / ".join(f"{names[n]} {water['bias'][n]:+.2f}%" for n in (5,10,20)),"xs",MUTED)])
+    elif water:
+        result.append(txt("持股水位待確認｜不產生新調整建議","sm",AMBER))
     return result
 
 def build_premarket_flex(indicators,observed_at="08:55",observation=None,
