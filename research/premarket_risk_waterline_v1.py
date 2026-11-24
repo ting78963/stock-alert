@@ -8,7 +8,7 @@ def target_for(above5, above10, above20, above100, above_week20):
     if any(type(x) is not bool for x in states):
         raise ValueError("boolean MA states required")
     raw = max(20, 10 + 20 * sum(states[:4]))
-    return min(raw, 90 if above20 else 50,
+    return min(raw, 80, 90 if above20 else 50,
                90 if above100 else 30, 90 if above_week20 else 30)
 
 def snapshot(closes, week20):
@@ -36,7 +36,7 @@ def analyze(closes, week20, previous_week20, previous_target=None):
     # Caller supplies each day's own completed-week MA, without lookahead.
     current = snapshot(closes, week20)
     previous = snapshot(closes[:-1], previous_week20)
-    if previous_target is not None and previous_target not in (20,30,50,70,90):
+    if previous_target is not None and previous_target not in (20,30,50,70,80):
         raise ValueError("invalid previous target")
     if current is None or previous is None:
         return {"status":"pending","target":previous_target,"action":"待確認"}
