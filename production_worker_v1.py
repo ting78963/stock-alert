@@ -42,21 +42,35 @@ def market_fx_loop():
                 print(f'[MARKET CBC FAIL] {day} {type(exc).__name__}: {exc}', flush=True)
         time.sleep(300)
 def premarket_sox_loop():
-    """Opt-in 08:55 worker, separate from A/B. Disabled by default."""
+    """Opt-in 08:54 prefetch / 08:55 delivery; separate from A/B."""
     from research.premarket_sox_delivery_v1 import deliver_premarket_once
     from research.premarket_sox_sender_v1 import send_premarket_flex
+    from research.premarket_market_brief_v1 import build_market_brief
+    from twse_session_gate_v1 import is_scheduled_open
     state='/var/data/stock-alert/market_data/premarket_sox_sent.json'
     tz=ZoneInfo('Asia/Taipei')
+    prepared_day=None
+    prepared_card=None
+    open_day=None
     while True:
         now=datetime.now(tz)
-        if now.weekday()<5 and now.hour==8 and 55<=now.minute<60:
+        if now.weekday()<5 and now.hour==8 and 54<=now.minute<60:
             try:
-                result=deliver_premarket_once(now,send_premarket_flex,state)
-                if result not in ('not_due','already_sent'):
-                    print(f'[PREMARKET SOX] {now.date()} {result}',flush=True)
+                if prepared_day!=now.date():
+                    prepared_card=None
+                    open_day=is_scheduled_open(now.date())
+                    if open_day:
+                        prepared_card=build_market_brief(datetime.now(tz))
+                    prepared_day=now.date()
+                now=datetime.now(tz)
+                if open_day and prepared_card is not None and now.date()==prepared_day and now.hour==8 and 55<=now.minute<60:
+                    result=deliver_premarket_once(now,send_premarket_flex,state,
+                        card_builder=lambda _:prepared_card,session_gate=lambda day:day==prepared_day and open_day)
+                    if result not in ('not_due','already_sent'):
+                        print(f'[PREMARKET SOX] {now.date()} {result}',flush=True)
             except Exception as exc:
-                print(f'[PREMARKET SOX FAIL] {now.date()} {type(exc).__name__}: {exc}',flush=True)
-        time.sleep(30)
+                print(f'[PREMARKET SOX FAIL] {now.date()} {type(exc).__name__}',flush=True)
+        time.sleep(5 if now.hour==8 and 53<=now.minute<60 else 30)
 
 from f15_uniform_history_backfill import run as f15_uniform_history_run
 from f15_trajectory_store import loop as f15_trajectory_loop
