@@ -39,4 +39,5 @@ jobs:
           python -m unittest discover -s tests -p test_premarket_sox_sender_v1.py -v
           python -m unittest discover -s tests -p test_premarket_existing_indicators_v1.py -v
           python -m unittest discover -s tests -p test_market_history_retention_v1.py -v
+          python -m unittest discover -s tests -p test_premarket_crossovers_v1.py -v
           python -m py_compile production_worker_v1.py taiex_fugle_store_v1.py usdtwd_cbc_store_v1.py
