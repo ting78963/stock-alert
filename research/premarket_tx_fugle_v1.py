@@ -1,7 +1,9 @@
 """One-shot TX quote; no scanner, storage or LINE side effects."""
 import json
 import os
-from datetime import datetime, time, timezone
+import re
+from urllib.parse import urlencode
+from datetime import datetime, time, timezone, timedelta
 from math import isfinite
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
@@ -53,6 +55,40 @@ def fetch_tx_quote(report_at, previous_day_close=None, opener=urlopen, api_key=N
             body = response.read(200001)
         if len(body)>200000:
             return None
-        return parse_tx(json.loads(body), report_at, previous_day_close)
+        payload = json.loads(body)
+        quote = parse_tx(payload, report_at, previous_day_close)
+        if quote is None or previous_day_close is not None:
+            return quote
+        try:
+            prev = fetch_previous_close(quote["symbol"], report_at, opener, key)
+            return parse_tx(payload, report_at, prev)
+        except (OSError, ValueError, TypeError, KeyError):
+            return quote
     except (OSError, ValueError):
         return None
+
+
+def fetch_previous_close(symbol, report_at, opener, key):
+    match = re.fullmatch(r"TXF([A-L])(\d)", symbol)
+    if not match:
+        return None
+    day = report_at.astimezone(TPE).date()
+    month = ord(match[1]) - ord("A") + 1
+    year = next((y for y in (day.year, day.year+1) if y % 10 == int(match[2])), None)
+    if year is None:
+        return None
+    contract = f"{year}{month:02d}"
+    params = urlencode({"contractMonth":contract,"session":"regular","timeframe":"D","fields":"close","from":(day-timedelta(days=14)).isoformat(),"to":(day-timedelta(days=1)).isoformat(),"sort":"desc"})
+    req = Request("https://api.fugle.tw/marketdata/v1.0/futopt/historical/candles/TXF?"+params,headers={"X-API-KEY":key,"Accept":"application/json"})
+    with opener(req,timeout=8) as response:
+        body=response.read(200001)
+    if len(body)>200000:
+        return None
+    obj=json.loads(body)
+    if obj.get("product")!="TXF" or obj.get("contractMonth")!=contract or obj.get("session")!="REGULAR" or obj.get("timeframe")!="D":
+        return None
+    rows=[r for r in obj["data"] if r.get("contractMonth")==contract and (day-timedelta(days=14)).isoformat()<=r["date"]<day.isoformat()]
+    if not rows:
+        return None
+    row=max(rows,key=lambda r:r["date"])
+    return dict(symbol=symbol,session="day",date=row["date"],close=row["close"])
