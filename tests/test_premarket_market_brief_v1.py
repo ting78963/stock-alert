@@ -1,5 +1,5 @@
 import unittest
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from research.premarket_market_brief_v1 import build_market_brief
 from research.premarket_tx_fugle_v1 import parse_tx
@@ -16,6 +16,17 @@ class MarketBriefTests(unittest.TestCase):
         self.assertEqual(set(seen["indicators"]),{"usdtwd","sox","tx"})
         self.assertEqual(seen["indicators"]["tx"]["value"],"35000")
         self.assertEqual(card["altText"],"2026-11-24 08:55 盤前簡報")
+    def test_clock_advances_between_sources(self):
+        times=iter([NOW+timedelta(seconds=n) for n in (15,30,45)])
+        seen={}
+        def preview(**kwargs):
+            seen.update(kwargs)
+            return {"type":"flex"}
+        build_market_brief(NOW,fx_fetch=lambda:None,
+            sox_fetch=lambda t:{"time":t},tx_fetch=lambda t:{"time":t},
+            cbc_read=lambda:[],preview=preview,clock=lambda:next(times))
+        self.assertEqual(seen["indicators"]["tx"]["time"],NOW+timedelta(seconds=30))
+        self.assertEqual(seen["report_at"],NOW+timedelta(seconds=45))
     def test_source_failure(self):
         def fail(*args): raise OSError("offline")
         seen={}
