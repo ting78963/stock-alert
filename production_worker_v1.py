@@ -52,23 +52,39 @@ def premarket_sox_loop():
     prepared_day=None
     prepared_card=None
     open_day=None
+    finished_day=None
+    next_attempt=None
     while True:
         now=datetime.now(tz)
-        if now.weekday()<5 and now.hour==8 and 54<=now.minute<60:
+        if (now.weekday()<5 and now.hour==8 and 54<=now.minute<60
+                and finished_day!=now.date()
+                and (next_attempt is None or now>=next_attempt)):
             try:
                 if prepared_day!=now.date():
+                    from pathlib import Path
+                    import json
+                    marker=Path(state)
+                    if marker.exists() and json.loads(marker.read_text(encoding='utf-8')).get('sent_date')==now.date().isoformat():
+                        finished_day=now.date()
+                        continue
                     prepared_card=None
                     open_day=is_scheduled_open(now.date())
                     if open_day:
                         prepared_card=build_market_brief(datetime.now(tz), clock=lambda: datetime.now(tz))
                     prepared_day=now.date()
+                    if not open_day:
+                        finished_day=now.date()
                 now=datetime.now(tz)
                 if open_day and prepared_card is not None and now.date()==prepared_day and now.hour==8 and 55<=now.minute<60:
                     result=deliver_premarket_once(now,send_premarket_flex,state,
                         card_builder=lambda _:prepared_card,session_gate=lambda day:day==prepared_day and open_day)
+                    if result in ('sent','already_sent','market_closed'):
+                        finished_day=now.date()
                     if result not in ('not_due','already_sent'):
                         print(f'[PREMARKET SOX] {now.date()} {result}',flush=True)
             except Exception as exc:
+                from datetime import timedelta
+                next_attempt=datetime.now(tz)+timedelta(seconds=20)
                 print(f'[PREMARKET SOX FAIL] {now.date()} {type(exc).__name__}',flush=True)
         time.sleep(5 if now.hour==8 and 53<=now.minute<60 else 30)
 
