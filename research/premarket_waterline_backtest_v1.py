@@ -1,4 +1,4 @@
-"""Compare exposure caps using daily closes, no network or production writes.
+"""Validate selected exposure cap using daily closes, no network or production writes.
 Signals at close execute at next session close; no same-close lookahead.
 Index proxy, cash earns zero, costs charged on traded notional.
 """
@@ -6,7 +6,7 @@ from datetime import date
 from math import isfinite
 from research.premarket_risk_waterline_v1 import snapshot
 
-def compare(rows, cost=0.001, caps=(90,80,70)):
+def compare(rows, cost=0.001, caps=(80,)):
     if not 0 <= cost < 1:
         raise ValueError("invalid cost")
     days = [(date.fromisoformat(r["date"]),float(r["close"])) for r in rows]
