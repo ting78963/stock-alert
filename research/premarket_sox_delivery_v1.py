@@ -9,7 +9,7 @@ import json
 TPE=ZoneInfo("Asia/Taipei")
 _LOCK=Lock()
 
-def deliver_premarket_once(now, sender, state_path, card_builder=None):
+def deliver_premarket_once(now, sender, state_path, card_builder=None, session_gate=None):
     if not isinstance(now,datetime) or now.tzinfo is None:
         raise ValueError("aware datetime required")
     local=now.astimezone(TPE)
@@ -19,6 +19,11 @@ def deliver_premarket_once(now, sender, state_path, card_builder=None):
         path=Path(state_path)
         if path.exists() and json.loads(path.read_text(encoding="utf-8")).get("sent_date")==local.date().isoformat():
             return "already_sent"
+        if session_gate is None:
+            from twse_session_gate_v1 import is_scheduled_open
+            session_gate=is_scheduled_open
+        if not session_gate(local.date()):
+            return "market_closed"
         if card_builder is None:
             from research.premarket_market_brief_v1 import build_market_brief
             card_builder=build_market_brief
