@@ -12,7 +12,8 @@ class TaiexPremarketAdapterTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path=Path(tmp)/"missing.json"
             trend=load_taiex_trend("2026-11-23",path)
-            self.assertEqual(trend["headline"],"資料不足")
+            self.assertEqual(trend["headline"],"大盤價格趨勢待確認")
+            self.assertIsNone(trend["waterline"]["target"])
             self.assertIsNone(trend["last_close"])
             self.assertEqual(trend["completed_week_count"],0)
             self.assertFalse(trend["weekly_ma100_ready"])
@@ -36,7 +37,10 @@ class TaiexPremarketAdapterTests(unittest.TestCase):
             trend=load_taiex_trend(report,path)
             self.assertNotEqual(trend["last_close"],999999)
             self.assertEqual(trend["as_of"],report)
-            self.assertIn(trend["headline"],("多頭趨勢維持","多頭仍在，但漲勢放緩","空頭趨勢持續","空頭仍在，短線出現改善","多空轉換期","資料不足"))
+            self.assertEqual(trend["headline"],"大盤偏多")
+            self.assertEqual(trend["waterline"]["target"],80)
+            self.assertEqual(trend["price_regime"],"偏多")
+            self.assertIn("大盤偏多",trend["explanation"])
             self.assertTrue(trend["weekly_ma100_ready"])
             self.assertGreaterEqual(trend["completed_week_count"],102)
             self.assertEqual(trend["weekly"]["structure"],"偏多")
