@@ -105,4 +105,12 @@ def market_outlook(trend, values):
             title=("空頭共振" if aligned and daily=="偏空" else "偏空但仍須觀察") if tx<0 else "空頭結構下的短線反彈"
         else:
             title=f"開盤{side}，整體趨勢待確認"
+    short=trend.get("short_term") or {}
+    levels=short.get("levels") or {}
+    if levels:
+        observation+="\n短線攻防："+short["label"]+"。"
+        if tx is not None and tx>0 and not levels[5]["above"] and not levels[10]["above"]:
+            observation+="盤前偏多仍須觀察能否收復短期均線。"
+        elif tx is not None and tx<0 and levels[5]["above"] and levels[10]["above"]:
+            observation+="昨日短線仍偏多，今日留意均線支撐。"
     return title, observation+"\n\n"+str(trend.get("explanation") or "大盤趨勢資料不足。")
