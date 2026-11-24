@@ -5,6 +5,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 from taiex_fugle_store_v1 import STORE, read_store
 from taiex_trend_narrative_v1 import analyze_taiex
+from research.premarket_risk_waterline_v1 import analyze_history
 from taiex_market_history_v1 import completed_week_closes
 from premarket_market_flex_v1 import build_premarket_flex
 from premarket_quote_policy_v1 import validate_quote
@@ -21,6 +22,15 @@ def load_taiex_trend(as_of=None,path=None):
     target=Path(path) if path is not None else STORE
     rows=read_store(target)
     trend=analyze_taiex(rows,report_date)
+    trend["waterline"]=analyze_history(rows,report_date)
+    above=trend["waterline"].get("above",{})
+    if above:
+        regime="偏多" if above[20] and above[100] else "偏空" if not above[20] and not above[100] else "整理"
+        trend["price_regime"]=regime
+        trend["headline"]={"偏多":"大盤偏多","偏空":"大盤偏空","整理":"大盤多空整理"}[regime]
+    else:
+        trend["price_regime"]=None
+        trend["headline"]="大盤價格趨勢待確認"
     prior=[r for r in rows if r["date"]<report_date]
     trend["last_close_date"]=prior[-1]["date"] if prior else None
     trend["last_close"]=prior[-1]["close"] if prior else None
@@ -83,8 +93,8 @@ def market_outlook(trend, values):
         except (ValueError, IndexError, TypeError):
             return None
     tx,sox,fx=(direction(k) for k in ("tx","sox","usdtwd"))
-    weekly=(trend.get("weekly") or {}).get("structure")
-    daily=(trend.get("daily") or {}).get("structure")
+    weekly=trend.get("price_regime") if "price_regime" in trend else (trend.get("weekly") or {}).get("structure")
+    daily=trend.get("price_regime") if "price_regime" in trend else (trend.get("daily") or {}).get("structure")
     labels={1:"上漲",-1:"下跌",0:"持平",None:"資料不足"}
     fx_labels={1:"貶值",-1:"升值",0:"持平",None:"資料不足"}
     observation=f"臺指期{labels[tx]}、費半{labels[sox]}、臺幣{fx_labels[fx]}。"
@@ -103,6 +113,8 @@ def market_outlook(trend, values):
             title=("多頭共振" if aligned and daily=="偏多" else "偏多但仍須觀察") if tx>0 else "多頭結構下的短線回檔"
         elif weekly=="偏空":
             title=("空頭共振" if aligned and daily=="偏空" else "偏空但仍須觀察") if tx<0 else "空頭結構下的短線反彈"
+        elif weekly=="整理":
+            title=f"整理格局，開盤{side}"
         else:
             title=f"開盤{side}，整體趨勢待確認"
     short=trend.get("short_term") or {}
