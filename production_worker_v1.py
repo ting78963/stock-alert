@@ -60,7 +60,7 @@ def premarket_sox_loop():
                     prepared_card=None
                     open_day=is_scheduled_open(now.date())
                     if open_day:
-                        prepared_card=build_market_brief(datetime.now(tz))
+                        prepared_card=build_market_brief(datetime.now(tz), clock=lambda: datetime.now(tz))
                     prepared_day=now.date()
                 now=datetime.now(tz)
                 if open_day and prepared_card is not None and now.date()==prepared_day and now.hour==8 and 55<=now.minute<60:
