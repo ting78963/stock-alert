@@ -11,13 +11,15 @@ TPE = ZoneInfo("Asia/Taipei")
 
 def build_market_brief(now, fx_fetch=fetch_once, sox_fetch=fetch_sox_quote,
                        tx_fetch=fetch_tx_quote, cbc_read=read_store,
-                       preview=build_taiex_preview):
+                       preview=build_taiex_preview, clock=None):
     if now.tzinfo is None:
         raise ValueError("aware datetime required")
     local = now.astimezone(TPE)
+    # Inject a clock for deterministic tests; production supplies a real clock.
+    clock = clock or (lambda: now)
     values = {}
-    for key, fetch in (("usdtwd", lambda: fx_fetch()), ("sox", lambda: sox_fetch(now)),
-                       ("tx", lambda: tx_fetch(now))):
+    for key, fetch in (("usdtwd", lambda: fx_fetch()), ("sox", lambda: sox_fetch(clock())),
+                       ("tx", lambda: tx_fetch(clock()))):
         try:
             values[key] = fetch()
         except Exception:
@@ -26,7 +28,7 @@ def build_market_brief(now, fx_fetch=fetch_once, sox_fetch=fetch_sox_quote,
         cbc = cbc_read()
     except Exception:
         cbc = []
-    card = preview(as_of=local.date(), indicators=values, report_at=now,
+    card = preview(as_of=local.date(), indicators=values, report_at=clock(),
                    cbc_fx_rows=cbc, system_status="待確認")
     card["altText"] = f"{local.date().isoformat()} 08:55 盤前簡報"
     return card
