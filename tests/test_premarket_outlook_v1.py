@@ -26,3 +26,15 @@ class OutlookTests(unittest.TestCase):
                 self.assertEqual(market_outlook(trend,values)[0],expected)
     def test_missing_tx(self):
         self.assertEqual(market_outlook({}, {})[0],"今日方向待評估")
+
+    def test_twse_20261124_real_closes(self):
+        # TWSE MI_5MINS_HIST November 2026, last eleven completed sessions.
+        actual=[42711.92,44257.15,43091.87,43675.12,41040.08,40092.11,40194.91,38426.89,36033.29,36811.89,40122.35]
+        # Padding only satisfies MA20 readiness; cannot affect MA5/10 or prior values.
+        s=short_term_snapshot([40000.0]*10+actual)
+        self.assertEqual(s["levels"][5]["ma"],38317.87)
+        self.assertEqual(s["levels"][10]["ma"],40374.57)
+        self.assertEqual(s["levels"][5]["direction"],"↗")
+        self.assertEqual(s["levels"][10]["direction"],"↘")
+        self.assertTrue(s["levels"][5]["above"])
+        self.assertFalse(s["levels"][10]["above"])
