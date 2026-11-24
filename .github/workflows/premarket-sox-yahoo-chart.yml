@@ -47,4 +47,9 @@ jobs:
           python -m unittest discover -s tests -p test_premarket_quote_policy_v1.py -v
           python -m unittest discover -s tests -p test_usdtwd_live_rates_v1.py -v
           python -m unittest discover -s tests -p test_usdtwd_premarket_compare_v1.py -v
+          python -m unittest discover -s tests -p test_taiex_trend_narrative_v1.py -v
+          python -m unittest discover -s tests -p test_taiex_premarket_adapter_v1.py -v
+          python -m unittest discover -s tests -p test_premarket_fx_preview_v1.py -v
+          python -m unittest discover -s tests -p test_taiex_premarket_cached_panel_v1.py -v
+          python -m unittest discover -s tests -p test_taiex_trend_flex_v1.py -v
           python -m py_compile production_worker_v1.py taiex_fugle_store_v1.py usdtwd_cbc_store_v1.py
