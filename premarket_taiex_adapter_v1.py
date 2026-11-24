@@ -64,4 +64,45 @@ def build_taiex_preview(as_of=None,path=None,indicators=None,system_status="待�
                 change=f"{delta:+,.2f} ({delta/rows[-2]['close']:+.2%})"
             values["taiex"]={"value":f"{current['close']:,.2f}","change":change,
                              "timestamp":f"{current['date']} 收盤"}
-    return build_premarket_flex(values,trend=trend,system_status=system_status)
+    outlook, observation = market_outlook(trend, values)
+    return build_premarket_flex(values,trend=trend,system_status=system_status,
+                                outlook=outlook,observation=observation)
+
+
+def market_outlook(trend, values):
+    """Use validated quote changes only; no weighted score or invented prices."""
+    def direction(key):
+        item=values.get(key) or {}
+        if item.get("status") != ("close" if key=="sox" else "live"):
+            return None
+        try:
+            change=float(str(item.get("change")).split()[0].replace(",","").replace("−","-").rstrip("%"))
+            if not __import__("math").isfinite(change):
+                return None
+            return (change>0)-(change<0)
+        except (ValueError, IndexError, TypeError):
+            return None
+    tx,sox,fx=(direction(k) for k in ("tx","sox","usdtwd"))
+    weekly=(trend.get("weekly") or {}).get("structure")
+    daily=(trend.get("daily") or {}).get("structure")
+    labels={1:"上漲",-1:"下跌",0:"持平",None:"資料不足"}
+    fx_labels={1:"貶值",-1:"升值",0:"持平",None:"資料不足"}
+    observation=f"臺指期{labels[tx]}、費半{labels[sox]}、臺幣{fx_labels[fx]}。"
+    if tx is None:
+        title="今日方向待評估"
+        observation+="缺少有效臺指期漲跌資料，暫不推估開盤方向。"
+    elif tx==0:
+        title="盤前方向中性"
+        observation+="臺指期持平，開盤方向尚不明朗。"
+    else:
+        side="偏多" if tx>0 else "偏空"
+        aligned=sox==tx and fx==-tx
+        observation+=f"臺指期顯示開盤{side}傾向。"
+        observation+=("費半與匯率方向一致。" if aligned else "輔助指標未完全確認，仍須觀察。")
+        if weekly=="偏多":
+            title=("多頭共振" if aligned and daily=="偏多" else "偏多但仍須觀察") if tx>0 else "多頭結構下的短線回檔"
+        elif weekly=="偏空":
+            title=("空頭共振" if aligned and daily=="偏空" else "偏空但仍須觀察") if tx<0 else "空頭結構下的短線反彈"
+        else:
+            title=f"開盤{side}，整體趨勢待確認"
+    return title, observation+"\n\n"+str(trend.get("explanation") or "大盤趨勢資料不足。")
