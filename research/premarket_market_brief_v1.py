@@ -29,6 +29,6 @@ def build_market_brief(now, fx_fetch=fetch_once, sox_fetch=fetch_sox_quote,
     except Exception:
         cbc = []
     card = preview(as_of=local.date(), indicators=values, report_at=clock(),
-                   cbc_fx_rows=cbc, system_status="Worker 在線｜簡報正常")
+                   cbc_fx_rows=cbc, system_status="● Worker 在線正常")
     card["altText"] = f"{local.date().isoformat()} 08:55 盤前簡報"
     return card
