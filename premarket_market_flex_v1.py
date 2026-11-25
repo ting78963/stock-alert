@@ -85,7 +85,7 @@ def trend_section(trend):
         trend_tiles.append({"type":"box","layout":"vertical","flex":1,"backgroundColor":PANEL,"cornerRadius":"8px","paddingAll":"8px","spacing":"xs","contents":[
             txt(label,"xs",MUTED),
             rich([(p if i==0 else "・"+p,trend_color(p)) for i,p in enumerate(state.replace("｜","・").replace("、","・").split("・"))]),
-            horizontal([ma_arrow(20,item.get("ma20_direction")),ma_arrow(100,item.get("ma100_direction"))]),
+            rich([(ma_arrow(20,item.get("ma20_direction"))["text"],ma_arrow(20,item.get("ma20_direction"))["color"]),("  "+ma_arrow(100,item.get("ma100_direction"))["text"],ma_arrow(100,item.get("ma100_direction"))["color"])],"xxs"),
             *([txt(cross.replace("接近","準備") if cross.startswith("接近") else cross+" Day1","xs",trend_color(cross),"bold")] if cross.startswith(("接近","準備")) or cross in ("黃金交叉","死亡交叉") else [])]})
     result.append({"type":"box","layout":"horizontal","spacing":"sm","contents":trend_tiles})
     water=trend.get("waterline") or {}
@@ -113,8 +113,9 @@ def trend_section(trend):
             horizontal([txt(f"原持股水位 {water['target']-water['delta']}%","xs",MUTED),txt(f"本次調整 {water['delta']:+d}%","xs",MUTED,align="end")]),
             {"type":"box","layout":"horizontal","spacing":"xs","contents":[
                 {"type":"box","layout":"vertical","flex":1,"backgroundColor":PANEL,"cornerRadius":"6px","paddingAll":"5px","contents":[txt(f"{n}MA","xs",MUTED,align="center"),txt("碰觸" if n in water.get("touching",[]) else "站上" if water["above"][n] else "跌破","xs",AMBER if n in water.get("touching",[]) else RED if water["above"][n] else GREEN,align="center")]} for n in (5,10,20,100)]},
-            txt(events+"；"+caps,"xs",MUTED),
-            txt("增碼確認：須同時站上5MA及10MA" if not (water["above"][5] and water["above"][10]) else "短線雙門檻已確認，仍受中長期上限限制","xs",MUTED)])
+            txt(events,"xs",MUTED),
+            txt("中長期風險上限 "+str(min(water["caps"].values(),default=80))+"%","sm",WHITE,"bold"),
+            txt("增碼確認：須同時站上5MA及10MA" if not (water["above"][5] and water["above"][10]) else "短線雙門檻已確認","xs",AMBER,"bold")])
     elif water:
         result.append(txt("持股水位待確認｜不產生新調整建議","sm",AMBER))
     return result
@@ -133,8 +134,8 @@ def build_premarket_flex(indicators,observed_at="08:55",observation=None,
     status_color=GREEN if system_ok is True else AMBER if system_ok is False else MUTED
     body=[
         {"type":"box","layout":"horizontal","contents":[txt("↗ MORNING BRIEF","xs",RED,"bold",flex=3),txt("辨識系統","xs",MUTED,align="end",flex=2)]},
-        {"type":"box","layout":"horizontal","contents":[txt("開盤前戰情簡報","lg",WHITE,"bold",flex=3),txt(system_status,"xxs",status_color,align="end",flex=2)]},
-        txt(observed_at,"xs",MUTED),
+        txt("開盤前戰情簡報","lg",WHITE,"bold"),
+        horizontal([txt(observed_at,"xs",MUTED,flex=3),txt(system_status,"xxs",status_color,align="end",flex=2)]),
         {"type":"separator","margin":"lg","color":DIVIDER},
         *trend_section(trend),
         {"type":"separator","margin":"lg","color":DIVIDER},
@@ -147,7 +148,7 @@ def build_premarket_flex(indicators,observed_at="08:55",observation=None,
         
         {"type":"box","layout":"vertical","backgroundColor":PANEL,
          "cornerRadius":"12px","paddingAll":"12px","contents":[
-            rich([("趨勢"+str((trend or {}).get("price_regime") or "待確認")+"：",trend_color((trend or {}).get("price_regime"))),(outlook or "待評估",trend_color(outlook))],"xl"),
+            rich([("趨勢"+str((trend or {}).get("price_regime") or "待確認")+"：",trend_color((trend or {}).get("price_regime"))),(outlook or "待評估",trend_color(outlook))],"lg"),
             txt(observation or "觀察美股、臺指期、匯率及前日台股趨勢，綜合判斷今日市場偏多、偏空或中性。","sm",MUTED)]},
         horizontal([txt("行情依各項報價時間為準","xxs",MUTED),txt("Trade Smart | Your Edge","xxs",MUTED,align="end")])
     ]
@@ -155,4 +156,4 @@ def build_premarket_flex(indicators,observed_at="08:55",observation=None,
             "contents":{"type":"bubble","size":"mega","body":{
                 "type":"box","layout":"vertical","backgroundColor":BG,
                 "borderColor":"#E5E7EB","borderWidth":"1px","cornerRadius":"12px",
-                "paddingAll":"12px","spacing":"sm","contents":body}}}
+                "paddingAll":"12px","spacing":"md","contents":body}}}
