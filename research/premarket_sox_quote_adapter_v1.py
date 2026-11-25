@@ -16,6 +16,6 @@ def fetch_sox_quote(report_at, fetcher=fetch_sox_chart):
         close, prev = float(row["close"]), float(row["previous_close"])
         if not all(isfinite(x) and x > 0 for x in (close, prev)) or not 0 <= age <= 4*86400:
             return None
-        return {"value": f"{close:,.2f}", "change": f"{(close/prev-1)*100:+.2f}%", "quoted_at": stamp.isoformat(), "source": "yahoo_chart_sox"}
+        return {"value": f"{close:,.2f}", "previous_close": f"{prev:,.2f}", "change": f"{close-prev:+,.2f} ({(close/prev-1)*100:+.2f}%)", "quoted_at": stamp.isoformat(), "source": "yahoo_chart_sox"}
     except (ValueError, TypeError, KeyError, AttributeError, OSError):
         return None
