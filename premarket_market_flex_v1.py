@@ -46,6 +46,18 @@ def trend_color(value):
         return GREEN
     return MUTED
 
+def ma_arrow(n, direction, invert=False):
+    up=direction in ("上揚","up","↑")
+    down=direction in ("下彎","down","↓")
+    color=(GREEN if invert else RED) if up else (RED if invert else GREEN) if down else MUTED
+    return txt(f"{n}MA "+("↑" if up else "↓" if down else "→" if direction in ("持平","flat") else "待確認"),"xs",color,"bold")
+
+def rich(parts,size="sm"):
+    return {"type":"text","size":size,"weight":"bold","wrap":True,"contents":[{"type":"span","text":str(t),"color":c} for t,c in parts]}
+
+def horizontal(contents):
+    return {"type":"box","layout":"horizontal","spacing":"sm","contents":contents}
+
 def trend_section(trend):
     trend=trend or {}
     headline=trend.get("headline") or "資料待取得"
@@ -57,16 +69,15 @@ def trend_section(trend):
                          txt(headline,"lg",trend_color(headline),"bold"),
                          txt(trend.get("explanation") or "大盤歷史資料待補齊。","sm",WHITE)]}]
     trend_tiles=[]
-    for label,key in (("短期 · 日線 MA20 / MA100","daily"),
-                      ("中長期 · 週線 MA20 / MA100","weekly")):
+    for label,key in (("日線","daily"),
+                      ("週線","weekly")):
         item=trend.get(key) or {}
         state=item.get("label") or "資料不足"
         cross=item.get("cross") or "待判斷"
         trend_tiles.append({"type":"box","layout":"vertical","flex":1,"backgroundColor":PANEL,"cornerRadius":"8px","paddingAll":"8px","spacing":"xs","contents":[
             txt(label,"xs",MUTED),
-            txt(state,"sm",trend_color(state),"bold"),
-            txt("20MA "+str(item.get("ma20_direction","待確認")),"xs",MUTED),
-            txt("100MA "+str(item.get("ma100_direction","待確認")),"xs",MUTED),
+            rich([(p if i==0 else "・"+p,trend_color(p)) for i,p in enumerate(state.replace("｜","・").split("・"))]),
+            horizontal([ma_arrow(20,item.get("ma20_direction")),ma_arrow(100,item.get("ma100_direction"))]),
             *([txt(cross.replace("接近","準備") if cross.startswith("接近") else cross+" Day1","xs",trend_color(cross),"bold")] if cross.startswith(("接近","準備")) or cross in ("黃金交叉","死亡交叉") else [])]})
     result.append({"type":"box","layout":"horizontal","spacing":"sm","contents":trend_tiles})
     water=trend.get("waterline") or {}
@@ -75,11 +86,13 @@ def trend_section(trend):
         events="、".join(names[n]+v for n,v in water["events"].items()) or "無新突破或跌破"
         caps="、".join(f"{names[n]}失守，上限{v}%" for n,v in water["caps"].items()) or "無額外風險限制"
         result.extend([
-            txt(f"建議持股 {water['target']}%｜現金 {water['cash']}%","md",WHITE,"bold"),
+            txt("持股水位配置","md",WHITE,"bold"),
+            horizontal([{"type":"box","layout":"vertical","contents":[txt("建議持股","xs",MUTED),txt(f"{water['target']}%","xxl",RED,"bold")]},{"type":"box","layout":"vertical","contents":[txt("保留現金","xs",MUTED,align="end"),txt(f"{water['cash']}%","xxl",WHITE,"bold",align="end")]}]),
             {"type":"box","layout":"horizontal","height":"10px","cornerRadius":"5px","contents":[
                 {"type":"box","layout":"vertical","flex":water["target"],"backgroundColor":RED,"contents":[]},
                 {"type":"box","layout":"vertical","flex":water["cash"],"backgroundColor":"#E5E7EB","contents":[]}]},
-            txt(f"{water['action']}｜水位變動 {water['delta']:+d} 個百分點","sm",MUTED),
+            txt(f"{water['action']}","sm",AMBER,"bold"),
+            horizontal([txt(f"原持股水位 {water['target']-water['delta']}%","xs",MUTED),txt(f"本次調整 {water['delta']:+d}%","xs",MUTED,align="end")]),
             {"type":"box","layout":"horizontal","spacing":"xs","contents":[
                 {"type":"box","layout":"vertical","flex":1,"backgroundColor":PANEL,"cornerRadius":"6px","paddingAll":"5px","contents":[txt(f"{n}MA","xs",MUTED,align="center"),txt("碰觸" if n in water.get("touching",[]) else "站上" if water["above"][n] else "跌破","xs",AMBER if n in water.get("touching",[]) else RED if water["above"][n] else GREEN,align="center")]} for n in (5,10,20,100)]},
             txt(events+"；"+caps,"xs",MUTED),
@@ -123,11 +136,12 @@ def build_premarket_flex(indicators,observed_at="08:55",observation=None,
         {"type":"separator","margin":"lg","color":DIVIDER},
         txt("03 · MARKET OUTLOOK","xs",MUTED),
         txt("今日市場多空研判","md",WHITE),
-        txt(outlook or "待評估","md",trend_color(outlook),"bold"),
+        
         {"type":"box","layout":"vertical","backgroundColor":PANEL,
          "cornerRadius":"12px","paddingAll":"12px","contents":[
+            rich([("趨勢"+str((trend or {}).get("price_regime") or "待確認")+"：",trend_color((trend or {}).get("price_regime"))),(outlook or "待評估",trend_color(outlook))],"xl"),
             txt(observation or "觀察美股、臺指期、匯率及前日台股趨勢，綜合判斷今日市場偏多、偏空或中性。","sm",MUTED)]},
-        txt("行情依各項報價時間為準","xxs",MUTED)
+        horizontal([txt("行情依各項報價時間為準","xxs",MUTED),txt("Trade Smart | Your Edge","xxs",MUTED,align="end")])
     ]
     return {"type":"flex","altText":"08:55 開盤前戰情簡報｜四項市場資訊",
             "contents":{"type":"bubble","size":"mega","body":{
