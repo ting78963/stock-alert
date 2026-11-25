@@ -5,16 +5,21 @@ from research.premarket_risk_waterline_v1 import target_for, analyze
 class WaterlineTests(unittest.TestCase):
     def test_all_states(self):
         expected = {
-            "0000":20,"0001":30,"0010":30,"0011":50,
-            "0100":30,"0101":50,"0110":30,"0111":70,
-            "1000":30,"1001":50,"1010":30,"1011":70,
+            "0000":20,"0001":20,"0010":20,"0011":30,
+            "0100":20,"0101":30,"0110":20,"0111":70,
+            "1000":20,"1001":30,"1010":30,"1011":50,
             "1100":30,"1101":50,"1110":30,"1111":80,
         }
         for bits in product((False,True),repeat=5):
             key="".join(str(int(b)) for b in bits[:4])
-            want=expected[key] if bits[4] else min(30,expected[key])
+            want=expected[key] if bits[4] else min(30 if bits[0] else 20,expected[key])
             with self.subTest(bits=bits):
                 self.assertEqual(target_for(*bits),want)
+
+    def test_short_term_sequence(self):
+        states = [(False,False),(True,False),(True,True),(False,True),(True,True)]
+        self.assertEqual([target_for(a,b,False,False,False) for a,b in states],
+                         [20,20,30,20,30])
 
     def test_unchanged(self):
         r=analyze(list(range(1,102)),50,49)
