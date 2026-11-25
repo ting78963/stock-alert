@@ -66,7 +66,8 @@ def build_taiex_preview(as_of=None,path=None,indicators=None,system_status="待�
         fx_trend=fx_trend_snapshot(cbc_fx_rows,report_at.astimezone(TPE).date())
         ma5,ma20=fx_trend["daily_ma5"],fx_trend["daily_ma20"]
         if ma5 is not None and ma20 is not None:
-            fx["timestamp"]+=f"｜央行日 MA5 {ma5:.3f} / MA20 {ma20:.3f}"
+            fx["timestamp"]=(fx.get("timestamp") or "即時匯率待取得")+f"｜央行日 MA5 {ma5:.3f} / MA20 {ma20:.3f}"
+            values["usdtwd"]=fx
     if "taiex" not in values:
         target=Path(path) if path is not None else STORE
         rows=[r for r in read_store(target) if r["date"] < trend["as_of"]]
