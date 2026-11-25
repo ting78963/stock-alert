@@ -1,0 +1,268 @@
+# -*- coding: utf-8 -*-
+"""08:55 premarket LINE Flex: one white briefing card, no network/sending."""
+BG="#FFFFFF"
+PANEL="#F5F6F7"
+WHITE="#202428"
+MUTED="#646970"
+GREEN="#18734F"
+RED="#A01928"
+AMBER="#E68A24"
+ORANGE="#E68A24"
+DIVIDER="#E1E3E6"
+INDICATORS=(
+    ("usdtwd","美元／台幣","08:55 最新可用匯率｜須附報價時間"),
+    ("sox","費城半導體 SOX","最近美股交易日收盤"),
+    ("taiex","臺灣加權指數","前一臺股交易日收盤"),
+    ("tx","臺指期貨","08:55 最新可用日盤行情｜須附報價時間"),
+)
+
+def txt(s,size="sm",color=WHITE,weight=None,**kwargs):
+    result={"type":"text","text":str(s),"size":size,"color":color,"wrap":True}
+    if weight: result["weight"]=weight
+    result.update(kwargs)
+    return result
+
+def panel(key,title,subtitle,data):
+    item=data.get(key) or {}
+    value=item.get("value")
+    has_value=value is not None and str(value).strip()!=""
+    lines=[txt(title,"xs",MUTED),txt(value if has_value else "待取得","xl",WHITE,"bold")]
+    change=item.get("change")
+    if has_value and change is not None and str(change).strip():
+        lines.append(txt(change,"xs",(GREEN if key=="usdtwd" else RED) if str(change).lstrip().startswith("+") else (RED if key=="usdtwd" else GREEN) if str(change).lstrip().startswith(("-", "−")) else MUTED,"bold"))
+    if item.get("previous_close") is not None:
+        lines.append(txt("前收 "+str(item["previous_close"]),"xs",MUTED))
+    if key=="usdtwd" and item.get("trend"):
+        fx=item["trend"]
+        lines.append(horizontal([ma_arrow(5,fx.get("ma5_direction"),True),ma_arrow(20,fx.get("ma20_direction"),True)]))
+        side=fx.get("ma5_vs_ma20")
+        lines.append(txt("美元偏強・台幣偏弱" if side=="above" else "美元偏弱・台幣偏強" if side=="below" else "匯率整理","xs",GREEN if side=="above" else RED if side=="below" else AMBER,"bold"))
+        cross=fx.get("cross","")
+        if cross.startswith("準備") or cross in ("黃金交叉","死亡交叉"):
+            lines.append(txt(cross if cross.startswith("準備") else cross+" Day1","xs",AMBER if cross.startswith("準備") else RED if cross=="黃金交叉" else GREEN,"bold"))
+    if key!="usdtwd" and has_value and change:
+        side=1 if str(change).startswith("+") else -1 if str(change).startswith(("-", "−")) else 0
+        label={"sox":("半導體市場偏多","半導體市場偏空"),"tx":("開盤方向偏多","開盤方向偏空"),"taiex":("前日收盤上漲","前日收盤下跌")}[key]
+        lines.append(txt(label[0] if side>0 else label[1] if side<0 else "方向待確認","xxs",RED if side>0 else GREEN if side<0 else MUTED,"bold"))
+    lines.append(txt(item.get("timestamp") or subtitle,"xxs",MUTED))
+    return {"type":"box","layout":"vertical","backgroundColor":PANEL,"cornerRadius":"12px",
+            "paddingAll":"12px","flex":1,"spacing":"sm","contents":lines}
+
+def trend_color(value):
+    value=str(value or "")
+    if value.startswith("接近") or any(s in value for s in ("放緩","轉換","整理","反彈","回檔","待確認","準備")):
+        return AMBER
+    if "多頭" in value or "偏多" in value or "黃金交叉" in value or "走強" in value:
+        return RED
+    if "空頭" in value or "偏空" in value or "死亡交叉" in value or "轉弱" in value:
+        return GREEN
+    return MUTED
+
+def ma_arrow(n, direction, invert=False):
+    up=direction in ("上揚","up","↑")
+    down=direction in ("下彎","down","↓")
+    color=(GREEN if invert else RED) if up else (RED if invert else GREEN) if down else MUTED
+    return txt(f"{n}MA "+("↑" if up else "↓" if down else "→" if direction in ("持平","flat") else "待確認"),"xs",color,"bold")
+
+def rich(parts,size="sm"):
+    return {"type":"text","size":size,"weight":"bold","wrap":True,"contents":[{"type":"span","text":str(t),"color":c} for t,c in parts]}
+
+def horizontal(contents):
+    return {"type":"box","layout":"horizontal","spacing":"sm","contents":contents}
+
+def trend_section(trend):
+    trend=trend or {}
+    headline=trend.get("headline") or "資料待取得"
+    result=[txt("01 · TAIEX MARKET TREND","xs",MUTED),
+            txt("大盤多空趨勢","md",WHITE,"bold"),
+            {"type":"box","layout":"vertical","backgroundColor":PANEL,
+             "cornerRadius":"12px","paddingAll":"12px","spacing":"sm",
+             "contents":[txt("目前市場階段","xs",MUTED),
+                         rich([(headline,trend_color(headline)),("  "+trend["short_headline"],AMBER)] if trend.get("short_headline") else [(headline,trend_color(headline))],"lg"),
+                         txt(trend.get("explanation") or "大盤歷史資料待補齊。","sm",MUTED)]}]
+    trend_tiles=[]
+    for label,key in (("日線","daily"),
+                      ("週線","weekly")):
+        item=trend.get(key) or {}
+        state=item.get("label") or "資料不足"
+        cross=item.get("cross") or "待判斷"
+        trend_tiles.append({"type":"box","layout":"vertical","flex":1,"backgroundColor":PANEL,"cornerRadius":"8px","paddingAll":"8px","spacing":"xs","contents":[
+            txt(label,"xs",MUTED),
+            rich([(p if i==0 else "・"+p,trend_color(p)) for i,p in enumerate(state.replace("｜","・").replace("、","・").split("・"))]),
+            rich([(ma_arrow(20,item.get("ma20_direction"))["text"],ma_arrow(20,item.get("ma20_direction"))["color"]),("  "+ma_arrow(100,item.get("ma100_direction"))["text"],ma_arrow(100,item.get("ma100_direction"))["color"])],"xxs"),
+            *([txt(cross.replace("接近","準備") if cross.startswith("接近") else cross+" Day1","xs",trend_color(cross),"bold")] if cross.startswith(("接近","準備")) or cross in ("黃金交叉","死亡交叉") else [])]})
+    result.append({"type":"box","layout":"horizontal","spacing":"sm","contents":trend_tiles})
+    water=trend.get("waterline") or {}
+    seasonal=water.get("seasonal_bias") or {}
+    if seasonal.get("status")=="ok":
+        labels={"normal":("正常區間",MUTED),"early":("初步警戒｜留意追高風險",AMBER),
+                "high":("高度警戒｜留意回檔",ORANGE),"extreme":("極端警戒｜市場過熱",RED),
+                "negative":("負乖離過大｜留意反彈，不代表落底",GREEN)}
+        note,color=labels[seasonal["level"]]
+        result.append(txt(f"季線乖離率 {seasonal['bias']:+.2f}%","lg",GREEN if seasonal["bias"]<0 else RED,"bold"))
+        result.append(txt(note,"sm",AMBER if seasonal["level"]=="negative" else color,"bold"))
+    elif seasonal:
+        result.append(txt("季線乖離率｜資料不足","xs",MUTED))
+    if water.get("status")=="ok":
+        names={5:"日5MA",10:"日10MA",20:"日20MA",100:"日100MA","week20":"週20MA"}
+        events="、".join(names[n]+v for n,v in water["events"].items()) or "無新突破或跌破"
+        caps="、".join(f"{names[n]}失守，上限{v}%" for n,v in water["caps"].items()) or "無額外風險限制"
+        result.extend([
+            txt("持股水位配置","md",WHITE,"bold"),
+            horizontal([{"type":"box","layout":"vertical","contents":[txt("建議持股","xs",MUTED),txt(f"{water['target']}%","xxl",RED,"bold")]},{"type":"box","layout":"vertical","contents":[txt("保留現金","xs",MUTED,align="end"),txt(f"{water['cash']}%","xxl",WHITE,"bold",align="end")]}]),
+            {"type":"box","layout":"horizontal","height":"10px","cornerRadius":"5px","contents":[
+                {"type":"box","layout":"vertical","flex":water["target"],"backgroundColor":RED,"contents":[]},
+                {"type":"box","layout":"vertical","flex":water["cash"],"backgroundColor":"#E5E7EB","contents":[]}]},
+            txt(f"{water['action']}","sm",AMBER,"bold"),
+            horizontal([txt(f"原持股水位 {water['target']-water['delta']}%","xs",MUTED),txt(f"本次調整 {water['delta']:+d}%","xs",MUTED,align="end")]),
+            {"type":"box","layout":"horizontal","spacing":"xs","contents":[
+                {"type":"box","layout":"vertical","flex":1,"backgroundColor":PANEL,"cornerRadius":"6px","paddingAll":"5px","contents":[txt(f"{n}MA","xs",MUTED,align="center"),txt("碰觸" if n in water.get("touching",[]) else "站上" if water["above"][n] else "跌破","xs",AMBER if n in water.get("touching",[]) else RED if water["above"][n] else GREEN,align="center")]} for n in (5,10,20,100)]},
+            txt(("目前僅站上5MA，短線尚未確認。" if water["above"][5] and not water["above"][10] and not water["above"][20] and not water["above"][100] else events)+f" 持股{water['action']}{water['target']}%。","xs",MUTED),
+            {"type":"box","layout":"vertical","backgroundColor":PANEL,"cornerRadius":"8px","paddingAll":"8px","spacing":"xs","contents":[
+                txt("下一步觀察","xxs",MUTED),
+                txt("收復10MA、守穩5MA" if water["above"][5] and not water["above"][10] else "須同時站上5MA及10MA" if not (water["above"][5] and water["above"][10]) else "守穩5MA及10MA","sm",AMBER,"bold"),
+                txt("中長期風險上限 "+str(min(water["caps"].values(),default=80))+"%","sm",WHITE,"bold")]}])
+    elif water:
+        result.append(txt("持股水位待確認｜不產生新調整建議","sm",AMBER))
+    return result
+
+def build_premarket_flex(indicators,observed_at="08:55",observation=None,
+                         system_status="待確認",system_ok=None,trend=None,outlook=None):
+    """Build exactly one LINE Flex message; caller handles market data and delivery.
+
+    indicators: dict of usdtwd/sox/taiex/tx with formatted value/change/timestamp.
+    Missing values remain '待取得'; no invented prices or operational status.
+    """
+    rows=[]
+    for start in (0,2):
+        rows.append({"type":"box","layout":"horizontal","spacing":"sm","contents":[
+            panel(*INDICATORS[i],indicators) for i in range(start,start+2)]})
+    status_color=GREEN if system_ok is True else AMBER if system_ok is False else MUTED
+    body=[
+        {"type":"box","layout":"horizontal","contents":[txt("↗ MORNING BRIEF","xs",RED,"bold",flex=3),txt("辨識系統","xs",MUTED,align="end",flex=2)]},
+        txt("開盤前戰情簡報","lg",WHITE,"bold"),
+        horizontal([txt(observed_at,"xs",MUTED,flex=3),txt(system_status,"xxs",status_color,align="end",flex=2)]),
+        {"type":"separator","margin":"lg","color":DIVIDER},
+        *trend_section(trend),
+        {"type":"separator","margin":"lg","color":DIVIDER},
+        txt("02 · GLOBAL MARKET & FUTURES","xs",MUTED),
+        txt("四大市場動態","md",WHITE,"bold"),
+        {"type":"box","layout":"vertical","spacing":"sm","contents":rows},
+        {"type":"separator","margin":"lg","color":DIVIDER},
+        txt("03 · MARKET OUTLOOK","xs",MUTED),
+        txt("今日市場多空研判","md",WHITE,"bold"),
+        
+        {"type":"box","layout":"vertical","backgroundColor":PANEL,
+         "cornerRadius":"12px","paddingAll":"12px","contents":[
+            rich([("趨勢"+str((trend or {}).get("price_regime") or "待確認")+"：",trend_color((trend or {}).get("price_regime"))),(outlook or "待評估",trend_color(outlook))],"lg"),
+            txt(observation or "觀察美股、臺指期、匯率及前日台股趨勢，綜合判斷今日市場偏多、偏空或中性。","sm",MUTED)]},
+        horizontal([txt("行情依各項報價時間為準","xxs",MUTED),txt("Trade Smart | Your Edge","xxs",MUTED,align="end")])
+    ]
+    return {"type":"flex","altText":"08:55 開盤前戰情簡報｜四項市場資訊",
+            "contents":{"type":"bubble","size":"mega","body":{
+                "type":"box","layout":"vertical","backgroundColor":BG,
+                "borderColor":"#E5E7EB","borderWidth":"1px","cornerRadius":"12px",
+                "paddingAll":"12px","spacing":"md","contents":body}}}
+
+
+def split_premarket_flex(card):
+    """Two independent bubbles from one computed briefing; no additional fetch."""
+    from copy import deepcopy
+    body=card["contents"]["body"]["contents"]
+    def locate(label):
+        return next(i for i,x in enumerate(body) if x.get("text")==label)
+    start=locate("02 · GLOBAL MARKET & FUTURES")
+    end=locate("03 · MARKET OUTLOOK")
+    market_rows=body[start+2]["contents"]
+    market_panels=[]
+    for row in market_rows:
+        for tile in row["contents"]:
+            lines=deepcopy(tile["contents"])
+            top=horizontal([dict(lines[0],flex=4),dict(lines[1],flex=5,align="end")])
+            rest=lines[2:]
+            if len(rest)>=2 and rest[1].get("text","").startswith("前收 "):
+                rest=[horizontal([dict(rest[1],flex=4),dict(rest[0],flex=5,align="end")])]+rest[2:]
+            if lines[0]["text"]=="美元／台幣":
+                import re
+                for node in rest:
+                    candidates=node.get("contents",[]) if node.get("layout")=="horizontal" else [node]
+                    for candidate in candidates:
+                        raw=candidate.get("text","")
+                        match=re.search(r"([+-]?[0-9.]+%)[)]?\s*(?:·\s*)?([臺台]幣(?:升值|貶值)|持平)",raw)
+                        if match:
+                            candidate["text"]=match.group(2).replace("臺","台")+" "+match.group(1).lstrip("+-")
+                formatted=[]
+                for node in rest:
+                    children=node.get("contents",[])
+                    if node.get("layout")=="horizontal" and len(children)==2 and children[0].get("text","").startswith("5MA "):
+                        formatted.append({"type":"separator","color":DIVIDER})
+                        formatted.append(horizontal([txt("均線方向","xs",MUTED,flex=3),dict(rich([(children[0]["text"],children[0]["color"]),("  "+children[1]["text"],children[1]["color"])],"xs"),align="end",flex=6)]))
+                    elif node.get("text","") in ("美元偏強・台幣偏弱","美元偏弱・台幣偏強","匯率整理"):
+                        formatted.append(horizontal([txt("匯率趨勢","xs",MUTED,flex=3),dict(node,align="end",flex=6)]))
+                    else:
+                        formatted.append(node)
+                rest=formatted
+            market_panels.append(dict(tile,contents=[top]+rest))
+    def make(number,title,section):
+        bubble=deepcopy(card)
+        header=horizontal([txt("↗ MORNING BRIEF","xs",RED,"bold",flex=3),txt(number+" / 02","xs",MUTED,align="end",flex=2)])
+        bubble["contents"]["body"]["contents"]=[header,txt(title,"lg",WHITE,"bold"),deepcopy(body[2]),{"type":"separator","margin":"lg","color":DIVIDER}]+deepcopy(section)
+        bubble["altText"]=card["altText"]+" "+number+"/02"
+        return bubble
+    strategy=deepcopy(body[4:start-1])
+    allocation=next((i for i,x in enumerate(strategy) if x.get("text")=="持股水位配置"),None)
+    boundary=allocation if allocation is not None else next((i for i,x in enumerate(strategy) if x.get("text","").startswith("持股水位待確認")),len(strategy))
+    trend_parts=strategy[2:boundary]
+    if trend_parts:
+        overview=trend_parts[0]
+        headline, explanation=deepcopy(overview["contents"][1:3])
+        headline["size"]="xl"
+        sentences=[x.strip()+"。" for x in explanation["text"].split("。") if x.strip()]
+        intro={"type":"box","layout":"vertical","spacing":"md","contents":[txt("MARKET TREND · 大盤趨勢","xs",MUTED),headline]}
+        analysis_panel={"type":"box","layout":"vertical","backgroundColor":PANEL,"cornerRadius":"8px","paddingAll":"12px","spacing":"md","contents":[txt("大盤綜合研判","xs",MUTED)]+[dict(explanation,text=x) for x in sentences]}
+        combined=[]
+        for item in trend_parts[1:]:
+            if item.get("layout")=="horizontal":
+                for tile in item["contents"]:
+                    if combined: combined.append({"type":"separator","color":DIVIDER})
+                    label,state,arrows,*cross=tile["contents"]
+                    arrow_lines=[txt(span["text"].strip(),"sm",span["color"],"bold",align="end") for span in arrows["contents"]]
+                    combined.append(horizontal([{"type":"box","layout":"vertical","spacing":"sm","contents":[label,state]+cross},{"type":"box","layout":"vertical","spacing":"sm","contents":arrow_lines}]))
+            elif item.get("text","").startswith("季線乖離率 "):
+                combined.append({"type":"separator","color":DIVIDER})
+                combined.append(horizontal([txt("季線乖離率","sm",MUTED),txt(item["text"].split(" ",1)[1],"lg",item["color"],"bold",align="end")]))
+            else:
+                combined.append(item)
+        overview["contents"]=combined
+        overview["spacing"]="lg"
+        strategy=[intro,overview,analysis_panel,{"type":"separator","margin":"lg","color":DIVIDER},txt("POSITION STRATEGY · 持股策略","xs",MUTED)]+strategy[boundary:]
+    for i,item in enumerate(strategy):
+        if item.get("text")=="持股水位配置":
+            action=strategy.pop(i+3)
+            action["align"]="start"
+            action["size"]="xl"
+            if action.get("text")=="維持":
+                action["text"]="維持・等待確認"
+            strategy[i]={"type":"box","layout":"vertical","spacing":"sm","contents":[item,action]}
+            summary=strategy.pop(i+5)
+            next_panel=strategy[i+5]
+            next_label,condition,cap=next_panel["contents"]
+            next_panel["contents"]=[txt("目前策略","xs",MUTED),dict(summary,color=WHITE,weight="bold"),{"type":"separator","color":DIVIDER},next_label,condition,horizontal([txt("中長期風險上限","xs",MUTED),txt(cap["text"].rsplit(" ",1)[-1],"lg",WHITE,"bold",align="end")])]
+            next_panel["spacing"]="md"
+            break
+    first=make("01","大盤趨勢與持股策略",strategy+[txt("Trade Smart | Your Edge","xxs",MUTED,align="end")])
+    second=make("02","全球市場與開盤研判",[body[start+1],{"type":"box","layout":"vertical","spacing":"md","contents":market_panels}]+body[end-1:])
+    outlook_panel=second["contents"]["body"]["contents"][-2]
+    heading=outlook_panel["contents"][0]
+    if heading.get("contents"):
+        outlook_panel["contents"]=[txt(span["text"].rstrip("："),"lg",span["color"],"bold") for span in heading["contents"]]+outlook_panel["contents"][1:]
+        outlook_panel["spacing"]="sm"
+    import re
+    observation=outlook_panel["contents"][-1]["text"]
+    match=re.match(r"臺指期(上漲|下跌|持平|資料不足)、費半(上漲|下跌|持平|資料不足)、臺幣(貶值|升值|持平|資料不足)。",observation)
+    if match:
+        remainder=observation[match.end():]
+        sentences=[x+"。" for x in remainder.split("。") if x]
+        outlook_panel["contents"]=outlook_panel["contents"][:-1]+[{"type":"separator","color":DIVIDER},txt("綜合研判","xs",MUTED)]+[txt(x,"sm",MUTED) for x in sentences]
+        outlook_panel["spacing"]="md"
+    return [first,second]

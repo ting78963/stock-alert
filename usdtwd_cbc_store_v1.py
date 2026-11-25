@@ -6,6 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 from usdtwd_cbc_daily_v1 import fetch_daily, trend_snapshot
+from market_history_retention_v1 import retain_fx, FX_DAYS
 
 TPE=ZoneInfo("Asia/Taipei")
 STORE=Path(os.getenv("USDTWD_CBC_HISTORY_PATH","/var/data/stock-alert/market_data/usdtwd_cbc_daily.json"))
@@ -30,8 +31,9 @@ def update(as_of=None,path=STORE,session=None):
     if rows[-1]["date"]>str(today)[:10]:
         raise ValueError("CBC returned future close")
     old=read_store(path)
-    if old and (len(rows)<len(old) or rows[-1]["date"]<old[-1]["date"]):
+    if old and (len(rows)<min(len(old), FX_DAYS) or rows[-1]["date"]<old[-1]["date"]):
         raise ValueError("CBC historical data regressed; preserving old cache")
+    rows=retain_fx(rows)
     path.parent.mkdir(parents=True,exist_ok=True)
     tmp=path.with_suffix(path.suffix+".tmp")
     try:

@@ -1,0 +1,59 @@
+name: Premarket SOX Yahoo Chart tests
+on:
+  push:
+    branches: [codex/premarket-sox-yahoo-isolated-20261124]
+  pull_request:
+    paths:
+      - 'research/premarket_sox_yahoo_chart_v1.py'
+      - 'tests/test_premarket_sox_yahoo_chart_v1.py'
+      - 'tests/test_premarket_sox_flex_section_v1.py'
+      - 'research/premarket_sox_flex_section_v1.py'
+      - 'research/premarket_sox_brief_section_v1.py'
+      - 'tests/test_premarket_sox_brief_section_v1.py'
+      - 'research/premarket_sox_card_v1.py'
+      - 'research/premarket_sox_delivery_v1.py'
+      - 'tests/test_premarket_sox_delivery_v1.py'
+      - 'research/premarket_sox_sender_v1.py'
+      - 'tests/test_premarket_sox_sender_v1.py'
+      - 'production_worker_v1.py'
+      - 'market_history_retention_v1.py'
+      - 'taiex_fugle_store_v1.py'
+      - 'usdtwd_cbc_store_v1.py'
+      - 'tests/test_market_history_retention_v1.py'
+      - 'research/premarket_existing_indicators_v1.py'
+      - 'tests/test_premarket_existing_indicators_v1.py'
+      - '.github/workflows/premarket-sox-yahoo-chart.yml'
+jobs:
+  unit:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: |
+          python -m unittest discover -s tests -p test_premarket_sox_yahoo_chart_v1.py -v
+          python -m unittest discover -s tests -p test_premarket_sox_flex_section_v1.py -v
+          python -m unittest discover -s tests -p test_premarket_sox_brief_section_v1.py -v
+          python -m unittest discover -s tests -p test_premarket_sox_delivery_v1.py -v
+          python -m unittest discover -s tests -p test_premarket_sox_sender_v1.py -v
+          python -m unittest discover -s tests -p test_premarket_existing_indicators_v1.py -v
+          python -m unittest discover -s tests -p test_market_history_retention_v1.py -v
+          python -m unittest discover -s tests -p test_premarket_crossovers_v1.py -v
+          python -m unittest discover -s tests -p test_strong_stock_ma_parity_v1.py -v
+          python -m unittest discover -s tests -p test_taiex_premarket_ma_v1.py -v
+          python -m unittest discover -s tests -p test_usdtwd_premarket_trend_v1.py -v
+          python -m unittest discover -s tests -p test_ma_trend_history_boundary_v1.py -v
+          python -m unittest discover -s tests -p test_premarket_quote_policy_v1.py -v
+          python -m unittest discover -s tests -p test_usdtwd_live_rates_v1.py -v
+          python -m unittest discover -s tests -p test_usdtwd_premarket_compare_v1.py -v
+          python -m unittest discover -s tests -p test_taiex_trend_narrative_v1.py -v
+          python -m unittest discover -s tests -p test_taiex_premarket_adapter_v1.py -v
+          python -m unittest discover -s tests -p test_premarket_fx_preview_v1.py -v
+          python -m unittest discover -s tests -p test_taiex_premarket_cached_panel_v1.py -v
+          python -m unittest discover -s tests -p test_taiex_trend_flex_v1.py -v
+          python -m unittest discover -s tests -p test_premarket_sox_quote_adapter_v1.py -v
+          python -m unittest discover -s tests -p test_premarket_outlook_v1.py -v
+          python -m unittest discover -s tests -p test_premarket_market_brief_v1.py -v
+          python -m unittest discover -s tests -p test_premarket_worker_schedule_v1.py -v
+          python -m py_compile production_worker_v1.py taiex_fugle_store_v1.py usdtwd_cbc_store_v1.py

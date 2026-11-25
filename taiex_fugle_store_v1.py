@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 import urllib.parse
 import urllib.request
 from taiex_market_history_v1 import normalize_daily, snapshot
+from market_history_retention_v1 import retain_taiex
 
 FUGLE_URL = "https://api.fugle.tw/marketdata/v1.0/stock/historical/candles/IX0001"
 TPE = ZoneInfo("Asia/Taipei")
@@ -83,10 +84,11 @@ def update(as_of=None, path=STORE, session=None, api_key=None, max_chunks=2):
         # Do not mark the current trading day as fully covered before its candle is published.
         # Otherwise a 15:30 empty response would permanently skip the 16:30 retry.
         covered_end = b - timedelta(days=1) if b == today and not any(r["date"] == today.isoformat() for r in new_rows) else b
-        write_store(path, merged.values(), covered_through=covered_end.isoformat())
+        kept = retain_taiex(merged.values(), today + timedelta(days=1))
+        write_store(path, kept, covered_through=covered_end.isoformat())
     rows = normalize_daily(merged.values())
-    if len(rows) < len(existing):
-        raise RuntimeError("TAIEX history unexpectedly shrank")
+    if fetched:
+        rows = retain_taiex(rows, today + timedelta(days=1))
     report_as_of = today + timedelta(days=1) if rows and rows[-1]["date"] == today.isoformat() else today
     return {"stored": len(rows), "fetched_rows": fetched, "latest": rows[-1]["date"] if rows else None, "snapshot": snapshot(rows, report_as_of.isoformat())}
 

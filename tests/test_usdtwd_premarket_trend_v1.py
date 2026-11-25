@@ -1,0 +1,54 @@
+import unittest
+from datetime import date, timedelta
+from research.usdtwd_premarket_trend_v1 import fx_premarket_snapshot
+
+
+class FXPremarketTests(unittest.TestCase):
+    def rows(self, closes):
+        start = date(2026, 1, 1)
+        return [{"date": (start + timedelta(days=i)).isoformat(), "close": v} for i, v in enumerate(closes)]
+
+    def test_ma20_direction_requires_21_bars(self):
+        rows = self.rows([30.0] * 20)
+        report = fx_premarket_snapshot(rows, "2026-04-01")
+        self.assertEqual(report["ma20"], 30.0)
+        self.assertEqual(report["ma20_direction"], "insufficient")
+        rows = self.rows([30.0] * 20 + [31.0])
+        self.assertEqual(fx_premarket_snapshot(rows, "2026-04-01")["ma20_direction"], "falling")
+
+    def test_usdtwd_rising_means_twd_weakening(self):
+        result = fx_premarket_snapshot(self.rows([30.0] * 20 + [31.0]), "2026-04-01")
+        self.assertEqual(result["ma5_direction"], "falling")
+        self.assertEqual(result["twd_ma5_direction"], "TWD_weakening")
+
+    def test_usdtwd_death_cross_is_twd_golden_cross(self):
+        result = fx_premarket_snapshot(self.rows([30.0] * 15 + [31.0] * 5 + [25.0]), "2026-04-01")
+        self.assertEqual(result["usdtwd_ma5_20"], "death_cross")
+        self.assertEqual(result["ma5_20"], "golden_cross")
+        self.assertEqual(result["twd_ma5_20_interpretation"], "TWD_strengthening")
+
+    def test_cross_persists_through_day5_then_expires(self):
+        # USD/TWD crosses down at 25.0; TWD shows golden cross.
+        base = [30.0] * 15 + [31.0] * 5 + [25.0]
+        for age in range(1, 6):
+            result = fx_premarket_snapshot(self.rows(base + [25.0] * (age-1)), "2026-04-01")
+            self.assertEqual(result["cross_day"], age)
+            self.assertEqual(result["ma5_20"], "golden_cross")
+        result = fx_premarket_snapshot(self.rows(base + [25.0] * 5), "2026-04-01")
+        self.assertIsNone(result["cross_day"])
+
+    def test_premarket_excludes_today(self):
+        rows = self.rows([30.0] * 61)
+        rows.append({"date": "2026-04-01", "close": 999.0})
+        result = fx_premarket_snapshot(rows, "2026-04-01")
+        self.assertEqual(result["last_close"], 30.0)
+        self.assertEqual(result["count"], 61)
+
+    def test_insufficient_data(self):
+        result = fx_premarket_snapshot(self.rows([30.0] * 10), "2026-04-01")
+        self.assertIsNone(result["ma20"])
+        self.assertEqual(result["ma5_20"], "insufficient")
+
+
+if __name__ == "__main__":
+    unittest.main()

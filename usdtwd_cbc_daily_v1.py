@@ -52,7 +52,22 @@ def trend_snapshot(rows,as_of):
     values=[r["close"] for r in prior]
     ma5=round(sum(values[-5:])/5,4) if len(values)>=5 else None
     ma20=round(sum(values[-20:])/20,4) if len(values)>=20 else None
+    def ma(n, offset=0):
+        end=len(values)-offset
+        return sum(values[end-n:end])/n if end>=n else None
+    def slope(n):
+        a,b=ma(n),ma(n,1)
+        return "待確認" if a is None or b is None else "上揚" if a>b else "下彎" if a<b else "持平"
+    cross="無新交叉"
+    if len(values)>=21:
+        gap=(ma(5)-ma(20))/ma(20)
+        prior_gap=(ma(5,1)-ma(20,1))/ma(20,1)
+        if prior_gap<=0<gap: cross="死亡交叉"
+        elif prior_gap>=0>gap: cross="黃金交叉"
+        elif 0<abs(gap)<=0.0075 and abs(gap)<abs(prior_gap):
+            cross="準備黃金交叉" if gap>0 else "準備死亡交叉"
     return {
+        "ma5_direction":slope(5),"ma20_direction":slope(20),"cross":cross,
         "schema":"usdtwd_cbc_daily_ma5_ma20_v1",
         "source":"cbc_interbank_daily_close",
         "quote_kind":"official_daily_close",
