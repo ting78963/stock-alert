@@ -59,6 +59,7 @@ def build_taiex_preview(as_of=None,path=None,indicators=None,system_status="待�
         comparison=compare_live_to_cbc_close(raw_fx,cbc_fx_rows,report_at)
         fx=values.get("usdtwd") or {}
         if comparison["status"]=="ok" and fx.get("status")=="live":
+            fx["previous_close"]=f"{comparison['previous_close']:.3f}"
             fx["change"]=f"{comparison['usd_twd_change']:+.4f} ({comparison['usd_twd_change_percent']:+.2f}%) · "+("臺幣貶值" if comparison["direction"]=="TWD_depreciation" else "臺幣升值" if comparison["direction"]=="TWD_appreciation" else "持平")
             fx["timestamp"]+=f"｜對照央行 {comparison['previous_close_date']} 收盤（不同來源）"
         elif fx.get("status")=="live":
@@ -77,10 +78,10 @@ def build_taiex_preview(as_of=None,path=None,indicators=None,system_status="待�
             if len(rows)>=2:
                 delta=current["close"]-rows[-2]["close"]
                 change=f"{delta:+,.2f} ({delta/rows[-2]['close']:+.2%})"
-            values["taiex"]={"value":f"{current['close']:,.2f}","change":change,
+            values["taiex"]={"value":f"{current['close']:,.2f}","change":change,"previous_close":f"{rows[-2]['close']:,.2f}" if len(rows)>=2 else None,
                              "timestamp":f"{current['date']} 收盤"}
     outlook, observation = market_outlook(trend, values)
-    return build_premarket_flex(values,trend=trend,system_status=system_status,
+    return build_premarket_flex(values,observed_at=datetime.fromisoformat(trend["as_of"]).strftime("%Y.%m.%d %a").upper()+" ｜ 08:55",trend=trend,system_status=system_status,
                                 outlook=outlook,observation=observation)
 
 
