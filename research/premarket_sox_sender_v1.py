@@ -13,7 +13,9 @@ def send_premarket_flex(card, opener=urllib.request.urlopen):
         raise RuntimeError("Recognition LINE credentials missing")
     if card.get("type")!="flex" or not card.get("altText","").endswith("08:55 盤前簡報"):
         raise ValueError("Invalid premarket Flex payload")
-    body=json.dumps({"to":to,"messages":[card]},ensure_ascii=False,separators=(",",":")).encode("utf-8")
+    from premarket_market_flex_v1 import split_premarket_flex
+    messages=split_premarket_flex(card)
+    body=json.dumps({"to":to,"messages":messages},ensure_ascii=False,separators=(",",":")).encode("utf-8")
     day=card["altText"][:10]
     retry=str(uuid.uuid5(uuid.NAMESPACE_URL,"premarket-brief-0855:"+day))
     req=urllib.request.Request("https://api.line.me/v2/bot/message/push",data=body,method="POST",headers={
