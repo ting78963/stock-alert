@@ -7,12 +7,12 @@ class WaterlineTests(unittest.TestCase):
         expected = {
             "0000":20,"0001":20,"0010":20,"0011":30,
             "0100":20,"0101":30,"0110":20,"0111":70,
-            "1000":20,"1001":30,"1010":30,"1011":50,
+            "1000":20,"1001":20,"1010":20,"1011":30,
             "1100":30,"1101":50,"1110":30,"1111":80,
         }
         for bits in product((False,True),repeat=5):
             key="".join(str(int(b)) for b in bits[:4])
-            want=expected[key] if bits[4] else min(30 if bits[0] else 20,expected[key])
+            want=expected[key] if bits[4] else min(30 if bits[0] and bits[1] else 20,expected[key])
             with self.subTest(bits=bits):
                 self.assertEqual(target_for(*bits),want)
 
@@ -20,6 +20,16 @@ class WaterlineTests(unittest.TestCase):
         states = [(False,False),(True,False),(True,True),(False,True),(True,True)]
         self.assertEqual([target_for(a,b,False,False,False) for a,b in states],
                          [20,20,30,20,30])
+
+    def test_no_5ma_only_recovery(self):
+        for a,b,w in product((False,True),repeat=3):
+            self.assertEqual(target_for(False,False,a,b,w),
+                             target_for(True,False,a,b,w))
+
+    def test_departure_after_touch(self):
+        r=analyze([100]*101+[101],90,90,previous_above={5:False,10:False})
+        self.assertEqual(r["events"][5],"突破")
+        self.assertEqual(r["events"][10],"突破")
 
     def test_unchanged(self):
         r=analyze(list(range(1,102)),50,49)
