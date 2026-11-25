@@ -1,14 +1,14 @@
 # -*- coding: utf-8 -*-
 """08:55 premarket LINE Flex: one dark-navy briefing card, no network/sending."""
-BG="#101c2e"
-PANEL="#1d2d45"
+BG="#16253B"
+PANEL="#243850"
 WHITE="#f3f6fc"
-MUTED="#a3b3c9"
-GREEN="#63d4a6"
-RED="#ff6868"
-AMBER="#ffc65a"
+MUTED="#B1C2D6"
+GREEN="#53D5AD"
+RED="#FF7885"
+AMBER="#EAC47B"
 ORANGE="#ff9d52"
-DIVIDER="#34465f"
+DIVIDER="#506078"
 INDICATORS=(
     ("usdtwd","美元／台幣","08:55 最新可用匯率｜須附報價時間"),
     ("sox","費城半導體 SOX","最近美股交易日收盤"),
@@ -29,7 +29,7 @@ def panel(key,title,subtitle,data):
     lines=[txt(title,"xs",MUTED),txt(value if has_value else "待取得","sm",WHITE,"bold")]
     change=item.get("change")
     if has_value and change is not None and str(change).strip():
-        lines.append(txt(change,"xs",RED if str(change).lstrip().startswith("+") else GREEN if str(change).lstrip().startswith(("-", "−")) else MUTED))
+        lines.append(txt(change,"xs",(GREEN if key=="usdtwd" else RED) if str(change).lstrip().startswith("+") else (RED if key=="usdtwd" else GREEN) if str(change).lstrip().startswith(("-", "−")) else MUTED))
     lines.append(txt(item.get("timestamp") or subtitle,"xxs",MUTED))
     return {"type":"box","layout":"vertical","backgroundColor":PANEL,"cornerRadius":"12px",
             "paddingAll":"12px","flex":1,"spacing":"sm","contents":lines}
@@ -54,15 +54,19 @@ def trend_section(trend):
              "contents":[txt("目前市場階段","xs",MUTED),
                          txt(headline,"lg",trend_color(headline),"bold"),
                          txt(trend.get("explanation") or "大盤歷史資料待補齊。","sm",WHITE)]}]
+    trend_tiles=[]
     for label,key in (("短期 · 日線 MA20 / MA100","daily"),
                       ("中長期 · 週線 MA20 / MA100","weekly")):
         item=trend.get(key) or {}
         state=item.get("label") or "資料不足"
         cross=item.get("cross") or "待判斷"
-        result.append({"type":"box","layout":"vertical","spacing":"xs","contents":[
+        trend_tiles.append({"type":"box","layout":"vertical","flex":1,"backgroundColor":PANEL,"cornerRadius":"8px","paddingAll":"8px","spacing":"xs","contents":[
             txt(label,"xs",MUTED),
             txt(state,"sm",trend_color(state),"bold"),
+            txt("20MA "+str(item.get("ma20_direction","待確認")),"xs",MUTED),
+            txt("100MA "+str(item.get("ma100_direction","待確認")),"xs",MUTED),
             txt(cross,"xs",trend_color(cross))]})
+    result.append({"type":"box","layout":"horizontal","spacing":"sm","contents":trend_tiles})
     water=trend.get("waterline") or {}
     if water.get("status")=="ok":
         names={5:"日5MA",10:"日10MA",20:"日20MA",100:"日100MA","week20":"週20MA"}
@@ -74,16 +78,12 @@ def trend_section(trend):
                 {"type":"box","layout":"vertical","flex":water["target"],"backgroundColor":RED,"contents":[]},
                 {"type":"box","layout":"vertical","flex":water["cash"],"backgroundColor":"#50617a","contents":[]}]},
             txt(f"{water['action']}｜水位變動 {water['delta']:+d} 個百分點","sm",MUTED),
-            txt(events+"；"+caps,"xs",MUTED)])
+            {"type":"box","layout":"horizontal","spacing":"xs","contents":[
+                {"type":"box","layout":"vertical","flex":1,"backgroundColor":PANEL,"cornerRadius":"6px","paddingAll":"5px","contents":[txt(f"{n}MA","xs",MUTED,align="center"),txt("碰觸" if n in water.get("touching",[]) else "站上" if water["above"][n] else "跌破","xs",AMBER if n in water.get("touching",[]) else RED if water["above"][n] else GREEN,align="center")]} for n in (5,10,20,100)]},
+            txt(events+"；"+caps,"xs",MUTED),
+            txt("增碼確認：須同時站上5MA及10MA" if not (water["above"][5] and water["above"][10]) else "短線雙門檻已確認，仍受中長期上限限制","xs",MUTED)])
     elif water:
         result.append(txt("持股水位待確認｜不產生新調整建議","sm",AMBER))
-    if water.get("status")=="ok":
-        ma=dict(water.get("ma") or {})
-        weekly=trend.get("weekly") or {}
-        if weekly.get("ma100") is not None: ma["week100"]=weekly["ma100"]
-        for label,keys in (("日均線",(5,10,20,100)),("週均線",("week20","week100"))):
-            values=[f"{str(n).replace('week','')}MA {ma[n]:,.2f}" for n in keys if n in ma]
-            if values: result.append(txt(label+"｜"+" / ".join(values),"xs",MUTED))
     seasonal=water.get("seasonal_bias") or {}
     if seasonal.get("status")=="ok":
         labels={"normal":("正常區間",MUTED),"early":("初步警戒｜留意追高風險",AMBER),
@@ -117,7 +117,7 @@ def build_premarket_flex(indicators,observed_at="08:55",observation=None,
                 txt("辨識系統","xs",MUTED),txt(system_status,"md",status_color,"bold")]},
             {"type":"box","layout":"vertical","flex":1,"contents":[
                 txt("三路監控","xs",MUTED,align="end"),
-                txt("SURGE / FLOW / VCP","sm",WHITE,"bold",align="end")]}
+                txt("SURGE / FLOW / VCP","xs",WHITE,"bold",align="end")]}
         ]},
         {"type":"separator","margin":"lg","color":DIVIDER},
         *trend_section(trend),
@@ -137,4 +137,5 @@ def build_premarket_flex(indicators,observed_at="08:55",observation=None,
     return {"type":"flex","altText":"08:55 開盤前戰情簡報｜四項市場資訊",
             "contents":{"type":"bubble","size":"mega","body":{
                 "type":"box","layout":"vertical","backgroundColor":BG,
-                "paddingAll":"16px","spacing":"md","contents":body}}}
+                "borderColor":"#A5B4C8","borderWidth":"2px","cornerRadius":"12px",
+                "paddingAll":"12px","spacing":"sm","contents":body}}}
