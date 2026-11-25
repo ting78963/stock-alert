@@ -10,7 +10,7 @@ from premarket_taiex_adapter_v1 import build_taiex_preview
 
 def all_text(node):
     if isinstance(node,dict):
-        return ([node["text"]] if node.get("type")=="text" else []) + sum((all_text(v) for v in node.values()),[])
+        return ([node["text"]] if node.get("type") in ("text","span") and "text" in node else []) + sum((all_text(v) for v in node.values()),[])
     if isinstance(node,list):
         return sum((all_text(v) for v in node),[])
     return []
@@ -23,6 +23,7 @@ class CachedPanelTests(unittest.TestCase):
             card=build_taiex_preview(as_of="2026-11-23",path=path)
             content=" ".join(all_text(card))
             self.assertIn("20,200.00",content)
+            self.assertIn("前收 20,000.00",content)
             self.assertIn("+200.00 (+1.00%)",content)
             self.assertIn("2026-11-20 收盤",content)
     def test_tx_day_session_opens_before_0855_report(self):
