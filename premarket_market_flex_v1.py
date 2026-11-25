@@ -32,13 +32,21 @@ def panel(key,title,subtitle,data):
         lines.append(txt(change,"xs",(GREEN if key=="usdtwd" else RED) if str(change).lstrip().startswith("+") else (RED if key=="usdtwd" else GREEN) if str(change).lstrip().startswith(("-", "−")) else MUTED))
     if item.get("previous_close") is not None:
         lines.append(txt("前收 "+str(item["previous_close"]),"xs",MUTED))
+    if key=="usdtwd" and item.get("trend"):
+        fx=item["trend"]
+        lines.append(horizontal([ma_arrow(5,fx.get("ma5_direction"),True),ma_arrow(20,fx.get("ma20_direction"),True)]))
+        side=fx.get("ma5_vs_ma20")
+        lines.append(txt("美元偏強・台幣偏弱" if side=="above" else "美元偏弱・台幣偏強" if side=="below" else "匯率整理","xs",GREEN if side=="above" else RED if side=="below" else AMBER,"bold"))
+        cross=fx.get("cross","")
+        if cross.startswith("準備") or cross in ("黃金交叉","死亡交叉"):
+            lines.append(txt(cross if cross.startswith("準備") else cross+" Day1","xs",AMBER if cross.startswith("準備") else RED if cross=="黃金交叉" else GREEN,"bold"))
     lines.append(txt(item.get("timestamp") or subtitle,"xxs",MUTED))
     return {"type":"box","layout":"vertical","backgroundColor":PANEL,"cornerRadius":"12px",
             "paddingAll":"12px","flex":1,"spacing":"sm","contents":lines}
 
 def trend_color(value):
     value=str(value or "")
-    if value.startswith("接近") or any(s in value for s in ("放緩","轉換","整理","反彈","回檔","待確認","準備交叉")):
+    if value.startswith("接近") or any(s in value for s in ("放緩","轉換","整理","反彈","回檔","待確認","準備")):
         return AMBER
     if "多頭" in value or "偏多" in value or "黃金交叉" in value or "走強" in value:
         return RED
@@ -76,7 +84,7 @@ def trend_section(trend):
         cross=item.get("cross") or "待判斷"
         trend_tiles.append({"type":"box","layout":"vertical","flex":1,"backgroundColor":PANEL,"cornerRadius":"8px","paddingAll":"8px","spacing":"xs","contents":[
             txt(label,"xs",MUTED),
-            rich([(p if i==0 else "・"+p,trend_color(p)) for i,p in enumerate(state.replace("｜","・").split("・"))]),
+            rich([(p if i==0 else "・"+p,trend_color(p)) for i,p in enumerate(state.replace("｜","・").replace("、","・").split("・"))]),
             horizontal([ma_arrow(20,item.get("ma20_direction")),ma_arrow(100,item.get("ma100_direction"))]),
             *([txt(cross.replace("接近","準備") if cross.startswith("接近") else cross+" Day1","xs",trend_color(cross),"bold")] if cross.startswith(("接近","準備")) or cross in ("黃金交叉","死亡交叉") else [])]})
     result.append({"type":"box","layout":"horizontal","spacing":"sm","contents":trend_tiles})
