@@ -195,19 +195,25 @@ def split_premarket_flex(card):
     trend_parts=strategy[2:boundary]
     if trend_parts:
         overview=trend_parts[0]
-        combined=deepcopy(overview["contents"][1:])
+        headline, explanation=deepcopy(overview["contents"][1:3])
+        headline["size"]="xl"
+        intro={"type":"box","layout":"vertical","spacing":"md","contents":[txt("MARKET TREND · 大盤趨勢","xs",MUTED),headline,explanation]}
+        combined=[]
         for item in trend_parts[1:]:
             if item.get("layout")=="horizontal":
                 for tile in item["contents"]:
-                    tile.pop("backgroundColor",None)
-                    tile["paddingAll"]="0px"
+                    if combined: combined.append({"type":"separator","color":DIVIDER})
+                    label,state,arrows,*cross=tile["contents"]
+                    arrow_lines=[txt(span["text"].strip(),"sm",span["color"],"bold",align="end") for span in arrows["contents"]]
+                    combined.append(horizontal([{"type":"box","layout":"vertical","spacing":"sm","contents":[label,state]+cross},{"type":"box","layout":"vertical","spacing":"sm","contents":arrow_lines}]))
+            elif item.get("text","").startswith("季線乖離率 "):
                 combined.append({"type":"separator","color":DIVIDER})
-            elif item.get("text","").startswith("季線乖離率"):
-                combined.append({"type":"separator","color":DIVIDER})
-            combined.append(item)
+                combined.append(horizontal([txt("季線乖離率","sm",MUTED),txt(item["text"].split(" ",1)[1],"lg",item["color"],"bold",align="end")]))
+            else:
+                combined.append(item)
         overview["contents"]=combined
-        overview["spacing"]="md"
-        strategy=[overview]+strategy[boundary:]
+        overview["spacing"]="lg"
+        strategy=[intro,overview,{"type":"separator","margin":"lg","color":DIVIDER},txt("POSITION STRATEGY · 持股策略","xs",MUTED)]+strategy[boundary:]
     for i,item in enumerate(strategy):
         if item.get("text")=="持股水位配置":
             action=strategy.pop(i+3)
@@ -215,6 +221,11 @@ def split_premarket_flex(card):
             if action.get("text")=="維持":
                 action["text"]="維持・等待確認"
             strategy[i]=horizontal([dict(item,flex=5),dict(action,flex=5)])
+            summary=strategy.pop(i+5)
+            next_panel=strategy[i+5]
+            next_label,condition,cap=next_panel["contents"]
+            next_panel["contents"]=[txt("目前策略","xs",MUTED),dict(summary,color=WHITE,weight="bold"),{"type":"separator","color":DIVIDER},next_label,condition,horizontal([txt("中長期風險上限","xs",MUTED),txt(cap["text"].rsplit(" ",1)[-1],"lg",WHITE,"bold",align="end")])]
+            next_panel["spacing"]="md"
             break
     first=make("01","大盤趨勢與持股策略",strategy+[txt("Trade Smart | Your Edge","xxs",MUTED,align="end")])
     second=make("02","全球市場與開盤研判",[body[start+1],{"type":"box","layout":"vertical","spacing":"md","contents":market_panels}]+body[end-1:])
@@ -223,4 +234,16 @@ def split_premarket_flex(card):
     if heading.get("contents"):
         outlook_panel["contents"]=[txt(span["text"].rstrip("："),"lg",span["color"],"bold") for span in heading["contents"]]+outlook_panel["contents"][1:]
         outlook_panel["spacing"]="sm"
+    import re
+    observation=outlook_panel["contents"][-1]["text"]
+    match=re.match(r"臺指期(上漲|下跌|持平|資料不足)、費半(上漲|下跌|持平|資料不足)、臺幣(貶值|升值|持平|資料不足)。",observation)
+    if match:
+        rows=[]
+        for label,state in zip(("臺指期","費城半導體","新臺幣"),match.groups()):
+            color=RED if state in ("上漲","升值") else GREEN if state in ("下跌","貶值") else MUTED
+            rows.append(horizontal([txt(label,"sm",MUTED),txt(state,"sm",color,"bold",align="end")]))
+        remainder=observation[match.end():]
+        sentences=[x+"。" for x in remainder.split("。") if x]
+        outlook_panel["contents"]=outlook_panel["contents"][:-1]+[{"type":"separator","color":DIVIDER}]+rows+[{"type":"separator","color":DIVIDER},txt("綜合研判","xs",MUTED)]+[txt(x,"sm",MUTED) for x in sentences]
+        outlook_panel["spacing"]="md"
     return [first,second]
