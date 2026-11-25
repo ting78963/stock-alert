@@ -29,7 +29,7 @@ def panel(key,title,subtitle,data):
     lines=[txt(title,"xs",MUTED),txt(value if has_value else "待取得","xl",WHITE,"bold")]
     change=item.get("change")
     if has_value and change is not None and str(change).strip():
-        lines.append(txt(change,"xs",(GREEN if key=="usdtwd" else RED) if str(change).lstrip().startswith("+") else (RED if key=="usdtwd" else GREEN) if str(change).lstrip().startswith(("-", "−")) else MUTED))
+        lines.append(txt(change,"xs",(GREEN if key=="usdtwd" else RED) if str(change).lstrip().startswith("+") else (RED if key=="usdtwd" else GREEN) if str(change).lstrip().startswith(("-", "−")) else MUTED,"bold"))
     if item.get("previous_close") is not None:
         lines.append(txt("前收 "+str(item["previous_close"]),"xs",MUTED))
     if key=="usdtwd" and item.get("trend"):
@@ -75,7 +75,7 @@ def trend_section(trend):
              "cornerRadius":"12px","paddingAll":"12px","spacing":"sm",
              "contents":[txt("目前市場階段","xs",MUTED),
                          txt(headline,"lg",trend_color(headline),"bold"),
-                         txt(trend.get("explanation") or "大盤歷史資料待補齊。","sm",WHITE)]}]
+                         txt(trend.get("explanation") or "大盤歷史資料待補齊。","sm",MUTED)]}]
     trend_tiles=[]
     for label,key in (("日線","daily"),
                       ("週線","weekly")):
@@ -89,6 +89,16 @@ def trend_section(trend):
             *([txt(cross.replace("接近","準備") if cross.startswith("接近") else cross+" Day1","xs",trend_color(cross),"bold")] if cross.startswith(("接近","準備")) or cross in ("黃金交叉","死亡交叉") else [])]})
     result.append({"type":"box","layout":"horizontal","spacing":"sm","contents":trend_tiles})
     water=trend.get("waterline") or {}
+    seasonal=water.get("seasonal_bias") or {}
+    if seasonal.get("status")=="ok":
+        labels={"normal":("正常區間",MUTED),"early":("初步警戒｜留意追高風險",AMBER),
+                "high":("高度警戒｜留意回檔",ORANGE),"extreme":("極端警戒｜市場過熱",RED),
+                "negative":("負乖離過大｜留意反彈，不代表落底",GREEN)}
+        note,color=labels[seasonal["level"]]
+        result.append(txt(f"季線乖離率 {seasonal['bias']:+.2f}%","lg",GREEN if seasonal["bias"]<0 else RED,"bold"))
+        result.append(txt(note,"sm",AMBER if seasonal["level"]=="negative" else color,"bold"))
+    elif seasonal:
+        result.append(txt("季線乖離率｜資料不足","xs",MUTED))
     if water.get("status")=="ok":
         names={5:"日5MA",10:"日10MA",20:"日20MA",100:"日100MA","week20":"週20MA"}
         events="、".join(names[n]+v for n,v in water["events"].items()) or "無新突破或跌破"
@@ -107,16 +117,6 @@ def trend_section(trend):
             txt("增碼確認：須同時站上5MA及10MA" if not (water["above"][5] and water["above"][10]) else "短線雙門檻已確認，仍受中長期上限限制","xs",MUTED)])
     elif water:
         result.append(txt("持股水位待確認｜不產生新調整建議","sm",AMBER))
-    seasonal=water.get("seasonal_bias") or {}
-    if seasonal.get("status")=="ok":
-        labels={"normal":("正常區間",MUTED),"early":("初步警戒｜留意追高風險",AMBER),
-                "high":("高度警戒｜留意回檔",ORANGE),"extreme":("極端警戒｜市場過熱",RED),
-                "negative":("負乖離過大｜留意反彈，不代表落底",GREEN)}
-        note,color=labels[seasonal["level"]]
-        result.append(txt(f"季線乖離率 {seasonal['bias']:+.2f}%","lg",GREEN if seasonal["bias"]<0 else RED,"bold"))
-        result.append(txt(note,"sm",AMBER if seasonal["level"]=="negative" else color,"bold"))
-    elif seasonal:
-        result.append(txt("季線乖離率｜資料不足","xs",MUTED))
     return result
 
 def build_premarket_flex(indicators,observed_at="08:55",observation=None,
@@ -139,11 +139,11 @@ def build_premarket_flex(indicators,observed_at="08:55",observation=None,
         *trend_section(trend),
         {"type":"separator","margin":"lg","color":DIVIDER},
         txt("02 · GLOBAL MARKET & FUTURES","xs",MUTED),
-        txt("四大市場動態","md",WHITE),
+        txt("四大市場動態","md",WHITE,"bold"),
         {"type":"box","layout":"vertical","spacing":"sm","contents":rows},
         {"type":"separator","margin":"lg","color":DIVIDER},
         txt("03 · MARKET OUTLOOK","xs",MUTED),
-        txt("今日市場多空研判","md",WHITE),
+        txt("今日市場多空研判","md",WHITE,"bold"),
         
         {"type":"box","layout":"vertical","backgroundColor":PANEL,
          "cornerRadius":"12px","paddingAll":"12px","contents":[
