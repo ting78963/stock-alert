@@ -132,7 +132,7 @@ def build_premarket_flex(indicators,observed_at="08:55",observation=None,
         {"type":"box","layout":"vertical","backgroundColor":PANEL,
          "cornerRadius":"12px","paddingAll":"12px","contents":[
             txt(observation or "觀察美股、臺指期、匯率及前日台股趨勢，綜合判斷今日市場偏多、偏空或中性。","sm",MUTED)]},
-        txt("示意卡片 · 非即時行情或實際系統健康狀態","xxs",MUTED)
+        txt("市場資訊依各項報價時間為準｜系統在線不代表A/B健康驗證","xxs",MUTED)
     ]
     return {"type":"flex","altText":"08:55 開盤前戰情簡報｜四項市場資訊",
             "contents":{"type":"bubble","size":"mega","body":{
