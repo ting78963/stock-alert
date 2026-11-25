@@ -7,6 +7,7 @@ MUTED="#a3b3c9"
 GREEN="#63d4a6"
 RED="#ff6868"
 AMBER="#ffc65a"
+ORANGE="#ff9d52"
 DIVIDER="#34465f"
 INDICATORS=(
     ("usdtwd","美元／台幣","08:55 最新可用匯率｜須附報價時間"),
@@ -35,7 +36,7 @@ def panel(key,title,subtitle,data):
 
 def trend_color(value):
     value=str(value or "")
-    if value.startswith("接近") or "放緩" in value or "轉換" in value:
+    if value.startswith("接近") or any(s in value for s in ("放緩","轉換","整理","反彈","回檔","待確認","準備交叉")):
         return AMBER
     if "多頭" in value or "偏多" in value or "黃金交叉" in value or "走強" in value:
         return RED
@@ -69,14 +70,22 @@ def trend_section(trend):
         caps="、".join(f"{names[n]}失守，上限{v}%" for n,v in water["caps"].items()) or "無額外風險限制"
         result.extend([
             txt(f"建議持股 {water['target']}%｜現金 {water['cash']}%","md",WHITE,"bold"),
+            {"type":"box","layout":"horizontal","height":"10px","cornerRadius":"5px","contents":[
+                {"type":"box","layout":"vertical","flex":water["target"],"backgroundColor":RED,"contents":[]},
+                {"type":"box","layout":"vertical","flex":water["cash"],"backgroundColor":"#50617a","contents":[]}]},
             txt(f"{water['action']}｜水位變動 {water['delta']:+d} 個百分點","sm",MUTED),
             txt(events+"；"+caps,"xs",MUTED)])
     elif water:
         result.append(txt("持股水位待確認｜不產生新調整建議","sm",AMBER))
+    if water.get("status")=="ok":
+        ma=water.get("ma") or {}
+        for label,keys in (("日均線",(5,10,20,100)),("週均線",("week20",))):
+            values=[f"{str(n).replace('week','')}MA {ma[n]:,.2f}" for n in keys if n in ma]
+            if values: result.append(txt(label+"｜"+" / ".join(values),"xs",MUTED))
     seasonal=water.get("seasonal_bias") or {}
     if seasonal.get("status")=="ok":
         labels={"normal":("正常區間",MUTED),"early":("初步警戒｜留意追高風險",AMBER),
-                "high":("高度警戒｜留意回檔",AMBER),"extreme":("極端警戒｜市場過熱",RED),
+                "high":("高度警戒｜留意回檔",ORANGE),"extreme":("極端警戒｜市場過熱",RED),
                 "negative":("負乖離過大｜留意反彈，不代表落底",GREEN)}
         note,color=labels[seasonal["level"]]
         result.append(txt(f"季線乖離率 {seasonal['bias']:+.2f}%｜{note}","sm",color))
