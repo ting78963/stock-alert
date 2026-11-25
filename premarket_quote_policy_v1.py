@@ -33,7 +33,7 @@ def validate_quote(key, quote, report_at, max_age_seconds=180):
         return {"value":None,"timestamp":"非當日日盤報價","status":"invalid_session"}
     if key == "sox" and quote.get("source") not in ("nasdaq", "yahoo_chart_sox"):
         return {"value":None,"timestamp":"費半來源未確認","status":"invalid_source"}
-    result={k:v for k,v in quote.items() if k in ("value","change")}
+    result={k:v for k,v in quote.items() if k in ("value","change","previous_close","previous_close_date")}
     result["timestamp"]=ts.astimezone(TPE).strftime("%Y-%m-%d %H:%M:%S")
     result["status"]="live" if key in LIVE_KEYS else "close"
     result["source"]=quote.get("source")
