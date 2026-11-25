@@ -32,7 +32,9 @@ def _state(closes, near_threshold=0.005):
         cross="無新交叉"
     return {"label":structure+"、"+momentum,"structure":structure,
             "momentum":momentum,"cross":cross,
-            "ma20":round(short,2),"ma100":round(long,2)}
+            "ma20":round(short,2),"ma100":round(long,2),
+            "ma20_direction":"上揚" if short>ps else "下彎" if short<ps else "持平",
+            "ma100_direction":"上揚" if long>pl else "下彎" if long<pl else "持平"}
 
 def analyze_taiex(rows,as_of):
     """Report on as_of morning: exclude as_of daily bar and unfinished weekly bar."""
