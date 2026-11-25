@@ -1,14 +1,14 @@
 # -*- coding: utf-8 -*-
-"""08:55 premarket LINE Flex: one dark-navy briefing card, no network/sending."""
-BG="#16253B"
-PANEL="#243850"
-WHITE="#f3f6fc"
-MUTED="#B1C2D6"
-GREEN="#53D5AD"
-RED="#FF7885"
-AMBER="#EAC47B"
-ORANGE="#ff9d52"
-DIVIDER="#506078"
+"""08:55 premarket LINE Flex: one white briefing card, no network/sending."""
+BG="#FFFFFF"
+PANEL="#F5F6F7"
+WHITE="#202428"
+MUTED="#646970"
+GREEN="#18734F"
+RED="#A01928"
+AMBER="#E68A24"
+ORANGE="#E68A24"
+DIVIDER="#E1E3E6"
 INDICATORS=(
     ("usdtwd","美元／台幣","08:55 最新可用匯率｜須附報價時間"),
     ("sox","費城半導體 SOX","最近美股交易日收盤"),
@@ -26,10 +26,12 @@ def panel(key,title,subtitle,data):
     item=data.get(key) or {}
     value=item.get("value")
     has_value=value is not None and str(value).strip()!=""
-    lines=[txt(title,"xs",MUTED),txt(value if has_value else "待取得","sm",WHITE,"bold")]
+    lines=[txt(title,"xs",MUTED),txt(value if has_value else "待取得","xl",WHITE,"bold")]
     change=item.get("change")
     if has_value and change is not None and str(change).strip():
         lines.append(txt(change,"xs",(GREEN if key=="usdtwd" else RED) if str(change).lstrip().startswith("+") else (RED if key=="usdtwd" else GREEN) if str(change).lstrip().startswith(("-", "−")) else MUTED))
+    if item.get("previous_close") is not None:
+        lines.append(txt("前收 "+str(item["previous_close"]),"xs",MUTED))
     lines.append(txt(item.get("timestamp") or subtitle,"xxs",MUTED))
     return {"type":"box","layout":"vertical","backgroundColor":PANEL,"cornerRadius":"12px",
             "paddingAll":"12px","flex":1,"spacing":"sm","contents":lines}
@@ -65,7 +67,7 @@ def trend_section(trend):
             txt(state,"sm",trend_color(state),"bold"),
             txt("20MA "+str(item.get("ma20_direction","待確認")),"xs",MUTED),
             txt("100MA "+str(item.get("ma100_direction","待確認")),"xs",MUTED),
-            txt(cross,"xs",trend_color(cross))]})
+            *([txt(cross.replace("接近","準備") if cross.startswith("接近") else cross+" Day1","xs",trend_color(cross),"bold")] if cross.startswith(("接近","準備")) or cross in ("黃金交叉","死亡交叉") else [])]})
     result.append({"type":"box","layout":"horizontal","spacing":"sm","contents":trend_tiles})
     water=trend.get("waterline") or {}
     if water.get("status")=="ok":
@@ -76,7 +78,7 @@ def trend_section(trend):
             txt(f"建議持股 {water['target']}%｜現金 {water['cash']}%","md",WHITE,"bold"),
             {"type":"box","layout":"horizontal","height":"10px","cornerRadius":"5px","contents":[
                 {"type":"box","layout":"vertical","flex":water["target"],"backgroundColor":RED,"contents":[]},
-                {"type":"box","layout":"vertical","flex":water["cash"],"backgroundColor":"#50617a","contents":[]}]},
+                {"type":"box","layout":"vertical","flex":water["cash"],"backgroundColor":"#E5E7EB","contents":[]}]},
             txt(f"{water['action']}｜水位變動 {water['delta']:+d} 個百分點","sm",MUTED),
             {"type":"box","layout":"horizontal","spacing":"xs","contents":[
                 {"type":"box","layout":"vertical","flex":1,"backgroundColor":PANEL,"cornerRadius":"6px","paddingAll":"5px","contents":[txt(f"{n}MA","xs",MUTED,align="center"),txt("碰觸" if n in water.get("touching",[]) else "站上" if water["above"][n] else "跌破","xs",AMBER if n in water.get("touching",[]) else RED if water["above"][n] else GREEN,align="center")]} for n in (5,10,20,100)]},
@@ -90,7 +92,8 @@ def trend_section(trend):
                 "high":("高度警戒｜留意回檔",ORANGE),"extreme":("極端警戒｜市場過熱",RED),
                 "negative":("負乖離過大｜留意反彈，不代表落底",GREEN)}
         note,color=labels[seasonal["level"]]
-        result.append(txt(f"季線乖離率 {seasonal['bias']:+.2f}%｜{note}","sm",color))
+        result.append(txt(f"季線乖離率 {seasonal['bias']:+.2f}%","lg",GREEN if seasonal["bias"]<0 else RED,"bold"))
+        result.append(txt(note,"sm",AMBER if seasonal["level"]=="negative" else color,"bold"))
     elif seasonal:
         result.append(txt("季線乖離率｜資料不足","xs",MUTED))
     return result
@@ -108,22 +111,14 @@ def build_premarket_flex(indicators,observed_at="08:55",observation=None,
             panel(*INDICATORS[i],indicators) for i in range(start,start+2)]})
     status_color=GREEN if system_ok is True else AMBER if system_ok is False else MUTED
     body=[
-        txt("STOCK ALERT · MORNING BRIEF","xs",MUTED),
-        txt("開盤前戰情簡報","lg",WHITE,"bold"),
-        txt(f"{observed_at} · 交易日自動發送","xs",MUTED),
-        {"type":"separator","margin":"lg","color":DIVIDER},
-        {"type":"box","layout":"horizontal","margin":"lg","contents":[
-            {"type":"box","layout":"vertical","flex":1,"contents":[
-                txt("辨識系統","xs",MUTED),txt(system_status,"md",status_color,"bold")]},
-            {"type":"box","layout":"vertical","flex":1,"contents":[
-                txt("三路監控","xs",MUTED,align="end"),
-                txt("SURGE / FLOW / VCP","xs",WHITE,"bold",align="end")]}
-        ]},
+        {"type":"box","layout":"horizontal","contents":[txt("↗ MORNING BRIEF","xs",RED,"bold",flex=3),txt("辨識系統","xs",MUTED,align="end",flex=2)]},
+        {"type":"box","layout":"horizontal","contents":[txt("開盤前戰情簡報","lg",WHITE,"bold",flex=3),txt(system_status,"xxs",status_color,align="end",flex=2)]},
+        txt(observed_at,"xs",MUTED),
         {"type":"separator","margin":"lg","color":DIVIDER},
         *trend_section(trend),
         {"type":"separator","margin":"lg","color":DIVIDER},
         txt("02 · GLOBAL MARKET & FUTURES","xs",MUTED),
-        txt("國際市場、匯率與期貨","md",WHITE),
+        txt("四大市場動態","md",WHITE),
         {"type":"box","layout":"vertical","spacing":"sm","contents":rows},
         {"type":"separator","margin":"lg","color":DIVIDER},
         txt("03 · MARKET OUTLOOK","xs",MUTED),
@@ -132,10 +127,10 @@ def build_premarket_flex(indicators,observed_at="08:55",observation=None,
         {"type":"box","layout":"vertical","backgroundColor":PANEL,
          "cornerRadius":"12px","paddingAll":"12px","contents":[
             txt(observation or "觀察美股、臺指期、匯率及前日台股趨勢，綜合判斷今日市場偏多、偏空或中性。","sm",MUTED)]},
-        txt("市場資訊依各項報價時間為準｜系統在線不代表A/B健康驗證","xxs",MUTED)
+        txt("行情依各項報價時間為準","xxs",MUTED)
     ]
     return {"type":"flex","altText":"08:55 開盤前戰情簡報｜四項市場資訊",
             "contents":{"type":"bubble","size":"mega","body":{
                 "type":"box","layout":"vertical","backgroundColor":BG,
-                "borderColor":"#A5B4C8","borderWidth":"2px","cornerRadius":"12px",
+                "borderColor":"#E5E7EB","borderWidth":"1px","cornerRadius":"12px",
                 "paddingAll":"12px","spacing":"sm","contents":body}}}
