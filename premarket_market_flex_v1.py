@@ -238,12 +238,8 @@ def split_premarket_flex(card):
     observation=outlook_panel["contents"][-1]["text"]
     match=re.match(r"臺指期(上漲|下跌|持平|資料不足)、費半(上漲|下跌|持平|資料不足)、臺幣(貶值|升值|持平|資料不足)。",observation)
     if match:
-        rows=[]
-        for label,state in zip(("臺指期","費城半導體","新臺幣"),match.groups()):
-            color=RED if state in ("上漲","升值") else GREEN if state in ("下跌","貶值") else MUTED
-            rows.append(horizontal([txt(label,"sm",MUTED),txt(state,"sm",color,"bold",align="end")]))
         remainder=observation[match.end():]
         sentences=[x+"。" for x in remainder.split("。") if x]
-        outlook_panel["contents"]=outlook_panel["contents"][:-1]+[{"type":"separator","color":DIVIDER}]+rows+[{"type":"separator","color":DIVIDER},txt("綜合研判","xs",MUTED)]+[txt(x,"sm",MUTED) for x in sentences]
+        outlook_panel["contents"]=outlook_panel["contents"][:-1]+[{"type":"separator","color":DIVIDER},txt("綜合研判","xs",MUTED)]+[txt(x,"sm",MUTED) for x in sentences]
         outlook_panel["spacing"]="md"
     return [first,second]
