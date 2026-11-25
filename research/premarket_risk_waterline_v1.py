@@ -12,7 +12,7 @@ def target_for(above5, above10, above20, above100, above_week20):
                  90 if above100 else 30, 90 if above_week20 else 30)
     # Apply the short-term defensive step after caps, so a cap cannot mask it.
     levels = (20, 30, 50, 70, 80)
-    return capped if above5 else levels[max(0, levels.index(capped)-1)]
+    return capped if above5 and above10 else levels[max(0, levels.index(capped)-1)]
 
 def snapshot(closes, week20, prior_above=None):
     if len(closes) < 100 or week20 is None:
@@ -35,9 +35,9 @@ def snapshot(closes, week20, prior_above=None):
                     if not above[n]},
             "bias":{n:(price/v-1)*100 for n,v in ma.items()}}
 
-def analyze(closes, week20, previous_week20, previous_target=None):
+def analyze(closes, week20, previous_week20, previous_target=None, previous_above=None):
     # Caller supplies each day's own completed-week MA, without lookahead.
-    previous = snapshot(closes[:-1], previous_week20)
+    previous = snapshot(closes[:-1], previous_week20, previous_above)
     current = snapshot(closes, week20, previous['above'] if previous else None)
     if previous_target is not None and previous_target not in (20,30,50,70,80):
         raise ValueError("invalid previous target")
@@ -45,7 +45,7 @@ def analyze(closes, week20, previous_week20, previous_target=None):
         return {"status":"pending","target":previous_target,"action":"待確認"}
     prior = previous["target"] if previous_target is None else previous_target
     events = {n:"突破" if current["above"][n] else "跌破"
-              for n in current["above"] if n not in current["touching"] and n not in previous["touching"]
+              for n in current["above"] if n not in current["touching"] and (n not in previous["touching"] or n in (previous_above or {}))
               and current["above"][n]!=previous["above"][n]}
     delta = current["target"] - prior
     return {**current,"status":"ok","previous_target":prior,"delta":delta,
@@ -86,7 +86,20 @@ def analyze_history(rows, as_of):
         values = [r["close"] for r in completed_week_closes(history, cutoff)]
         return sum(values[-20:])/20 if len(values)>=20 else None
     previous_cutoff = date.fromisoformat(daily[-2]["date"]) + timedelta(days=1)
-    result = analyze([r["close"] for r in daily],
+    closes = [r["close"] for r in daily]
+    prior_above = {}
+    unresolved = set((*PERIODS, "week20"))
+    for i in range(len(daily)-3, 98, -1):
+        cutoff = date.fromisoformat(daily[i]["date"]) + timedelta(days=1)
+        state = snapshot(closes[:i+1], week_ma(daily[:i+1], cutoff))
+        if state is None:
+            break
+        for n in unresolved - set(state["touching"]):
+            prior_above[n] = state["above"][n]
+        unresolved -= prior_above.keys()
+        if not unresolved:
+            break
+    result = analyze(closes,
                      week_ma(daily, as_of),
-                     week_ma(daily[:-1], previous_cutoff))
+                     week_ma(daily[:-1], previous_cutoff), previous_above=prior_above)
     return {**result,"close_date":daily[-1]["date"],"seasonal_bias":seasonal}
