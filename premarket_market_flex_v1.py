@@ -78,8 +78,10 @@ def trend_section(trend):
     elif water:
         result.append(txt("持股水位待確認｜不產生新調整建議","sm",AMBER))
     if water.get("status")=="ok":
-        ma=water.get("ma") or {}
-        for label,keys in (("日均線",(5,10,20,100)),("週均線",("week20",))):
+        ma=dict(water.get("ma") or {})
+        weekly=trend.get("weekly") or {}
+        if weekly.get("ma100") is not None: ma["week100"]=weekly["ma100"]
+        for label,keys in (("日均線",(5,10,20,100)),("週均線",("week20","week100"))):
             values=[f"{str(n).replace('week','')}MA {ma[n]:,.2f}" for n in keys if n in ma]
             if values: result.append(txt(label+"｜"+" / ".join(values),"xs",MUTED))
     seasonal=water.get("seasonal_bias") or {}
