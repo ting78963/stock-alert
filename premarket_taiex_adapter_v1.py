@@ -28,9 +28,17 @@ def load_taiex_trend(as_of=None,path=None):
         regime="偏多" if above[20] and above[100] else "偏空" if not above[20] and not above[100] else "整理"
         trend["price_regime"]=regime
         trend["headline"]={"偏多":"大盤偏多","偏空":"大盤偏空","整理":"大盤多空整理"}[regime]
-        positions="、".join(f"日{n}MA{'站上' if above[n] else '低於'}" for n in (20,100))
-        trend["explanation"]=f"收盤價位置：{positions}；大盤{regime}。均線排列僅供結構參考：日線{trend['daily']['label']}，週線{trend['weekly']['label']}。"
-        trend["explanation"]+=f" 週20MA{'站上' if above['week20'] else '低於'}。"
+        below=[name for n,name in ((20,"日20MA"),(100,"日100MA"),("week20","週20MA")) if not above[n]]
+        trend["explanation"]=("收盤仍低於"+"、".join(below)+"。" if below else "收盤站上日20MA、100MA及週20MA。")
+        if regime=="偏空" and above[5]:
+            trend["explanation"]+="短線回穩，中期空頭結構尚未扭轉。"
+            trend["short_headline"]="短線反彈"
+        elif regime=="偏空":
+            trend["explanation"]+="中期空頭結構尚未扭轉。"
+        elif regime=="偏多":
+            trend["explanation"]+="中期多方結構維持。"
+        else:
+            trend["explanation"]+="多空仍待確認。"
     else:
         trend["price_regime"]=None
         trend["headline"]="大盤價格趨勢待確認"
@@ -131,4 +139,4 @@ def market_outlook(trend, values):
             observation+="盤前偏多仍須觀察能否收復短期均線。"
         elif tx is not None and tx<0 and levels[5]["above"] and levels[10]["above"]:
             observation+="昨日短線仍偏多，今日留意均線支撐。"
-    return title, observation+"\n\n"+str(trend.get("explanation") or "大盤趨勢資料不足。")
+    return title, observation.split("\n")[0]
