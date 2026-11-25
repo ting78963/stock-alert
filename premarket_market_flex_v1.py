@@ -163,3 +163,32 @@ def build_premarket_flex(indicators,observed_at="08:55",observation=None,
                 "type":"box","layout":"vertical","backgroundColor":BG,
                 "borderColor":"#E5E7EB","borderWidth":"1px","cornerRadius":"12px",
                 "paddingAll":"12px","spacing":"md","contents":body}}}
+
+
+def split_premarket_flex(card):
+    """Two independent bubbles from one computed briefing; no additional fetch."""
+    from copy import deepcopy
+    body=card["contents"]["body"]["contents"]
+    def locate(label):
+        return next(i for i,x in enumerate(body) if x.get("text")==label)
+    start=locate("02 · GLOBAL MARKET & FUTURES")
+    end=locate("03 · MARKET OUTLOOK")
+    market_rows=body[start+2]["contents"]
+    market_panels=[]
+    for row in market_rows:
+        for tile in row["contents"]:
+            lines=deepcopy(tile["contents"])
+            top=horizontal([dict(lines[0],flex=4),dict(lines[1],flex=5,align="end")])
+            rest=lines[2:]
+            if len(rest)>=2 and rest[1].get("text","").startswith("前收 "):
+                rest=[horizontal([dict(rest[1],flex=4),dict(rest[0],flex=5,align="end")])]+rest[2:]
+            market_panels.append(dict(tile,contents=[top]+rest))
+    def make(number,title,section):
+        bubble=deepcopy(card)
+        header=horizontal([txt("↗ MORNING BRIEF","xs",RED,"bold",flex=3),txt(number+" / 02","xs",MUTED,align="end",flex=2)])
+        bubble["contents"]["body"]["contents"]=[header,txt(title,"lg",WHITE,"bold"),deepcopy(body[2]),{"type":"separator","margin":"lg","color":DIVIDER}]+deepcopy(section)
+        bubble["altText"]=card["altText"]+" "+number+"/02"
+        return bubble
+    first=make("01","大盤趨勢與持股策略",body[4:start-1]+[txt("Trade Smart | Your Edge","xxs",MUTED,align="end")])
+    second=make("02","全球市場與開盤研判",[body[start+1],{"type":"box","layout":"vertical","spacing":"md","contents":market_panels}]+body[end-1:])
+    return [first,second]
