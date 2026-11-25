@@ -239,10 +239,11 @@ def split_premarket_flex(card):
     for i,item in enumerate(strategy):
         if item.get("text")=="持股水位配置":
             action=strategy.pop(i+3)
-            action["align"]="end"
+            action["align"]="start"
+            action["size"]="xl"
             if action.get("text")=="維持":
                 action["text"]="維持・等待確認"
-            strategy[i]=horizontal([dict(item,flex=5),dict(action,flex=5)])
+            strategy[i]={"type":"box","layout":"vertical","spacing":"sm","contents":[item,action]}
             summary=strategy.pop(i+5)
             next_panel=strategy[i+5]
             next_label,condition,cap=next_panel["contents"]
