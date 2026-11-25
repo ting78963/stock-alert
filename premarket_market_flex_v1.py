@@ -218,7 +218,8 @@ def split_premarket_flex(card):
         headline, explanation=deepcopy(overview["contents"][1:3])
         headline["size"]="xl"
         sentences=[x.strip()+"。" for x in explanation["text"].split("。") if x.strip()]
-        intro={"type":"box","layout":"vertical","spacing":"md","contents":[txt("MARKET TREND · 大盤趨勢","xs",MUTED),headline]+[dict(explanation,text=x) for x in sentences]}
+        intro={"type":"box","layout":"vertical","spacing":"md","contents":[txt("MARKET TREND · 大盤趨勢","xs",MUTED),headline]}
+        analysis_panel={"type":"box","layout":"vertical","backgroundColor":PANEL,"cornerRadius":"8px","paddingAll":"12px","spacing":"md","contents":[txt("大盤綜合研判","xs",MUTED)]+[dict(explanation,text=x) for x in sentences]}
         combined=[]
         for item in trend_parts[1:]:
             if item.get("layout")=="horizontal":
@@ -234,7 +235,7 @@ def split_premarket_flex(card):
                 combined.append(item)
         overview["contents"]=combined
         overview["spacing"]="lg"
-        strategy=[intro,overview,{"type":"separator","margin":"lg","color":DIVIDER},txt("POSITION STRATEGY · 持股策略","xs",MUTED)]+strategy[boundary:]
+        strategy=[intro,overview,analysis_panel,{"type":"separator","margin":"lg","color":DIVIDER},txt("POSITION STRATEGY · 持股策略","xs",MUTED)]+strategy[boundary:]
     for i,item in enumerate(strategy):
         if item.get("text")=="持股水位配置":
             action=strategy.pop(i+3)
