@@ -7,7 +7,7 @@ def target_for(above5, above10, above20, above100, above_week20):
     states = (above5, above10, above20, above100, above_week20)
     if any(type(x) is not bool for x in states):
         raise ValueError("boolean MA states required")
-    raw = max(20, 10 + 20 * sum(states[:4]))
+    raw = max(20, 10 + 20 * sum((above5 and above10, above10, above20, above100)))
     return min(raw, 80, 90 if above20 else 50,
                90 if above100 else 30, 90 if above_week20 else 30)
 
@@ -24,7 +24,7 @@ def snapshot(closes, week20, prior_above=None):
     # At a touch retain the prior side; without a known side use the conservative side.
     above = {n: (prior_above or {}).get(n, False) if n in touching else price > v
              for n,v in ma.items()}
-    raw = max(20, 10 + 20 * sum(above[n] for n in PERIODS))
+    raw = max(20, 10 + 20 * sum((above[5] and above[10], above[10], above[20], above[100])))
     target = target_for(*(above[n] for n in (*PERIODS,"week20")))
     return {"target":target,"raw_target":raw,"above":above,"ma":ma,
             "cash":100-target,"touching":sorted(touching,key=str),
