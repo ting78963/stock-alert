@@ -6,6 +6,13 @@ from premarket_taiex_adapter_v1 import build_taiex_preview
 
 TPE=ZoneInfo("Asia/Taipei")
 
+def texts(node):
+    if "text" in node:
+        yield node["text"]
+    for child in node.get("contents", []):
+        yield from texts(child)
+
+
 class MorningFxPreviewTests(unittest.TestCase):
     def setUp(self):
         self.report_at=datetime(2026,11,23,8,55,tzinfo=TPE)
@@ -36,18 +43,23 @@ class MorningFxPreviewTests(unittest.TestCase):
 
     def test_live_fx_shows_cbc_comparison_and_ma(self):
         panel=self.fx_panel(self.build())
-        strings=[x["text"] for x in panel["contents"]]
+        strings=list(texts(panel))
         self.assertTrue(any("臺幣貶值" in x for x in strings))
         self.assertTrue(any("2026-11-20" in x for x in strings))
-        self.assertTrue(any("MA5" in x and "MA20" in x for x in strings))
+        self.assertIn("5MA ↑",strings)
+        self.assertIn("20MA ↑",strings)
+        self.assertIn("前收 32.936",strings)
         self.assertTrue(any("不同來源" in x for x in strings))
 
     def test_stale_fx_never_displays_change(self):
         quote=dict(self.quote,quoted_at="2026-11-23T08:40:00+08:00")
         panel=self.fx_panel(self.build(quote=quote))
-        strings=[x["text"] for x in panel["contents"]]
+        strings=list(texts(panel))
         self.assertIn("待取得",strings)
         self.assertFalse(any("臺幣貶值" in x for x in strings))
+        self.assertIn("5MA ↑",strings)
+        self.assertIn("20MA ↑",strings)
+        self.assertFalse(any(x.startswith("前收 ") for x in strings))
 
 if __name__=="__main__":
     unittest.main()
