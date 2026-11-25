@@ -182,6 +182,26 @@ def split_premarket_flex(card):
             rest=lines[2:]
             if len(rest)>=2 and rest[1].get("text","").startswith("前收 "):
                 rest=[horizontal([dict(rest[1],flex=4),dict(rest[0],flex=5,align="end")])]+rest[2:]
+            if lines[0]["text"]=="美元／台幣":
+                import re
+                for node in rest:
+                    candidates=node.get("contents",[]) if node.get("layout")=="horizontal" else [node]
+                    for candidate in candidates:
+                        raw=candidate.get("text","")
+                        match=re.search(r"([+-]?[0-9.]+%)\\)?\\s*(?:·\\s*)?([臺台]幣(?:升值|貶值)|持平)",raw)
+                        if match:
+                            candidate["text"]=match.group(2).replace("臺","台")+" "+match.group(1).lstrip("+-")
+                formatted=[]
+                for node in rest:
+                    children=node.get("contents",[])
+                    if node.get("layout")=="horizontal" and len(children)==2 and children[0].get("text","").startswith("5MA "):
+                        formatted.append({"type":"separator","color":DIVIDER})
+                        formatted.append(horizontal([txt("均線方向","xs",MUTED,flex=3),dict(rich([(children[0]["text"],children[0]["color"]),("  "+children[1]["text"],children[1]["color"])],"xs"),align="end",flex=6)]))
+                    elif node.get("text","") in ("美元偏強・台幣偏弱","美元偏弱・台幣偏強","匯率整理"):
+                        formatted.append(horizontal([txt("匯率趨勢","xs",MUTED,flex=3),dict(node,align="end",flex=6)]))
+                    else:
+                        formatted.append(node)
+                rest=formatted
             market_panels.append(dict(tile,contents=[top]+rest))
     def make(number,title,section):
         bubble=deepcopy(card)
@@ -197,7 +217,8 @@ def split_premarket_flex(card):
         overview=trend_parts[0]
         headline, explanation=deepcopy(overview["contents"][1:3])
         headline["size"]="xl"
-        intro={"type":"box","layout":"vertical","spacing":"md","contents":[txt("MARKET TREND · 大盤趨勢","xs",MUTED),headline,explanation]}
+        sentences=[x.strip()+"。" for x in explanation["text"].split("。") if x.strip()]
+        intro={"type":"box","layout":"vertical","spacing":"md","contents":[txt("MARKET TREND · 大盤趨勢","xs",MUTED),headline]+[dict(explanation,text=x) for x in sentences]}
         combined=[]
         for item in trend_parts[1:]:
             if item.get("layout")=="horizontal":
