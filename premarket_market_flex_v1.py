@@ -188,7 +188,7 @@ def split_premarket_flex(card):
                     candidates=node.get("contents",[]) if node.get("layout")=="horizontal" else [node]
                     for candidate in candidates:
                         raw=candidate.get("text","")
-                        match=re.search(r"([+-]?[0-9.]+%)\\)?\\s*(?:·\\s*)?([臺台]幣(?:升值|貶值)|持平)",raw)
+                        match=re.search(r"([+-]?[0-9.]+%)[)]?\s*(?:·\s*)?([臺台]幣(?:升值|貶值)|持平)",raw)
                         if match:
                             candidate["text"]=match.group(2).replace("臺","台")+" "+match.group(1).lstrip("+-")
                 formatted=[]
