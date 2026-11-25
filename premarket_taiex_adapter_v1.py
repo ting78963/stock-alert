@@ -139,4 +139,4 @@ def market_outlook(trend, values):
             observation+="盤前偏多仍須觀察能否收復短期均線。"
         elif tx is not None and tx<0 and levels[5]["above"] and levels[10]["above"]:
             observation+="昨日短線仍偏多，今日留意均線支撐。"
-    return title, observation.split("\n")[0]
+    return title, observation.replace("\n短線攻防：","")
