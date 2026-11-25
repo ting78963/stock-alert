@@ -55,7 +55,7 @@ def build_taiex_preview(as_of=None,path=None,indicators=None,system_status="待�
         for key in ("tx","usdtwd","sox"):
             if key in values:
                 values[key]=validate_quote(key,values[key],report_at)
-    if raw_fx is not None and cbc_fx_rows is not None:
+    if report_at is not None and cbc_fx_rows is not None:
         comparison=compare_live_to_cbc_close(raw_fx,cbc_fx_rows,report_at)
         fx=values.get("usdtwd") or {}
         if comparison["status"]=="ok" and fx.get("status")=="live":
@@ -67,7 +67,7 @@ def build_taiex_preview(as_of=None,path=None,indicators=None,system_status="待�
         fx_trend=fx_trend_snapshot(cbc_fx_rows,report_at.astimezone(TPE).date())
         ma5,ma20=fx_trend["daily_ma5"],fx_trend["daily_ma20"]
         if ma5 is not None and ma20 is not None:
-            fx["timestamp"]=(fx.get("timestamp") or "即時匯率待取得")+f"｜央行日 MA5 {ma5:.3f} / MA20 {ma20:.3f}"
+            fx["trend"]=fx_trend
             values["usdtwd"]=fx
     if "taiex" not in values:
         target=Path(path) if path is not None else STORE
