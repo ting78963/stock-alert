@@ -37,11 +37,15 @@ def parse_tx(payload, report_at, previous_day_close=None):
         if not isfinite(price) or price <= 0:
             return None
         change = None
+        baseline = None
+        baseline_date = None
         if previous_day_close is not None and previous_day_close.get("symbol") == symbol and previous_day_close.get("session") == "day":
             prev = float(previous_day_close["close"])
             if isfinite(prev) and prev > 0 and previous_day_close["date"] < now.date().isoformat():
+                baseline = f"{prev:,.0f}"
+                baseline_date = previous_day_close["date"]
                 change = f"{price-prev:+,.0f} ({(price/prev-1)*100:+.2f}%)"
-        return dict(value=f"{price:,.0f}", change=change, quoted_at=stamp.isoformat(), source="fugle", session="day", symbol=symbol)
+        return dict(value=f"{price:,.0f}", change=change, quoted_at=stamp.isoformat(), source="fugle", session="day", symbol=symbol, previous_close=baseline, previous_close_date=baseline_date)
     except (KeyError, TypeError, ValueError, AttributeError, OverflowError, OSError):
         return None
 
