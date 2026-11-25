@@ -40,6 +40,10 @@ def panel(key,title,subtitle,data):
         cross=fx.get("cross","")
         if cross.startswith("準備") or cross in ("黃金交叉","死亡交叉"):
             lines.append(txt(cross if cross.startswith("準備") else cross+" Day1","xs",AMBER if cross.startswith("準備") else RED if cross=="黃金交叉" else GREEN,"bold"))
+    if key!="usdtwd" and has_value and change:
+        side=1 if str(change).startswith("+") else -1 if str(change).startswith(("-", "−")) else 0
+        label={"sox":("半導體市場偏多","半導體市場偏空"),"tx":("開盤方向偏多","開盤方向偏空"),"taiex":("前日收盤上漲","前日收盤下跌")}[key]
+        lines.append(txt(label[0] if side>0 else label[1] if side<0 else "方向待確認","xxs",RED if side>0 else GREEN if side<0 else MUTED,"bold"))
     lines.append(txt(item.get("timestamp") or subtitle,"xxs",MUTED))
     return {"type":"box","layout":"vertical","backgroundColor":PANEL,"cornerRadius":"12px",
             "paddingAll":"12px","flex":1,"spacing":"sm","contents":lines}
@@ -74,7 +78,7 @@ def trend_section(trend):
             {"type":"box","layout":"vertical","backgroundColor":PANEL,
              "cornerRadius":"12px","paddingAll":"12px","spacing":"sm",
              "contents":[txt("目前市場階段","xs",MUTED),
-                         txt(headline,"lg",trend_color(headline),"bold"),
+                         rich([(headline,trend_color(headline)),("  "+trend["short_headline"],AMBER)] if trend.get("short_headline") else [(headline,trend_color(headline))],"lg"),
                          txt(trend.get("explanation") or "大盤歷史資料待補齊。","sm",MUTED)]}]
     trend_tiles=[]
     for label,key in (("日線","daily"),
@@ -113,9 +117,11 @@ def trend_section(trend):
             horizontal([txt(f"原持股水位 {water['target']-water['delta']}%","xs",MUTED),txt(f"本次調整 {water['delta']:+d}%","xs",MUTED,align="end")]),
             {"type":"box","layout":"horizontal","spacing":"xs","contents":[
                 {"type":"box","layout":"vertical","flex":1,"backgroundColor":PANEL,"cornerRadius":"6px","paddingAll":"5px","contents":[txt(f"{n}MA","xs",MUTED,align="center"),txt("碰觸" if n in water.get("touching",[]) else "站上" if water["above"][n] else "跌破","xs",AMBER if n in water.get("touching",[]) else RED if water["above"][n] else GREEN,align="center")]} for n in (5,10,20,100)]},
-            txt(events,"xs",MUTED),
-            txt("中長期風險上限 "+str(min(water["caps"].values(),default=80))+"%","sm",WHITE,"bold"),
-            txt("增碼確認：須同時站上5MA及10MA" if not (water["above"][5] and water["above"][10]) else "短線雙門檻已確認","xs",AMBER,"bold")])
+            txt(("目前僅站上5MA，短線尚未確認。" if water["above"][5] and not water["above"][10] and not water["above"][20] and not water["above"][100] else events)+f" 持股{water['action']}{water['target']}%。","xs",MUTED),
+            {"type":"box","layout":"vertical","backgroundColor":PANEL,"cornerRadius":"8px","paddingAll":"8px","spacing":"xs","contents":[
+                txt("下一步觀察","xxs",MUTED),
+                txt("收復10MA、守穩5MA" if water["above"][5] and not water["above"][10] else "須同時站上5MA及10MA" if not (water["above"][5] and water["above"][10]) else "守穩5MA及10MA","sm",AMBER,"bold"),
+                txt("中長期風險上限 "+str(min(water["caps"].values(),default=80))+"%","sm",WHITE,"bold")]}])
     elif water:
         result.append(txt("持股水位待確認｜不產生新調整建議","sm",AMBER))
     return result
