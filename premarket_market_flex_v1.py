@@ -189,6 +189,38 @@ def split_premarket_flex(card):
         bubble["contents"]["body"]["contents"]=[header,txt(title,"lg",WHITE,"bold"),deepcopy(body[2]),{"type":"separator","margin":"lg","color":DIVIDER}]+deepcopy(section)
         bubble["altText"]=card["altText"]+" "+number+"/02"
         return bubble
-    first=make("01","大盤趨勢與持股策略",body[4:start-1]+[txt("Trade Smart | Your Edge","xxs",MUTED,align="end")])
+    strategy=deepcopy(body[4:start-1])
+    allocation=next((i for i,x in enumerate(strategy) if x.get("text")=="持股水位配置"),None)
+    boundary=allocation if allocation is not None else next((i for i,x in enumerate(strategy) if x.get("text","").startswith("持股水位待確認")),len(strategy))
+    trend_parts=strategy[2:boundary]
+    if trend_parts:
+        overview=trend_parts[0]
+        combined=deepcopy(overview["contents"][1:])
+        for item in trend_parts[1:]:
+            if item.get("layout")=="horizontal":
+                for tile in item["contents"]:
+                    tile.pop("backgroundColor",None)
+                    tile["paddingAll"]="0px"
+                combined.append({"type":"separator","color":DIVIDER})
+            elif item.get("text","").startswith("季線乖離率"):
+                combined.append({"type":"separator","color":DIVIDER})
+            combined.append(item)
+        overview["contents"]=combined
+        overview["spacing"]="md"
+        strategy=[overview]+strategy[boundary:]
+    for i,item in enumerate(strategy):
+        if item.get("text")=="持股水位配置":
+            action=strategy.pop(i+3)
+            action["align"]="end"
+            if action.get("text")=="維持":
+                action["text"]="維持・等待確認"
+            strategy[i]=horizontal([dict(item,flex=5),dict(action,flex=5)])
+            break
+    first=make("01","大盤趨勢與持股策略",strategy+[txt("Trade Smart | Your Edge","xxs",MUTED,align="end")])
     second=make("02","全球市場與開盤研判",[body[start+1],{"type":"box","layout":"vertical","spacing":"md","contents":market_panels}]+body[end-1:])
+    outlook_panel=second["contents"]["body"]["contents"][-2]
+    heading=outlook_panel["contents"][0]
+    if heading.get("contents"):
+        outlook_panel["contents"]=[txt(span["text"].rstrip("："),"lg",span["color"],"bold") for span in heading["contents"]]+outlook_panel["contents"][1:]
+        outlook_panel["spacing"]="sm"
     return [first,second]
