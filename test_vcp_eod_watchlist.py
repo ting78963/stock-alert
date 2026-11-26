@@ -10,6 +10,9 @@ class EodTest(unittest.TestCase):
         cls.selector=VcpScanOnceRuntime(lambda:datetime(2026,11,26,17,tzinfo=ZoneInfo("Asia/Taipei"))).engine.selector
     def bars(self, tail=100, volume=100, previous=100):
         prices=[100]+[90,110]*10+[96,104]*10+[99.8,100.2]*9+[previous,tail]
+        # The first prior-20 bar belongs to the preceding contraction segment.
+        # Keep it below the intended breakout threshold, not at 104.
+        prices[-21]=100.2
         return [((datetime(2026,11,26)-timedelta(days=len(prices)-1-i)).date().isoformat(),p,volume if i==len(prices)-1 else 100) for i,p in enumerate(prices)]
     def test_near(self):
         r=classify(self.selector,"2330",self.bars())
