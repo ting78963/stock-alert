@@ -470,6 +470,8 @@ def maybe_cleanup_after_maintenance(day, stage_done, notified_at):
     now=now_tpe()
     if now.date().isoformat()!=day or not (15 <= now.hour < 23):
         return
+    if (Path("/var/data/stock-alert")/"daily_unknown_cleanup"/f"{day}.json").exists():
+        return
     import f15_trajectory_store
     if not f15_trajectory_store.report_and_trajectory_complete(day):
         return
@@ -511,6 +513,8 @@ def maybe_restart_after_maintenance(day, stage_done, notified_at):
     if not ready:
         return
     # All stages, F15, UNKNOWN cleanup and archive lock must also be complete.
+    if (Path("/var/data/stock-alert")/"daily_restart"/f"{day}.json").exists():
+        return
     import f15_trajectory_store
     if not f15_trajectory_store.report_and_trajectory_complete(day):
         return

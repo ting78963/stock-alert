@@ -67,7 +67,7 @@ def build_day(day):
   manifest.append(p.name)
  atomic(OUT/day/"manifest.json",{"schema":SCHEMA,"date":day,"files":sorted(manifest),"count":len(manifest),"updated_at_taipei":datetime.now(TPE).isoformat(timespec="seconds")})
  print(f"[F15 TRAJECTORY] {day} signals={len(events)} written={written} skipped={skipped}",flush=True);return {"day":day,"status":"ok","written":written,"skipped":skipped}
-def report_and_trajectory_complete(day):
+def report_and_trajectory_complete(day, *, historical_zero=False):
  # The LINE report is the day's published signal snapshot.
  _,registry=f15.reg()
  sent=registry["dates"].get(day)
@@ -81,7 +81,8 @@ def report_and_trajectory_complete(day):
   if not isinstance(verified,str):return False
   try:
    stamp=datetime.fromisoformat(verified)
-   if stamp.date().isoformat()!=day or (stamp.hour,stamp.minute)<(15,30):return False
+   if stamp.date().isoformat()!=day or (stamp.hour,stamp.minute)<(15,30):
+    if not (historical_zero and day < stamp.date().isoformat() <= datetime.now(TPE).date().isoformat()):return False
   except (TypeError,ValueError):return False
   return len(f15.load_events(day))==0 and not f15.has_unsent_signal_events(day)
  events=f15.load_events(day)
@@ -110,10 +111,13 @@ def loop():
     if day in completed:
      continue
     try:
+     if report_and_trajectory_complete(day) or (day < now.date().isoformat() and report_and_trajectory_complete(day, historical_zero=True)):
+      completed.add(day)
+      continue
      result=build_day(day)
      # Today's events can arrive late; freeze today's archive only after
      # the ordinary post-close maintenance window.
-     if result["status"]=="ok" and report_and_trajectory_complete(day):
+     if result["status"] in ("ok","no_events") and report_and_trajectory_complete(day):
       completed.add(day)
     except BaseException as ex:print(f"[F15 TRAJECTORY FAIL] {day} {type(ex).__name__}: {ex}",flush=True)
   time.sleep(900)
