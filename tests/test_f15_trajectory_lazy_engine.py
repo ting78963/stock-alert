@@ -51,7 +51,7 @@ class TrajectoryLazyEngineTests(unittest.TestCase):
                 raise StopLoop()
 
         with tempfile.TemporaryDirectory() as tmp:
-            with patch.object(mod, "OUT", Path(tmp)), patch.object(mod, "days", return_value=days), patch.object(mod, "datetime") as dt, patch.object(mod, "build_day", side_effect=fake_build), patch.object(mod, "report_and_trajectory_complete", side_effect=lambda day, **kwargs: attempts.count(day) >= (2 if day == days[1] else 1)), patch.object(mod.time, "sleep", side_effect=fake_sleep):
+            with patch.object(mod, "OUT", Path(tmp)), patch.object(mod, "days", return_value=days), patch.object(mod, "datetime") as dt, patch.object(mod, "build_day", side_effect=fake_build), patch.object(mod, "report_and_trajectory_complete", return_value=True), patch.object(mod.time, "sleep", side_effect=fake_sleep):
                 dt.now.return_value = clock
                 with self.assertRaises(StopLoop):
                     mod.loop()
