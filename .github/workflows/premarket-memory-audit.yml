@@ -1,0 +1,42 @@
+name: Premarket memory audit
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements.txt
+      - name: Compare worker baseline and incremental briefing imports
+        run: |
+          python - <<'PY'
+          import sys, subprocess
+          code = """
+          import sys
+          def rss():
+              with open('/proc/self/status') as f:
+                  return int(next(x for x in f if x.startswith('VmRSS:')).split()[1])/1024
+          def measure(label):
+              print(label, 'RSS_MIB', round(rss(),3), 'MODULES',len(sys.modules),flush=True)
+          measure('PYTHON')
+          import production_worker_v1
+          measure('WORKER_IMPORT')
+          before=set(sys.modules)
+          from research.premarket_sox_delivery_v1 import deliver_premarket_once
+          measure('DELIVERY')
+          from research.premarket_sox_sender_v1 import send_premarket_flex
+          measure('SENDER')
+          from research.premarket_market_brief_v1 import build_market_brief
+          measure('BRIEF')
+          from twse_session_gate_v1 import is_scheduled_open
+          measure('SESSION_GATE')
+          print('NEW_MODULES', sorted(set(sys.modules)-before))
+          """
+          for i in range(3):
+              subprocess.run([sys.executable,'-c',code],check=True)
+          PY
