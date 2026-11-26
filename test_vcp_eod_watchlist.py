@@ -8,26 +8,26 @@ class EodTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.selector=VcpScanOnceRuntime(lambda:datetime(2026,11,26,17,tzinfo=ZoneInfo("Asia/Taipei"))).engine.selector
-    def bars(self, tail=100, volume=100, previous=100):
+    def bars(self, tail=100, volume=600, previous=100):
         prices=[100]+[90,110]*10+[96,104]*10+[99.8,100.2]*9+[previous,tail]
         # The first prior-20 bar belongs to the preceding contraction segment.
         # Keep it below the intended breakout threshold, not at 104.
         prices[-21]=100.2
-        return [((datetime(2026,11,26)-timedelta(days=len(prices)-1-i)).date().isoformat(),p,volume if i==len(prices)-1 else 100) for i,p in enumerate(prices)]
+        return [((datetime(2026,11,26)-timedelta(days=len(prices)-1-i)).date().isoformat(),p,volume if i==len(prices)-1 else 600) for i,p in enumerate(prices)]
     def test_near(self):
         r=classify(self.selector,"2330",self.bars())
         self.assertEqual(r["category"],"near")
         self.assertAlmostEqual(r["threshold"],100.2*1.003)
     def test_first(self):
-        r=classify(self.selector,"2330",self.bars(101,150))
+        r=classify(self.selector,"2330",self.bars(101,900))
         self.assertEqual(r["category"],"first_breakout")
     def test_second(self):
-        self.assertIsNone(classify(self.selector,"2330",self.bars(102,150,101)))
+        self.assertIsNone(classify(self.selector,"2330",self.bars(102,900,101)))
     def test_prior_active_breakout_not_new(self):
         from unittest.mock import Mock
         selector=Mock()
         selector.track={}
-        bars=self.bars(101,150)
+        bars=self.bars(101,900)
         def analyze(closes,vols,symbol,dates):
             selector.track[symbol]={"pivot":100.2,"breakoutDate":dates[-1]}
             return {"pivot":100.2,"justBroke":True,"contracting":True,"breakDays":1}
@@ -63,6 +63,34 @@ class EodTest(unittest.TestCase):
             self.assertEqual(len(messages),2)
             self.assertTrue(all(m["contents"]["type"]=="bubble" for m in messages))
 
+    def test_liquidity_boundary(self):
+        for prior,expected in ((532,False),(533.4,True)):
+            bars=[(d,p,prior if i<60 else 100) for i,(d,p,v) in enumerate(self.bars())]
+            self.assertEqual(classify(self.selector,"2330",bars) is not None,expected)
+        for volume,expected in ((799,False),(800,True)):
+            bars=[(d,p,500 if i<60 else volume) for i,(d,p,v) in enumerate(self.bars(101,volume))]
+            self.assertEqual(classify(self.selector,"2330",bars) is not None,expected)
+
+    def test_page_counts_and_batches(self):
+        import json, os
+        from tempfile import TemporaryDirectory
+        from pathlib import Path
+        from unittest.mock import patch
+        from vcp_eod_watchlist_v1 import send_once
+        row=classify(self.selector,"2330",self.bars())
+        row["name"]="test"
+        for count,pages in ((20,4),(30,5),(50,9),(100,17)):
+            result=dict(day="2026-11-26",near=[dict(row,symbol=str(1000+i)) for i in range(count)],first_breakout=[],evaluated=count,missing_metadata=0,missing_history=0)
+            with TemporaryDirectory() as d, patch.dict(os.environ,{"LINE_CHANNEL_ACCESS_TOKEN":"test","LINE_TO_ID":"test"}), patch("urllib.request.urlopen") as push:
+                push.return_value.__enter__.return_value.status=200
+                self.assertTrue(send_once(result,Path(d)/"sent.json"))
+                batches=[json.loads(call.args[0].data)["messages"] for call in push.call_args_list]
+                self.assertEqual(sum(map(len,batches)),pages)
+                self.assertTrue(all(1<=len(b)<=5 for b in batches))
+                raw=json.dumps(batches,ensure_ascii=False)
+                for i in range(count):
+                    self.assertEqual(raw.count(str(1000+i)+" test"),1)
+
     def test_short(self):
         self.assertIsNone(classify(self.selector,"2330",self.bars()[-30:]))
     def test_reference_and_white_flex(self):
@@ -81,7 +109,7 @@ class EodTest(unittest.TestCase):
             self.assertIn(s,raw)
         result["near"]=[dict(row,symbol=str(1000+i)) for i in range(1500)]
         flex=build_flex(result)
-        self.assertEqual(len(flex),251)
+        self.assertEqual(len(flex),250)
         self.assertTrue(all(m["contents"]["type"]=="bubble" for m in flex))
         self.assertTrue(all(len(json.dumps(m["contents"],ensure_ascii=False,separators=(",",":")).encode())<=29000 for m in flex))
         self.assertNotIn("未列出",json.dumps(flex,ensure_ascii=False))
