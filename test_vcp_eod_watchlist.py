@@ -31,6 +31,23 @@ class EodTest(unittest.TestCase):
     def test_flex(self):
         result=dict(day="2026-11-26",near=[],first_breakout=[],evaluated=1,missing_metadata=0,missing_history=0)
         self.assertEqual(build_flex(result)["type"],"flex")
+    def test_zero_matches_is_success(self):
+        import json, os
+        from tempfile import TemporaryDirectory
+        from pathlib import Path
+        from unittest.mock import patch, MagicMock
+        from vcp_eod_watchlist_v1 import send_once
+        result=dict(day="2026-11-26",near=[],first_breakout=[],evaluated=1447,missing_metadata=0,missing_history=0)
+        flex=build_flex(result)
+        self.assertEqual(json.dumps(flex,ensure_ascii=False).count("無符合股票"),2)
+        with TemporaryDirectory() as d, patch.dict(os.environ,{"LINE_CHANNEL_ACCESS_TOKEN":"test","LINE_TO_ID":"test"}), patch("urllib.request.urlopen") as push:
+            push.return_value.__enter__.return_value.status=200
+            marker=Path(d)/"sent.json"
+            self.assertTrue(send_once(result,marker))
+            self.assertTrue(marker.exists())
+            self.assertFalse(send_once(result,marker))
+            push.assert_called_once()
+
     def test_market_scale(self):
         import time,tracemalloc
         bars=self.bars()
