@@ -85,3 +85,54 @@ def scan_database(day, db_path, f10_path, metadata_path, selector):
     result["near"].sort(key=lambda r: (abs(r["distance_pct"]),r["symbol"]))
     result["first_breakout"].sort(key=lambda r: (-r["volume_ratio"],r["symbol"]))
     return result
+
+
+def build_flex(result):
+    """Bounded single-message report; show explicit overflow and coverage."""
+    def t(value, color="#FFFFFF", size="sm"):
+        return {"type":"text","text":str(value),"color":color,"size":size,"wrap":True}
+    body=[t("VCP｜每日盤後觀察"," #FFFFFF".strip(),"lg"),
+          t(result["day"],"#AAAAAA"),
+          t(f"有效辨識 {result['evaluated']} 檔｜缺股票資料 {result['missing_metadata']}｜缺日K {result['missing_history']}","#AAAAAA","xs")]
+    for key,title,color in (("near","即將突破","#FACC15"),("first_breakout","今日首次突破","#FF5555")):
+        rows=result[key]
+        body.extend([{"type":"separator","color":"#555555","margin":"md"},t(f"{title}｜{len(rows)} 檔",color,"md")])
+        for row in rows[:15]:
+            distance=row["distance_pct"]
+            detail=(f"距門檻 {distance:.2f}%" if distance>=0 else "價格已越門檻，量能未確認") if key=="near" else f"量能 {row['volume_ratio']:.2f} 倍"
+            body.append({"type":"box","layout":"vertical","margin":"sm","contents":[
+                t(f"{row['symbol']} {row['name']}",color),
+                t(f"收盤 {row['close']:.2f}｜門檻 {row['threshold']:.3f}","#DDDDDD","xs"),
+                t(detail,"#AAAAAA","xs")]})
+        if not rows: body.append(t("無符合股票","#AAAAAA"))
+        if len(rows)>15: body.append(t(f"另有 {len(rows)-15} 檔未列出","#AAAAAA","xs"))
+    return {"type":"flex","altText":f"{result['day']} VCP 盤後觀察｜即將突破 {len(result['near'])}｜首次突破 {len(result['first_breakout'])}",
+            "contents":{"type":"bubble","size":"giga","body":{"type":"box","layout":"vertical","backgroundColor":"#080808","spacing":"sm","contents":body}}}
+
+
+def send_once(result, marker):
+    import json, os, uuid, urllib.request, urllib.error
+    from pathlib import Path
+    marker=Path(marker)
+    if marker.exists():
+        return False
+    token=(os.getenv("LINE_CHANNEL_ACCESS_TOKEN") or os.getenv("LINE_TOKEN") or "").strip()
+    to=os.getenv("LINE_TO_ID","").strip()
+    if not token or not to:
+        raise RuntimeError("Recognition LINE credentials missing")
+    retry=str(uuid.uuid5(uuid.NAMESPACE_URL,"vcp-eod-watchlist:"+result["day"]))
+    payload=json.dumps({"to":to,"messages":[build_flex(result)]},ensure_ascii=False).encode()
+    req=urllib.request.Request("https://api.line.me/v2/bot/message/push",data=payload,method="POST",
+        headers={"Authorization":"Bearer "+token,"Content-Type":"application/json","X-Line-Retry-Key":retry})
+    try:
+        with urllib.request.urlopen(req,timeout=15) as response:
+            if response.status!=200:
+                raise RuntimeError("LINE push failed")
+    except urllib.error.HTTPError as exc:
+        if exc.code!=409 or not exc.headers.get("x-line-accepted-request-id"):
+            raise
+    marker.parent.mkdir(parents=True,exist_ok=True)
+    tmp=marker.with_suffix(".tmp")
+    tmp.write_text(json.dumps({"day":result["day"],"sent":True}),encoding="utf-8")
+    tmp.replace(marker)
+    return True
