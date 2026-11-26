@@ -39,6 +39,9 @@ def classify(selector, symbol, bars):
     if confirmed and state.get("breakDays") == 1 and track.get("breakoutDate") == dates[-1]:
         category = "first_breakout"
     elif state.get("status") == "final_contraction" and not confirmed:
+        pivot_ref = float((state.get("breakoutTrack") or {}).get("pivot") or pivot or max(closes[-20:]))
+        if not (pivot_ref > 0 and pivot_ref * 0.975 <= closes[-1] < pivot_ref):
+            return None
         category = "near"
         pivot = max(closes[-20:])
         threshold = pivot * 1.003
@@ -108,7 +111,7 @@ def scan_database(day, db_path, f10_path, metadata_path, selector):
 
 
 def build_flex(result):
-    """White V4 brief, paginated within LINE carousel limits."""
+    """White V4 brief as independent vertical messages."""
     import json
     def t(value, color="#202124", size="sm", align="start"):
         return {"type":"text","text":str(value),"color":color,"size":size,"weight":"bold","wrap":True,"align":align}
@@ -128,7 +131,7 @@ def build_flex(result):
         for row in rows:
             entries.append((key,title,color,row))
     pages=[entries[i:i+6] for i in range(0,len(entries),6)]
-    # LINE permits at most 12 bubbles and 50 KB per carousel.
+    # Each page is an independent LINE bubble.
     def bubble(page, index, total, omitted=0):
         body=[pair(t("↗ EVENING BRIEF","#A51C35"),t(f"{index:02d} / {total:02d}","#60646C","xs","end")),
               t("VCP 盤後簡報",size="xl"),t(result["day"]+"｜辨識完成","#60646C","xs")]
@@ -156,15 +159,13 @@ def build_flex(result):
                      t(f"有效辨識 {result['evaluated']}｜缺資料 {result['missing_metadata']+result['missing_history']}","#60646C","xs"),
                      t("Trade Smart | Your Edge","#60646C","xs","end")])
         return {"type":"bubble","size":"giga","body":box(body,backgroundColor="#FFFFFF",spacing="sm")}
-    shown=pages[:12]
-    while True:
-        omitted=sum(e[3] is not None for p in pages[len(shown):] for e in p)
-        bubbles=[bubble(p,i+1,len(shown),omitted if i==len(shown)-1 else 0) for i,p in enumerate(shown)]
-        contents=bubbles[0] if len(bubbles)==1 else {"type":"carousel","contents":bubbles}
-        if len(json.dumps(contents,ensure_ascii=False,separators=(",",":")).encode())<=49000 or len(shown)==1:
-            break
-        shown.pop()
-    return {"type":"flex","altText":f"{result['day']} VCP 盤後簡報｜即將突破 {len(result['near'])}｜首次突破 {len(result['first_breakout'])}","contents":contents}
+    messages=[]
+    for i,page in enumerate(pages):
+        contents=bubble(page,i+1,len(pages))
+        if len(json.dumps(contents,ensure_ascii=False,separators=(",",":")).encode())>29000:
+            raise ValueError("LINE bubble exceeds safe size")
+        messages.append({"type":"flex","altText":f"{result['day']} VCP 盤後簡報 {i+1}/{len(pages)}","contents":contents})
+    return messages
 
 
 def send_once(result, marker):
@@ -177,17 +178,19 @@ def send_once(result, marker):
     to=os.getenv("LINE_TO_ID","").strip()
     if not token or not to:
         raise RuntimeError("Recognition LINE credentials missing")
-    retry=str(uuid.uuid5(uuid.NAMESPACE_URL,"vcp-eod-watchlist:"+result["day"]))
-    payload=json.dumps({"to":to,"messages":[build_flex(result)]},ensure_ascii=False).encode()
-    req=urllib.request.Request("https://api.line.me/v2/bot/message/push",data=payload,method="POST",
-        headers={"Authorization":"Bearer "+token,"Content-Type":"application/json","X-Line-Retry-Key":retry})
-    try:
-        with urllib.request.urlopen(req,timeout=15) as response:
-            if response.status!=200:
-                raise RuntimeError("LINE push failed")
-    except urllib.error.HTTPError as exc:
-        if exc.code!=409 or not exc.headers.get("x-line-accepted-request-id"):
-            raise
+    messages=build_flex(result)
+    for offset in range(0,len(messages),5):
+        retry=str(uuid.uuid5(uuid.NAMESPACE_URL,"vcp-eod-watchlist:"+result["day"]+":"+str(offset//5)))
+        payload=json.dumps({"to":to,"messages":messages[offset:offset+5]},ensure_ascii=False).encode()
+        req=urllib.request.Request("https://api.line.me/v2/bot/message/push",data=payload,method="POST",
+            headers={"Authorization":"Bearer "+token,"Content-Type":"application/json","X-Line-Retry-Key":retry})
+        try:
+            with urllib.request.urlopen(req,timeout=15) as response:
+                if response.status!=200:
+                    raise RuntimeError("LINE push failed")
+        except urllib.error.HTTPError as exc:
+            if exc.code!=409 or not exc.headers.get("x-line-accepted-request-id"):
+                raise
     marker.parent.mkdir(parents=True,exist_ok=True)
     tmp=marker.with_suffix(".tmp")
     tmp.write_text(json.dumps({"day":result["day"],"sent":True}),encoding="utf-8")
