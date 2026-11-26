@@ -39,6 +39,27 @@ class EodTest(unittest.TestCase):
         self.assertEqual(r["category"],"near")
     def test_short(self):
         self.assertIsNone(classify(self.selector,"2330",self.bars()[-30:]))
+    def test_reference_and_white_flex(self):
+        import json
+        bars=self.bars()
+        bars=[(d,p,29055.5 if i<len(bars)-1 else 100) for i,(d,p,v) in enumerate(bars)]
+        row=classify(self.selector,"2330",bars)
+        self.assertEqual((row["volume_10"],row["volume_12"],row["volume_full"]),(7845,23971,43583))
+        self.assertAlmostEqual(row["reference_price"],100.2*1.005)
+        row["name"]="測試股票"
+        result=dict(day="2026-11-26",near=[row],first_breakout=[],evaluated=1,missing_metadata=0,missing_history=0)
+        flex=build_flex(result)
+        self.assertEqual(flex["contents"]["body"]["backgroundColor"],"#FFFFFF")
+        raw=json.dumps(flex,ensure_ascii=False)
+        for s in ("7,845","23,971","43,583","10:00 前","12:00 前","bold"):
+            self.assertIn(s,raw)
+        result["near"]=[dict(row,symbol=str(1000+i)) for i in range(1500)]
+        flex=build_flex(result)
+        self.assertEqual(flex["contents"]["type"],"carousel")
+        self.assertLessEqual(len(flex["contents"]["contents"]),12)
+        self.assertLessEqual(len(json.dumps(flex["contents"],ensure_ascii=False,separators=(",",":")).encode()),49000)
+        self.assertIn("未列出",json.dumps(flex,ensure_ascii=False))
+
     def test_flex(self):
         result=dict(day="2026-11-26",near=[],first_breakout=[],evaluated=1,missing_metadata=0,missing_history=0)
         self.assertEqual(build_flex(result)["type"],"flex")
