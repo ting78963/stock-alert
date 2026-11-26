@@ -21,8 +21,21 @@ def classify(selector, symbol, bars):
     if not math.isfinite(pivot) or pivot <= 0:
         return None
     threshold = pivot * 1.003
+    price_above_threshold = closes[-1] > threshold
     confirmed = bool(state.get("justBroke") and state.get("contracting"))
     track = selector.track.get(symbol, {})
+    # A fresh isolated track cannot prove that today is a new event.
+    # Replay prior sessions only for a candidate first-day breakout.
+    if confirmed and state.get("breakDays") == 1:
+        selector.track.clear()
+        for end in range(max(30,len(closes)-10),len(closes)):
+            selector.analyze_vcp(closes[:end],vols[:end],symbol,dates[:end])
+        prior = selector.track.get(symbol, {})
+        if prior and closes[-1] >= float(prior.get("pivot") or 0)*0.997:
+            return None
+        selector.track.clear()
+        state = selector.analyze_vcp(closes,vols,symbol,dates)
+        track = selector.track.get(symbol,{})
     if confirmed and state.get("breakDays") == 1 and track.get("breakoutDate") == dates[-1]:
         category = "first_breakout"
     elif state.get("status") == "final_contraction" and not confirmed:
@@ -34,7 +47,7 @@ def classify(selector, symbol, bars):
     return {"symbol": symbol, "day": dates[-1], "category": category,
             "close": closes[-1], "pivot": pivot, "threshold": threshold,
             "distance_pct": (threshold / closes[-1] - 1) * 100,
-            "price_above_threshold": closes[-1] > threshold,
+            "price_above_threshold": price_above_threshold,
             "volume_ratio": vols[-1] / (sum(v for v in vols[-6:-1] if v > 0) /
                                         sum(v > 0 for v in vols[-6:-1]))}
 
@@ -101,7 +114,7 @@ def build_flex(result):
         body.extend([{"type":"separator","color":"#555555","margin":"md"},t(f"{title}｜{len(rows)} 檔",color,"md")])
         for row in rows[:15]:
             distance=row["distance_pct"]
-            detail=(f"距明日門檻 {distance:.2f}%" if distance>=0 else "價格已越門檻，量能未確認") if key=="near" else f"量能 {row['volume_ratio']:.2f} 倍"
+            detail=(f"距明日門檻 {distance:.2f}%" if not row["price_above_threshold"] else f"今日價格已突破，量能未確認｜距明日門檻 {distance:.2f}%") if key=="near" else f"量能 {row['volume_ratio']:.2f} 倍"
             body.append({"type":"box","layout":"vertical","margin":"sm","contents":[
                 t(f"{row['symbol']} {row['name']}",color),
                 t(f"收盤 {row['close']:.2f}｜門檻 {row['threshold']:.3f}","#DDDDDD","xs"),
