@@ -136,3 +136,31 @@ def send_once(result, marker):
     tmp.write_text(json.dumps({"day":result["day"],"sent":True}),encoding="utf-8")
     tmp.replace(marker)
     return True
+
+
+def main():
+    import argparse, os
+    from pathlib import Path
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    p=argparse.ArgumentParser()
+    p.add_argument("--day",required=True)
+    p.add_argument("--send",action="store_true")
+    args=p.parse_args()
+    now=datetime.now(ZoneInfo("Asia/Taipei"))
+    if args.day!=now.date().isoformat() or (now.hour,now.minute)<(15,30):
+        raise SystemExit("EOD current-day gate")
+    root=Path("/var/data/stock-alert")
+    marker=root/"vcp_eod_sent"/f"{args.day}.json"
+    if args.send and marker.exists():
+        return
+    from vcp_scan_once_adapter import VcpScanOnceRuntime
+    runtime=VcpScanOnceRuntime(lambda:now)
+    result=scan_database(args.day,Path(os.getenv("A_SHARED_DAILY_DB",str(root/"shared_history_stage_v1.sqlite3"))),
+                         root/"f10_baseline_v1.sqlite3",root/"a_f11_metadata_v1.json",runtime.engine.selector)
+    print(f"[VCP EOD] day={args.day} evaluated={result['evaluated']} near={len(result['near'])} first={len(result['first_breakout'])} missing_meta={result['missing_metadata']} missing_history={result['missing_history']}",flush=True)
+    if args.send:
+        send_once(result,marker)
+
+if __name__=="__main__":
+    main()
