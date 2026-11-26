@@ -48,6 +48,43 @@ class EodTest(unittest.TestCase):
             self.assertFalse(send_once(result,marker))
             push.assert_called_once()
 
+    def test_database_market_scale(self):
+        import json, sqlite3, time, tracemalloc, resource
+        from tempfile import TemporaryDirectory
+        from pathlib import Path
+        from unittest.mock import patch
+        from vcp_eod_watchlist_v1 import scan_database
+        with TemporaryDirectory() as d:
+            root=Path(d)
+            daily=root/"daily.sqlite3"
+            f10=root/"f10.sqlite3"
+            metadata=root/"metadata.json"
+            symbols=[str(1000+i) for i in range(1500)]
+            bars=self.bars()
+            with sqlite3.connect(daily) as db:
+                db.execute("CREATE TABLE daily_ohlcv(symbol TEXT,day TEXT,close REAL,volume_zhang REAL,PRIMARY KEY(symbol,day))")
+                db.execute("CREATE TABLE fetch_status(symbol TEXT PRIMARY KEY,covered_through TEXT)")
+                db.executemany("INSERT INTO daily_ohlcv VALUES(?,?,?,?)",((s,*b) for s in symbols for b in bars))
+                db.executemany("INSERT INTO fetch_status VALUES(?,?)",((s,"2026-11-26") for s in symbols))
+            with sqlite3.connect(f10) as db:
+                db.execute("CREATE TABLE member(symbol TEXT PRIMARY KEY)")
+                db.executemany("INSERT INTO member VALUES(?)",((s,) for s in symbols))
+            metadata.write_text(json.dumps({"symbols":{s:{"symbol":s,"name":s} for s in symbols}}))
+            tracemalloc.start()
+            started=time.monotonic()
+            try:
+                with patch.object(self.selector,"basic_code_ok",return_value=True), patch.object(self.selector,"meta_ok",return_value=True):
+                    result=scan_database("2026-11-26",daily,f10,metadata,self.selector)
+                _,peak=tracemalloc.get_traced_memory()
+            finally:
+                tracemalloc.stop()
+            elapsed=time.monotonic()-started
+            print(f"EOD SQLite 1500: {elapsed:.2f}s, Python peak {peak/1048576:.2f} MiB, test process peak RSS {resource.getrusage(resource.RUSAGE_SELF).ru_maxrss/1024:.2f} MiB")
+            self.assertEqual(result["evaluated"],1500)
+            self.assertEqual(len(result["near"]),1500)
+            self.assertLess(peak,30*1048576)
+            self.assertLess(elapsed,120)
+
     def test_market_scale(self):
         import time,tracemalloc
         bars=self.bars()
