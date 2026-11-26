@@ -1871,6 +1871,13 @@ class Scanner:
     def handoff_hit(self, hit: Dict[str, Any], snap_date: str) -> bool:
         symbol = hit["code"]
         if hit.get("source") == "VCP":
+            # Final output gate; never consume handoff eligibility below 800 lots.
+            try:
+                volume = float((hit.get("vcp") or {}).get("volume_zhang"))
+            except (TypeError, ValueError):
+                return False
+            if not 800 <= volume < float("inf"):
+                return False
             if symbol in self.state.setdefault("vcp_handed", {}).get(snap_date, {}):
                 return False
         elif self.already_sent(snap_date, symbol):
@@ -2141,9 +2148,6 @@ class Scanner:
                     (row.get("name") for row in snaps if str(row.get("stock_id") or "") == symbol), symbol
                 ))
                 row = next((x for x in snaps if str(x.get("stock_id") or "") == symbol), {})
-                # Output-only liquidity gate: preserve evaluation and pending proposals.
-                if float(row.get("total_volume") or 0) < 800:
-                    continue
                 watch = decision.get("watch") or {}
                 track = decision.get("pivot_track") or {}
                 pivot = (decision.get("state") or {}).get("pivot")
