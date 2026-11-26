@@ -50,6 +50,8 @@ def classify(selector, symbol, bars):
     reference_price = max(closes[-20:]) * 1.005
     prior20 = [v for v in vols[-21:-1] if v > 0]
     full = math.floor(sum(prior20) / len(prior20) * 1.5 + 0.5)
+    if (full if category == "near" else vols[-1]) < 800:
+        return None
     return {"reference_price": reference_price, "reference_distance": (reference_price / closes[-1] - 1) * 100,
             "volume_10": math.floor(full * 0.18 + 0.5), "volume_12": math.floor(full * 0.55 + 0.5),
             "volume_full": full, "volume_today": vols[-1], "symbol": symbol, "day": dates[-1], "category": category,
@@ -126,11 +128,12 @@ def build_flex(result):
     entries=[]
     for key,title,color in (("near","⚡ 即將突破","#B77922"),("first_breakout","🔥 首次突破","#A51C35")):
         rows=result[key]
-        if not rows:
-            entries.append((key,title,color,None))
         for row in rows:
             entries.append((key,title,color,row))
-    pages=[entries[i:i+6] for i in range(0,len(entries),6)]
+    pages=[entries[i:i+6] for i in range(0,len(entries),6)] or [[]]
+    for key,title,color in (("near","⚡ 即將突破","#B77922"),("first_breakout","🔥 首次突破","#A51C35")):
+        if not result[key]:
+            pages[-1].append((key,title,color,None))
     # Each page is an independent LINE bubble.
     def bubble(page, index, total, omitted=0):
         body=[pair(t("↗ EVENING BRIEF","#A51C35"),t(f"{index:02d} / {total:02d}","#60646C","xs","end")),
