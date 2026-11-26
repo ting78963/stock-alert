@@ -1,13 +1,12 @@
-"""Isolated scan_once adapter around the pinned VCP AST fragment.
+"""Isolated adapter using the pinned original VCP calculation directly.
 
-The VCP calculations/state fragment are compiled from the pinned source carried
-by vcp_a.py. Only the caller's FLOW-candidate gate is widened for this explicit
-integration requirement: >=800 lots (or a pending retry) is evaluated even if
-the snapshot is flat/down. No market/API/bridge/LINE calls are made here.
+The source-pinned StrongSelector.analyze_vcp remains the sole calculation and
+Pivot-tracking implementation. The former 800-lot, watch, and pending gates do
+not control handoff: only the original confirmed ``just_broke`` result can
+propose a B handoff. No market/API/bridge/LINE calls are made here.
 """
 from __future__ import annotations
 
-import ast
 import copy
 import hashlib
 import json
@@ -26,40 +25,6 @@ import vcp_a
 
 PINNED_VCP_SHA256 = "c1cc4c968c3288c32e167b52a01d34cc260cb02baac4ce7b6ef06f6f37298da7"
 PINNED_VCP_FILE = ROOT / "research" / "vcp_integration_audit_lab_20261018" / "scanner_7413a49.py.txt"
-
-
-def _extract_scan_once_fragment(ns):
-    tree = ast.parse(vcp_a.SOURCE_TEXT)
-    scan = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "scan_once")
-    body = next(
-        n.body for n in ast.walk(scan)
-        if isinstance(n, ast.Try) and any(
-            isinstance(x, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "vcp_state" for t in x.targets)
-            for x in n.body
-        )
-    )
-    start = next(
-        i for i, n in enumerate(body)
-        if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "vcp_state" for t in n.targets)
-    )
-    fragment = copy.deepcopy(body[start:start + 4])
-    assert len(fragment) == 4 and isinstance(fragment[-1], ast.If)
-    # The source's formulas remain byte-for-byte AST-derived. The integration
-    # contract moves VCP observation outside FLOW's rise/liquidity/ARM gates.
-    fragment[-1].test = ast.parse("today_vol >= 800 or has_pending_vcp", mode="eval").body
-    fn = ast.parse(
-        "def extracted_scan_once(self,s,snap_date,bars,raw_vr5,priority):\n"
-        " symbol=s['stock_id']\n"
-        " today_vol=float(s.get('total_volume') or 0.0)\n"
-        " selected=[]\n"
-        " for _ in (None,):\n  pass\n"
-        " return dict(vcp_state=vcp_state,selected=selected)\n"
-    ).body[0]
-    fn.body[-2].body = fragment
-    module = ast.Module(body=[fn], type_ignores=[])
-    ast.fix_missing_locations(module)
-    exec(compile(module, "<PINNED_VCP_SCAN_ONCE_FRAGMENT>", "exec"), ns)
-    return ns["extracted_scan_once"]
 
 
 class _ManagerClock:
@@ -84,10 +49,9 @@ class VcpScanOnceRuntime:
         self.clock = clock
         self.manager = _ManagerClock(clock)
         self.ns = vcp_a.namespace("layered_vcp_scan_once_" + str(id(self)))
-        self.extracted = _extract_scan_once_fragment(self.ns)
-        self.histories = {}
-        self.metadata = {}
-        self.engine = vcp_a.engine(self.ns, clock, self.histories, self.metadata)
+        # The original analyzer consumes its inputs directly. Keep no per-scan
+        # mirror of the entire market's daily history in this runtime.
+        self.engine = vcp_a.engine(self.ns, clock, {}, {})
         self.engine.state = copy.deepcopy(persisted_state.get("watch_state", {
             "discovered": {}, "volume_armed": {}, "queue_waiting": {}, "vcp_near_watch": {}
         }) if isinstance(persisted_state, dict) else {
@@ -96,6 +60,9 @@ class VcpScanOnceRuntime:
         self.engine.state.setdefault("vcp_near_watch", {})
         self.engine.selector.track = copy.deepcopy(persisted_state.get("pivot_track", {}) if isinstance(persisted_state, dict) else {})
         self.fire_ids = copy.deepcopy(persisted_state.get("fire_ids", {}) if isinstance(persisted_state, dict) else {})
+        self.handoff_event_ids = copy.deepcopy(
+            persisted_state.get("handoff_event_ids", {}) if isinstance(persisted_state, dict) else {}
+        )
 
     def has_pending(self, day, symbol):
         entry = self.engine.state.get("vcp_near_watch", {}).get(day, {}).get(symbol)
@@ -107,47 +74,99 @@ class VcpScanOnceRuntime:
     def has_active_track(self, symbol):
         return isinstance(self.engine.selector.track.get(symbol), dict)
 
+    def has_handoff_event(self, event_id):
+        return bool(event_id and self.handoff_event_ids.get(str(event_id)))
+
+    def mark_handoff_event(self, event_id):
+        if event_id:
+            self.handoff_event_ids[str(event_id)] = True
+
     def evaluate(self, row, bars, metadata, raw_vr5, priority):
         day = str(row.get("date") or "")[:10]
         symbol = str(row.get("stock_id") or "")
-        self.metadata[symbol] = copy.deepcopy(metadata)
-        self.histories[day + "|" + symbol] = [
-            (b.date, float(b.close), float(b.volume_zhang)) for b in bars
-        ]
-        self.engine.adapter.rows = [copy.deepcopy(row)]
-        proposals = []
-        self.engine.handoff_hit = lambda hit, _day: (proposals.append(copy.deepcopy(hit)) or True)
-        result = self.extracted(self.engine, row, day, bars, raw_vr5, priority)
-        vcp_state = result.get("vcp_state")
+        empty = {"vcp_state": None, "watch": None, "pivot_track": None,
+                 "proposals": [], "fire_event": None, "handoff_ready": False}
+        if not day or not symbol or (metadata.get("symbol") and metadata["symbol"] != symbol):
+            return {**empty, "status": "UNKNOWN", "reason": "VCP_IDENTITY_MISSING_OR_MISMATCH"}
+        if not isinstance(bars, list) or len(bars) < 29:
+            return {**empty, "status": "UNKNOWN", "reason": "VCP_PRIOR_29_DAILY_BARS_NOT_READY"}
+        dates = [str(getattr(bar, "date", "")) for bar in bars]
+        if dates != sorted(set(dates)) or any(d >= day for d in dates):
+            return {**empty, "status": "UNKNOWN", "reason": "VCP_HISTORY_IDENTITY_OR_CAUSAL_ORDER"}
+        try:
+            current_close = float(row["close"])
+            today_vol = float(row["total_volume"])
+            if not (current_close > 0 and today_vol >= 0):
+                raise ValueError("invalid snapshot values")
+        except (KeyError, TypeError, ValueError):
+            return {**empty, "status": "UNKNOWN", "reason": "VCP_SNAPSHOT_PRICE_OR_VOLUME_INVALID"}
+
+        closes = [float(bar.close) for bar in bars] + [current_close]
+        vols = [float(bar.volume_zhang) for bar in bars] + [today_vol]
+        vcp_state = self.engine.selector.analyze_vcp(closes, vols, symbol, dates + [day])
+        # justBroke is the original conjunction of price + 1.4x volume; the
+        # original ``contracting`` result additionally requires the contraction
+        # structure. Status labels such as trending_up describe breakout age,
+        # not the three confirmation conditions requested for this route.
+        confirmed = bool(vcp_state.get("justBroke")) and bool(vcp_state.get("contracting"))
         watch = self.engine.state.get("vcp_near_watch", {}).get(day, {}).get(symbol)
         track = self.engine.selector.track.get(symbol)
         fire = None
-        if proposals:
+        proposals = []
+        hit = None
+        if confirmed:
+            hit = {
+                "code": symbol,
+                "name": str(row.get("name") or symbol),
+                "todayVol": today_vol,
+                "volRatio": round(float(raw_vr5), 2),
+                "chgPct": round(float(row.get("change_rate") or 0.0), 2),
+                "price": current_close,
+                "vcpInfo": {"type": "broke"},
+                "source": "VCP",
+                "rawVr5": round(float(raw_vr5), 4),
+                "queuePriority": "SPECIAL" if int(priority) == 0 else f"Q{int(priority)}",
+            }
+            proposals.append(hit)
+            active_track = self.engine.selector.track.get(symbol)
+            pivot = float(vcp_state.get("pivot") or 0.0)
+            track_breakout_date = (
+                str(active_track.get("breakoutDate"))
+                if isinstance(active_track, dict)
+                and float(active_track.get("pivot") or 0.0) == pivot
+                and active_track.get("breakoutDate") else ""
+            )
+            break_days = max(1, int(vcp_state.get("breakDays") or 1))
+            derived_breakout_date = dates[max(0, len(dates) - break_days)]
+            breakout_date = track_breakout_date or derived_breakout_date
             identity = {
-                "day": day, "symbol": symbol,
-                "pivot": (watch or {}).get("pivot", (track or {}).get("pivot")),
-                "pending": copy.deepcopy((watch or {}).get("pending_breakout")),
+                "symbol": symbol,
+                "pivot": pivot,
+                "breakout_date": breakout_date,
                 "source_sha": PINNED_VCP_SHA256,
             }
             fire_id = "vcp-fire-" + hashlib.sha256(
                 json.dumps(identity, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
             ).hexdigest()
+            hit["vcpEventId"] = fire_id
             if fire_id not in self.fire_ids:
                 self.fire_ids[fire_id] = True
                 fire = {
                     "event_id": fire_id, "kind": "🔥 VCP", "day": day,
-                    "symbol": symbol, "original_pending": copy.deepcopy(identity["pending"]),
+                    "symbol": symbol, "original_pending": None,
                     "watch": copy.deepcopy(watch), "vcp": copy.deepcopy(vcp_state),
-                    "hit": copy.deepcopy(proposals[0]), "observed_at": self.manager.now(),
+                    "hit": copy.deepcopy(hit), "observed_at": self.manager.now(),
                     "received_at": None, "available_at": None,
-                    "provenance": "SYNTHETIC_TEST_CLOCK_OR_UNVERIFIED_SNAPSHOT_RECEIPT",
+                    "provenance": "SNAPSHOT_OBSERVATION; SOURCE_RECEIVE_TIME_UNAVAILABLE",
                 }
         self.last_decision = {
             "vcp_state": copy.deepcopy(vcp_state), "watch": copy.deepcopy(watch),
             "pivot_track": copy.deepcopy(track), "proposals": copy.deepcopy(proposals),
-            "fire_event": copy.deepcopy(fire),
+            "fire_event": copy.deepcopy(fire), "confirmed_breakout": confirmed,
         }
         return {
+            "status": "PASS" if confirmed else "FAIL",
+            "reason": "ORIGINAL_CONFIRMED_BREAKOUT" if confirmed else "VCP_NOT_CONFIRMED_BREAKOUT",
             "vcp_state": copy.deepcopy(vcp_state), "watch": copy.deepcopy(watch),
             "pivot_track": copy.deepcopy(track), "proposals": proposals,
             "fire_event": fire, "handoff_ready": bool(proposals),
@@ -158,4 +177,5 @@ class VcpScanOnceRuntime:
             "watch_state": copy.deepcopy(self.engine.state),
             "pivot_track": copy.deepcopy(self.engine.selector.track),
             "fire_ids": copy.deepcopy(self.fire_ids),
+            "handoff_event_ids": copy.deepcopy(self.handoff_event_ids),
         }

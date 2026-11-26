@@ -790,6 +790,8 @@ def main():
     print("="*92);print("TREND PRODUCTION WORKER v2 | ONE SHARED WS | A=5s | P1/A/B/C | LINE="+("ON" if LINE_SEND else "DRY"));print("="*92)
     import subprocess
     while True:
+        # Do not relaunch A after close; wait for the next scheduled session.
+        wait_session()
         # A daily history preflight: one official calendar fetch per launch.
         # Fail closed BEFORE starting A, preventing mass WAIT_DATA/Fugle fallback.
         try:

@@ -1,0 +1,54 @@
+name: VCP market load isolated
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+jobs:
+  load:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Measure 1500 symbols with 120 daily bars over 30 scans
+        run: |
+          python - <<'PY'
+          import time, resource, gc, statistics
+          from datetime import datetime, timedelta
+          from zoneinfo import ZoneInfo
+          import fugle_a_scanner_v2_4 as a
+          from vcp_scan_once_adapter import VcpScanOnceRuntime
+          now=datetime(2026,11,26,9,30,tzinfo=ZoneInfo('Asia/Taipei'))
+          day=now.date().isoformat()
+          def rss():
+              with open('/proc/self/status') as f:
+                  return int(next(x for x in f if x.startswith('VmRSS:')).split()[1])/1024
+          runtime=VcpScanOnceRuntime(lambda:now)
+          base=rss()
+          cache={}
+          for i in range(1500):
+              symbol=str(1000+i)
+              prices=[90,110]*40+[96,104]*10+[99,100]*10
+              cache[symbol]=[a.DailyBar((now.date()-timedelta(days=120-j)).isoformat(),p,300.0) for j,p in enumerate(prices)]
+          print('BASE_MIB',base,'CACHE_MIB',rss(),flush=True)
+          times=[]
+          samples=[]
+          for scan in range(30):
+              start=time.monotonic()
+              decisions={}
+              for i,(symbol,bars) in enumerate(cache.items()):
+                  price=103 if i%20==0 else 99
+                  row={'stock_id':symbol,'date':day,'close':price,'total_volume':500}
+                  decisions[symbol]=runtime.evaluate(row,bars,{},500/300,4)
+              state=runtime.export_state()
+              assert sum(bool(x['proposals']) for x in decisions.values())==75
+              times.append(time.monotonic()-start)
+              del decisions,state
+              gc.collect()
+              samples.append(rss())
+          print('SCAN_SECONDS_MEDIAN',statistics.median(times),'MAX',max(times))
+          print('RSS_MIB_FIRST',samples[0],'LAST',samples[-1],'PEAK',resource.getrusage(resource.RUSAGE_SELF).ru_maxrss/1024)
+          assert samples[-1]-samples[4]<10, 'retained memory growth exceeds 10 MiB'
+          print('PASS: synthetic adapter/cache load; not production worker RSS')
+          PY

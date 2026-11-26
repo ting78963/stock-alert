@@ -31,11 +31,9 @@ jobs:
           now = datetime(2026,10,23,9,30,tzinfo=ZoneInfo("Asia/Taipei"))
           runtime = VcpScanOnceRuntime(lambda: now)
           day, symbol = now.date().isoformat(), '3714'
-          runtime.engine.state['vcp_near_watch'] = {day:{symbol:{
-              'armed_at':'09:25:00','pivot':100.0,
-              'pending_breakout':{'confirmed_at':'09:30:00','price':103.0,'volume':1200}
-          }}}
-          bars = [a.DailyBar((now.date()-timedelta(days=i)).isoformat(),100.0,1000.0) for i in range(60,0,-1)]
+          # Real pinned analyzer: three progressively narrower price ranges.
+          prices = [90,110]*10 + [96,104]*10 + [99,100]*10
+          bars = [a.DailyBar((now.date()-timedelta(days=60-i)).isoformat(),p,300.0) for i,p in enumerate(prices)]
           meta = {'market':'TSE','securityType':'01','industry':'26'}
           scanner = a.Scanner.__new__(a.Scanner)
           scanner.state = {'discovered':{}}
@@ -46,29 +44,27 @@ jobs:
               if len(calls)==1:
                   raise RuntimeError('simulated bridge failure')
           scanner.bridge_send = bridge
-          def evaluate(price,change):
-              row={'stock_id':symbol,'name':'TEST','date':day,'close':price,'change_rate':change,'total_volume':1200}
-              result=runtime.evaluate(row,bars,meta,1.2,4)
-              assert result['proposals'], 'pending VCP lost'
-              return result['proposals'][0]
-          with patch.object(runtime.engine.selector,'analyze_vcp',return_value={
-              'status':'tracking','justBroke':False,'pivot':100.0,
-              'breakoutTrack':{'isNew':False,'dayCount':2,'broken':False}
-          }), patch.object(a,'save_json_atomic'), patch.object(a,'append_event'):
-              first=evaluate(103.0,3.0)
+          def evaluate(price,volume=500):
+              row={'stock_id':symbol,'name':'TEST','date':day,'close':price,'change_rate':price-100,'total_volume':volume}
+              return runtime.evaluate(row,bars,meta,volume/300,4)['proposals']
+          with patch.object(a,'save_json_atomic'), patch.object(a,'append_event'):
+              assert not evaluate(103,419), 'volume below 1.4x accepted'
+              first=evaluate(103)
+              assert first, 'valid breakout below 800 lots lost'
               try:
-                  scanner.handoff_hit(first,day)
+                  scanner.handoff_hit(first[0],day)
                   raise AssertionError('first bridge call should fail')
               except RuntimeError as e:
                   assert 'simulated bridge failure' in str(e)
-              assert not scanner.already_sent(day,symbol), 'failure incorrectly deduped'
-              second=evaluate(99.0,-1.0)
-              assert scanner.handoff_hit(second,day) is True, 'retry not delivered'
+              assert symbol not in scanner.state.get('vcp_handed',{}).get(day,{}), 'failure incorrectly deduped'
+              assert not evaluate(99), 'invalid pullback proposed'
+              second=evaluate(103)
+              assert second and scanner.handoff_hit(second[0],day) is True, 'retry not delivered'
               assert symbol in scanner.state.get('vcp_handed',{}).get(day,{}), 'VCP success not deduped'
-              third=evaluate(99.0,-1.0)
-              assert scanner.handoff_hit(third,day) is False, 'duplicate delivered'
+              third=evaluate(103)
+              assert third and scanner.handoff_hit(third[0],day) is False, 'duplicate delivered'
           assert len(calls)==2, f'expected failure+success only, got {len(calls)}'
-          print('PASS: failed bridge -> pullback retry success -> no duplicate')
+          print('PASS: real sub-800 breakout -> failure -> pullback blocked -> valid retry -> dedupe')
           PY
 
       - name: Verify independent VCP and SURGE order (new contract)
@@ -90,7 +86,7 @@ jobs:
               def has_pending(self,*args): return False
               def has_watch(self,*args): return False
               def has_active_track(self,*args): return False
-              def evaluate(self,*args): return {'proposals':[],'vcp_state':{},'watch':{}}
+              def evaluate(self,*args): return {'status':'FAIL','proposals':[],'vcp_state':{},'watch':{}}
               def export_state(self): return {}
           for fail in (False,True):
               scanner=a.Scanner.__new__(a.Scanner)
