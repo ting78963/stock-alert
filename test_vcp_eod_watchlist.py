@@ -23,6 +23,17 @@ class EodTest(unittest.TestCase):
         self.assertEqual(r["category"],"first_breakout")
     def test_second(self):
         self.assertIsNone(classify(self.selector,"2330",self.bars(102,150,101)))
+    def test_prior_active_breakout_not_new(self):
+        from unittest.mock import Mock
+        selector=Mock()
+        selector.track={}
+        bars=self.bars(101,150)
+        def analyze(closes,vols,symbol,dates):
+            selector.track[symbol]={"pivot":100.2,"breakoutDate":dates[-1]}
+            return {"pivot":100.2,"justBroke":True,"contracting":True,"breakDays":1}
+        selector.analyze_vcp.side_effect=analyze
+        self.assertIsNone(classify(selector,"2330",bars))
+
     def test_volume(self):
         r=classify(self.selector,"2330",self.bars(101,100))
         self.assertEqual(r["category"],"near")
