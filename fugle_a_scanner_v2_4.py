@@ -2598,7 +2598,10 @@ def main() -> int:
             spent = time.monotonic() - tick
             time.sleep(max(0.1, args.interval - spent))
         else:
-            # 非盤中低頻等待；電腦/雲端 service 不需要重啟。
+            # Production parent owns the next session launch. Release the daily cache.
+            if os.environ.get("A_VERIFIED_SNAPSHOT_DAY", "").strip():
+                print("[A SESSION CLOSED] exit to release scanner memory", flush=True)
+                return 0
             time.sleep(20)
 
 
