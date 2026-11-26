@@ -1871,6 +1871,13 @@ class Scanner:
     def handoff_hit(self, hit: Dict[str, Any], snap_date: str) -> bool:
         symbol = hit["code"]
         if hit.get("source") == "VCP":
+            # Final output gate; never consume handoff eligibility below 800 lots.
+            try:
+                volume = float((hit.get("vcp") or {}).get("volume_zhang"))
+            except (TypeError, ValueError):
+                return False
+            if not 800 <= volume < float("inf"):
+                return False
             if symbol in self.state.setdefault("vcp_handed", {}).get(snap_date, {}):
                 return False
         elif self.already_sent(snap_date, symbol):

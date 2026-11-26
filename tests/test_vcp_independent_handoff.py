@@ -112,6 +112,24 @@ class VcpIndependentHandoffTests(unittest.TestCase):
             self.assertFalse(scanner.handoff_hit(surge, self.day))
         self.assertEqual(sources, ["VCP", "SURGE"])
 
+    def test_a_vcp_liquidity_progression(self):
+        scanner = a.Scanner.__new__(a.Scanner)
+        scanner.state = {"discovered": {}}
+        scanner.layered_a_enabled = True
+        scanner.bridge_url = "mock://b"
+        from unittest.mock import Mock
+        scanner.bridge_send = Mock(return_value={"http_status":200,"body":{"ok":True,"key":self.day+"|3141","launched":True}})
+        hit = {"code":"3141","source":"VCP","name":"TEST","volRatio":2.0,"chgPct":3.0}
+        with patch.object(a,"save_json_atomic"), patch.object(a,"append_event"):
+            for volume,expected in ((500,False),(799,False),(800,True),(801,False)):
+                hit["vcp"] = dict(self.payload["vcp"],volume_zhang=volume)
+                self.assertEqual(scanner.handoff_hit(hit,self.day),expected)
+                if volume<800:
+                    self.assertFalse(scanner.state.get("vcp_handed",{}).get(self.day,{}))
+                    scanner.bridge_send.assert_not_called()
+            scanner.bridge_send.assert_called_once()
+            self.assertEqual(scanner.bridge_send.call_args.args[0]["vcp"]["volume_zhang"],800)
+
     def test_a_handoff_dedupe_independent_of_surge(self):
         scanner = a.Scanner.__new__(a.Scanner)
         scanner.state = {"discovered": {}}

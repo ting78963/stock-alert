@@ -8,26 +8,26 @@ class EodTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.selector=VcpScanOnceRuntime(lambda:datetime(2026,11,26,17,tzinfo=ZoneInfo("Asia/Taipei"))).engine.selector
-    def bars(self, tail=100, volume=100, previous=100):
+    def bars(self, tail=100, volume=600, previous=100):
         prices=[100]+[90,110]*10+[96,104]*10+[99.8,100.2]*9+[previous,tail]
         # The first prior-20 bar belongs to the preceding contraction segment.
         # Keep it below the intended breakout threshold, not at 104.
         prices[-21]=100.2
-        return [((datetime(2026,11,26)-timedelta(days=len(prices)-1-i)).date().isoformat(),p,volume if i==len(prices)-1 else 100) for i,p in enumerate(prices)]
+        return [((datetime(2026,11,26)-timedelta(days=len(prices)-1-i)).date().isoformat(),p,volume if i==len(prices)-1 else 600) for i,p in enumerate(prices)]
     def test_near(self):
         r=classify(self.selector,"2330",self.bars())
         self.assertEqual(r["category"],"near")
         self.assertAlmostEqual(r["threshold"],100.2*1.003)
     def test_first(self):
-        r=classify(self.selector,"2330",self.bars(101,150))
+        r=classify(self.selector,"2330",self.bars(101,900))
         self.assertEqual(r["category"],"first_breakout")
     def test_second(self):
-        self.assertIsNone(classify(self.selector,"2330",self.bars(102,150,101)))
+        self.assertIsNone(classify(self.selector,"2330",self.bars(102,900,101)))
     def test_prior_active_breakout_not_new(self):
         from unittest.mock import Mock
         selector=Mock()
         selector.track={}
-        bars=self.bars(101,150)
+        bars=self.bars(101,900)
         def analyze(closes,vols,symbol,dates):
             selector.track[symbol]={"pivot":100.2,"breakoutDate":dates[-1]}
             return {"pivot":100.2,"justBroke":True,"contracting":True,"breakDays":1}
@@ -36,7 +36,61 @@ class EodTest(unittest.TestCase):
 
     def test_volume(self):
         r=classify(self.selector,"2330",self.bars(101,100))
-        self.assertEqual(r["category"],"near")
+        self.assertIsNone(r)
+    def test_near_distance_gate(self):
+        from unittest.mock import Mock
+        selector=Mock()
+        selector.track={}
+        selector.analyze_vcp.return_value={"pivot":100,"status":"final_contraction","justBroke":False}
+        for close,expected in ((97.49,False),(97.5,True),(99.9,True),(100,False),(75,False)):
+            self.assertEqual(classify(selector,"2330",self.bars(close)) is not None,expected)
+        selector.analyze_vcp.return_value["breakoutTrack"]={"pivot":110}
+        self.assertIsNone(classify(selector,"2330",self.bars(99.9)))
+
+    def test_vertical_push(self):
+        import json, os
+        from tempfile import TemporaryDirectory
+        from pathlib import Path
+        from unittest.mock import patch
+        from vcp_eod_watchlist_v1 import send_once
+        row=classify(self.selector,"2330",self.bars())
+        row["name"]="test"
+        result=dict(day="2026-11-26",near=[row]*8,first_breakout=[],evaluated=8,missing_metadata=0,missing_history=0)
+        with TemporaryDirectory() as d, patch.dict(os.environ,{"LINE_CHANNEL_ACCESS_TOKEN":"test","LINE_TO_ID":"test"}), patch("urllib.request.urlopen") as push:
+            push.return_value.__enter__.return_value.status=200
+            self.assertTrue(send_once(result,Path(d)/"sent.json"))
+            messages=json.loads(push.call_args.args[0].data)["messages"]
+            self.assertEqual(len(messages),2)
+            self.assertTrue(all(m["contents"]["type"]=="bubble" for m in messages))
+
+    def test_liquidity_boundary(self):
+        for prior,expected in ((532,False),(533.4,True)):
+            bars=[(d,p,prior if i<60 else 100) for i,(d,p,v) in enumerate(self.bars())]
+            self.assertEqual(classify(self.selector,"2330",bars) is not None,expected)
+        for volume,expected in ((799,False),(800,True)):
+            bars=[(d,p,500 if i<60 else volume) for i,(d,p,v) in enumerate(self.bars(101,volume))]
+            self.assertEqual(classify(self.selector,"2330",bars) is not None,expected)
+
+    def test_page_counts_and_batches(self):
+        import json, os
+        from tempfile import TemporaryDirectory
+        from pathlib import Path
+        from unittest.mock import patch
+        from vcp_eod_watchlist_v1 import send_once
+        row=classify(self.selector,"2330",self.bars())
+        row["name"]="test"
+        for count,pages in ((20,4),(30,5),(50,9),(100,17)):
+            result=dict(day="2026-11-26",near=[dict(row,symbol=str(1000+i)) for i in range(count)],first_breakout=[],evaluated=count,missing_metadata=0,missing_history=0)
+            with TemporaryDirectory() as d, patch.dict(os.environ,{"LINE_CHANNEL_ACCESS_TOKEN":"test","LINE_TO_ID":"test"}), patch("urllib.request.urlopen") as push:
+                push.return_value.__enter__.return_value.status=200
+                self.assertTrue(send_once(result,Path(d)/"sent.json"))
+                batches=[json.loads(call.args[0].data)["messages"] for call in push.call_args_list]
+                self.assertEqual(sum(map(len,batches)),pages)
+                self.assertTrue(all(1<=len(b)<=5 for b in batches))
+                raw=json.dumps(batches,ensure_ascii=False)
+                for i in range(count):
+                    self.assertEqual(raw.count(str(1000+i)+" test"),1)
+
     def test_short(self):
         self.assertIsNone(classify(self.selector,"2330",self.bars()[-30:]))
     def test_reference_and_white_flex(self):
@@ -49,20 +103,20 @@ class EodTest(unittest.TestCase):
         row["name"]="測試股票"
         result=dict(day="2026-11-26",near=[row],first_breakout=[],evaluated=1,missing_metadata=0,missing_history=0)
         flex=build_flex(result)
-        self.assertEqual(flex["contents"]["body"]["backgroundColor"],"#FFFFFF")
+        self.assertEqual(flex[0]["contents"]["body"]["backgroundColor"],"#FFFFFF")
         raw=json.dumps(flex,ensure_ascii=False)
         for s in ("7,845","23,971","43,583","10:00 前","12:00 前","bold"):
             self.assertIn(s,raw)
         result["near"]=[dict(row,symbol=str(1000+i)) for i in range(1500)]
         flex=build_flex(result)
-        self.assertEqual(flex["contents"]["type"],"carousel")
-        self.assertLessEqual(len(flex["contents"]["contents"]),12)
-        self.assertLessEqual(len(json.dumps(flex["contents"],ensure_ascii=False,separators=(",",":")).encode()),49000)
-        self.assertIn("未列出",json.dumps(flex,ensure_ascii=False))
+        self.assertEqual(len(flex),250)
+        self.assertTrue(all(m["contents"]["type"]=="bubble" for m in flex))
+        self.assertTrue(all(len(json.dumps(m["contents"],ensure_ascii=False,separators=(",",":")).encode())<=29000 for m in flex))
+        self.assertNotIn("未列出",json.dumps(flex,ensure_ascii=False))
 
     def test_flex(self):
         result=dict(day="2026-11-26",near=[],first_breakout=[],evaluated=1,missing_metadata=0,missing_history=0)
-        self.assertEqual(build_flex(result)["type"],"flex")
+        self.assertEqual(build_flex(result)[0]["type"],"flex")
     def test_zero_matches_is_success(self):
         import json, os
         from tempfile import TemporaryDirectory
