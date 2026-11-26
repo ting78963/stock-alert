@@ -2141,6 +2141,9 @@ class Scanner:
                     (row.get("name") for row in snaps if str(row.get("stock_id") or "") == symbol), symbol
                 ))
                 row = next((x for x in snaps if str(x.get("stock_id") or "") == symbol), {})
+                # Output-only liquidity gate: preserve evaluation and pending proposals.
+                if float(row.get("total_volume") or 0) < 800:
+                    continue
                 watch = decision.get("watch") or {}
                 track = decision.get("pivot_track") or {}
                 pivot = (decision.get("state") or {}).get("pivot")
