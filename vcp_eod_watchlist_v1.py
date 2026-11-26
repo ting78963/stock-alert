@@ -44,7 +44,12 @@ def classify(selector, symbol, bars):
         threshold = pivot * 1.003
     else:
         return None
-    return {"symbol": symbol, "day": dates[-1], "category": category,
+    reference_price = max(closes[-20:]) * 1.005
+    prior20 = [v for v in vols[-21:-1] if v > 0]
+    full = math.floor(sum(prior20) / len(prior20) * 1.5 + 0.5)
+    return {"reference_price": reference_price, "reference_distance": (reference_price / closes[-1] - 1) * 100,
+            "volume_10": math.floor(full * 0.18 + 0.5), "volume_12": math.floor(full * 0.55 + 0.5),
+            "volume_full": full, "volume_today": vols[-1], "symbol": symbol, "day": dates[-1], "category": category,
             "close": closes[-1], "pivot": pivot, "threshold": threshold,
             "distance_pct": (threshold / closes[-1] - 1) * 100,
             "price_above_threshold": price_above_threshold,
@@ -103,26 +108,63 @@ def scan_database(day, db_path, f10_path, metadata_path, selector):
 
 
 def build_flex(result):
-    """Bounded single-message report; show explicit overflow and coverage."""
-    def t(value, color="#FFFFFF", size="sm"):
-        return {"type":"text","text":str(value),"color":color,"size":size,"wrap":True}
-    body=[t("VCP｜每日盤後觀察"," #FFFFFF".strip(),"lg"),
-          t(result["day"],"#AAAAAA"),
-          t(f"有效辨識 {result['evaluated']} 檔｜缺股票資料 {result['missing_metadata']}｜缺日K {result['missing_history']}","#AAAAAA","xs")]
-    for key,title,color in (("near","即將突破","#FACC15"),("first_breakout","今日首次突破","#FF5555")):
+    """White V4 brief, paginated within LINE carousel limits."""
+    import json
+    def t(value, color="#202124", size="sm", align="start"):
+        return {"type":"text","text":str(value),"color":color,"size":size,"weight":"bold","wrap":True,"align":align}
+    def box(items, layout="vertical", **kw):
+        return {"type":"box","layout":layout,"contents":items,**kw}
+    def pair(a,b):
+        return box([a,b],"horizontal",spacing="xs")
+    def number(v):
+        return f"{v:,.0f}"
+    def price(v):
+        return f"{v:,.3f}".rstrip("0").rstrip(".")
+    entries=[]
+    for key,title,color in (("near","⚡ 即將突破","#B77922"),("first_breakout","🔥 首次突破","#A51C35")):
         rows=result[key]
-        body.extend([{"type":"separator","color":"#555555","margin":"md"},t(f"{title}｜{len(rows)} 檔",color,"md")])
-        for row in rows[:15]:
-            distance=row["distance_pct"]
-            detail=(f"距明日門檻 {distance:.2f}%" if not row["price_above_threshold"] else f"今日價格已突破，量能未確認｜距明日門檻 {distance:.2f}%") if key=="near" else f"量能 {row['volume_ratio']:.2f} 倍"
-            body.append({"type":"box","layout":"vertical","margin":"sm","contents":[
-                t(f"{row['symbol']} {row['name']}",color),
-                t(f"收盤 {row['close']:.2f}｜門檻 {row['threshold']:.3f}","#DDDDDD","xs"),
-                t(detail,"#AAAAAA","xs")]})
-        if not rows: body.append(t("無符合股票","#AAAAAA"))
-        if len(rows)>15: body.append(t(f"另有 {len(rows)-15} 檔未列出","#AAAAAA","xs"))
-    return {"type":"flex","altText":f"{result['day']} VCP 盤後觀察｜即將突破 {len(result['near'])}｜首次突破 {len(result['first_breakout'])}",
-            "contents":{"type":"bubble","size":"giga","body":{"type":"box","layout":"vertical","backgroundColor":"#080808","spacing":"sm","contents":body}}}
+        if not rows:
+            entries.append((key,title,color,None))
+        for row in rows:
+            entries.append((key,title,color,row))
+    pages=[entries[i:i+6] for i in range(0,len(entries),6)]
+    # LINE permits at most 12 bubbles and 50 KB per carousel.
+    def bubble(page, index, total, omitted=0):
+        body=[pair(t("↗ EVENING BRIEF","#A51C35"),t(f"{index:02d} / {total:02d}","#60646C","xs","end")),
+              t("VCP 盤後簡報",size="xl"),t(result["day"]+"｜辨識完成","#60646C","xs")]
+        last=None
+        for key,title,color,row in page:
+            if key!=last:
+                body.extend([{"type":"separator","color":"#D5D7DA"},t(f"{title}｜{len(result[key])} 檔",color,"md")])
+                last=key
+            if row is None:
+                body.append(t("無符合股票","#60646C"))
+                continue
+            if key=="near":
+                items=[pair(t(f"{row['symbol']} {row['name']}"),t(f"差 {row['reference_distance']:.2f}%",color,"xs","end")),
+                       pair(t(f"收盤 {price(row['close'])}","#50545A","xs"),t(f"突破價 {row['reference_price']:.1f}","#A51C35","xs","end")),
+                       box([box([t(label,col,"xs"),t(number(row[field]),col,"sm")],flex=1) for label,field,col in
+                            (("10:00 前","volume_10","#A51C35"),("12:00 前","volume_12","#B77922"),("全天門檻","volume_full","#202124"))],"horizontal",spacing="xs")]
+            else:
+                items=[pair(t(f"{row['symbol']} {row['name']}"),t(f"{row['volume_ratio']:.2f} 倍量",color,"xs","end")),
+                       pair(t(f"收盤 {price(row['close'])}","#50545A","xs"),t(f"突破價 {price(row['threshold'])}",color,"xs","end")),
+                       t(f"成交量 {number(row['volume_today'])} 張","#50545A","xs")]
+            body.append(box(items,backgroundColor="#F3F4F6",cornerRadius="md",paddingAll="8px",spacing="xs"))
+        if omitted:
+            body.append(t(f"另有 {omitted} 檔未列出（LINE 容量限制）","#A51C35","xs"))
+        body.extend([t("量能單位：張｜12:00 後謹慎觀察","#60646C","xs"),
+                     t(f"有效辨識 {result['evaluated']}｜缺資料 {result['missing_metadata']+result['missing_history']}","#60646C","xs"),
+                     t("Trade Smart | Your Edge","#60646C","xs","end")])
+        return {"type":"bubble","size":"giga","body":box(body,backgroundColor="#FFFFFF",spacing="sm")}
+    shown=pages[:12]
+    while True:
+        omitted=sum(e[3] is not None for p in pages[len(shown):] for e in p)
+        bubbles=[bubble(p,i+1,len(shown),omitted if i==len(shown)-1 else 0) for i,p in enumerate(shown)]
+        contents=bubbles[0] if len(bubbles)==1 else {"type":"carousel","contents":bubbles}
+        if len(json.dumps(contents,ensure_ascii=False,separators=(",",":")).encode())<=49000 or len(shown)==1:
+            break
+        shown.pop()
+    return {"type":"flex","altText":f"{result['day']} VCP 盤後簡報｜即將突破 {len(result['near'])}｜首次突破 {len(result['first_breakout'])}","contents":contents}
 
 
 def send_once(result, marker):
