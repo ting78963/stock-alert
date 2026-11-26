@@ -110,10 +110,13 @@ def loop():
     if day in completed:
      continue
     try:
+     if report_and_trajectory_complete(day):
+      completed.add(day)
+      continue
      result=build_day(day)
      # Today's events can arrive late; freeze today's archive only after
      # the ordinary post-close maintenance window.
-     if result["status"]=="ok" and report_and_trajectory_complete(day):
+     if result["status"] in ("ok","no_events") and report_and_trajectory_complete(day):
       completed.add(day)
     except BaseException as ex:print(f"[F15 TRAJECTORY FAIL] {day} {type(ex).__name__}: {ex}",flush=True)
   time.sleep(900)
