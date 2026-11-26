@@ -1,0 +1,46 @@
+name: Market restart gate regression
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: |
+          python - <<'PY'
+          import tempfile, json, ast
+          from pathlib import Path
+          from datetime import datetime
+          from zoneinfo import ZoneInfo
+          from daily_market_restart_gate import market_restart_ready
+          day='2026-11-26'
+          with tempfile.TemporaryDirectory() as tmp:
+              p=Path(tmp)/'sent.json'
+              def check(hm, expected):
+                  now=datetime.fromisoformat(day+'T'+hm).replace(tzinfo=ZoneInfo('Asia/Taipei'))
+                  assert market_restart_ready(now,day,p)[0] == expected, hm
+              check('16:30',False)
+              check('17:00',False)
+              check('18:09',False)
+              check('18:10',True)
+              p.write_text('{"sent_date":"2026-11-25"}')
+              check('17:30',False)
+              p.write_text('invalid')
+              check('17:30',False)
+              check('18:10',True)
+              p.write_text(json.dumps({'sent_date':day}))
+              check('16:59',False)
+              check('17:10',True)
+          source=Path('production_worker_v2_shared_ws.py').read_text()
+          tree=ast.parse(source)
+          fn=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='maybe_restart_after_maintenance')
+          body=ast.get_source_segment(source,fn)
+          for guard in ('stage_done != {"DAILY_K", "F10"}','report_and_trajectory_complete(day)','cleanup_state.get("status")!="completed"','archive_restart_lock.acquire(blocking=False)','if marker.exists():','market_restart_ready(now, day, market_report_state)'):
+              assert guard in body, guard
+          print('PASS: market report gate, stale/corrupt markers, fallback, existing safeguards')
+          PY
