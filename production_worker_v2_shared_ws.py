@@ -504,7 +504,12 @@ def maybe_restart_after_maintenance(day, stage_done, notified_at):
     now=now_tpe()
     if now.date().isoformat()!=day or not (15 <= now.hour < 23):
         return
-    # Completion-based restart: no fixed 17:00 floor or two-hour delay.
+    # Wait for the final market report, with an 18:10 fallback.
+    from market_maintenance_delivery_v1 import STATE as market_report_state
+    from daily_market_restart_gate import market_restart_ready
+    ready, reason = market_restart_ready(now, day, market_report_state)
+    if not ready:
+        return
     # All stages, F15, UNKNOWN cleanup and archive lock must also be complete.
     import f15_trajectory_store
     if not f15_trajectory_store.report_and_trajectory_complete(day):
@@ -530,6 +535,7 @@ def maybe_restart_after_maintenance(day, stage_done, notified_at):
         marker=Path("/var/data/stock-alert")/"daily_restart"/f"{day}.json"
         if marker.exists():
             return
+        print(f"[DAILY RESTART] market gate day={day} reason={reason}",flush=True)
         import urllib.request
         service="srv-dasvnou0tbcc7399tl90"
         req=urllib.request.Request(
@@ -784,6 +790,8 @@ def main():
     print("="*92);print("TREND PRODUCTION WORKER v2 | ONE SHARED WS | A=5s | P1/A/B/C | LINE="+("ON" if LINE_SEND else "DRY"));print("="*92)
     import subprocess
     while True:
+        # Do not relaunch A after close; wait for the next scheduled session.
+        wait_session()
         # A daily history preflight: one official calendar fetch per launch.
         # Fail closed BEFORE starting A, preventing mass WAIT_DATA/Fugle fallback.
         try:
