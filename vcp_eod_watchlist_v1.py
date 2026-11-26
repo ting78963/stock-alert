@@ -27,6 +27,8 @@ def classify(selector, symbol, bars):
         category = "first_breakout"
     elif state.get("status") == "final_contraction" and not confirmed:
         category = "near"
+        pivot = max(closes[-20:])
+        threshold = pivot * 1.003
     else:
         return None
     return {"symbol": symbol, "day": dates[-1], "category": category,
@@ -60,7 +62,7 @@ def scan_database(day, db_path, f10_path, metadata_path, selector):
                 result["excluded"] += 1
                 continue
             meta = metadata.get(symbol)
-            if not isinstance(meta, dict) or str(meta.get("symbol") or "") != symbol:
+            if not isinstance(meta, dict) or str(meta.get("symbol") or symbol) != symbol:
                 result["missing_metadata"] += 1
                 continue
             if not selector.meta_ok(meta):
@@ -99,7 +101,7 @@ def build_flex(result):
         body.extend([{"type":"separator","color":"#555555","margin":"md"},t(f"{title}｜{len(rows)} 檔",color,"md")])
         for row in rows[:15]:
             distance=row["distance_pct"]
-            detail=(f"距門檻 {distance:.2f}%" if distance>=0 else "價格已越門檻，量能未確認") if key=="near" else f"量能 {row['volume_ratio']:.2f} 倍"
+            detail=(f"距明日門檻 {distance:.2f}%" if distance>=0 else "價格已越門檻，量能未確認") if key=="near" else f"量能 {row['volume_ratio']:.2f} 倍"
             body.append({"type":"box","layout":"vertical","margin":"sm","contents":[
                 t(f"{row['symbol']} {row['name']}",color),
                 t(f"收盤 {row['close']:.2f}｜門檻 {row['threshold']:.3f}","#DDDDDD","xs"),
@@ -157,7 +159,9 @@ def main():
     from vcp_scan_once_adapter import VcpScanOnceRuntime
     runtime=VcpScanOnceRuntime(lambda:now)
     result=scan_database(args.day,Path(os.getenv("A_SHARED_DAILY_DB",str(root/"shared_history_stage_v1.sqlite3"))),
-                         root/"f10_baseline_v1.sqlite3",root/"a_f11_metadata_v1.json",runtime.engine.selector)
+                         root/"f10_baseline_v1.sqlite3",
+                         root/"f11-staging/a_f11_staging_v1.json" if os.getenv("A_F11_OFFLINE_STAGING")=="1" else root/"a_f11_metadata_v1.json",
+                         runtime.engine.selector)
     print(f"[VCP EOD] day={args.day} evaluated={result['evaluated']} near={len(result['near'])} first={len(result['first_breakout'])} missing_meta={result['missing_metadata']} missing_history={result['missing_history']}",flush=True)
     if args.send:
         send_once(result,marker)
