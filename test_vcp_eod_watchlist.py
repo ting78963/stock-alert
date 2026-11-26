@@ -28,5 +28,32 @@ class EodTest(unittest.TestCase):
     def test_flex(self):
         result=dict(day="2026-11-26",near=[],first_breakout=[],evaluated=1,missing_metadata=0,missing_history=0)
         self.assertEqual(build_flex(result)["type"],"flex")
+    def test_market_scale(self):
+        import time,tracemalloc
+        bars=self.bars()
+        tracemalloc.start()
+        started=time.monotonic()
+        try:
+            for i in range(1500):
+                row=classify(self.selector,str(1000+i),bars)
+                self.assertEqual(row["category"],"near")
+            current,peak=tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+        print(f"EOD 1500 symbols: {time.monotonic()-started:.2f}s, Python allocation peak {peak/1048576:.2f} MiB")
+        self.assertLess(peak,10*1048576)
+
+    def test_duplicate_marker(self):
+        from tempfile import TemporaryDirectory
+        from pathlib import Path
+        from unittest.mock import patch
+        from vcp_eod_watchlist_v1 import send_once
+        with TemporaryDirectory() as d:
+            marker=Path(d)/"sent.json"
+            marker.write_text('{"sent":true}')
+            with patch("urllib.request.urlopen") as push:
+                self.assertFalse(send_once({"day":"2026-11-26"},marker))
+                push.assert_not_called()
+
 if __name__=="__main__":
     unittest.main()
