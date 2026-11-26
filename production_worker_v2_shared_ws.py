@@ -528,12 +528,23 @@ def maybe_restart_after_maintenance(day, stage_done, notified_at):
         print("[DAILY RESTART] archive busy; defer",flush=True)
         return
     try:
+        marker=Path("/var/data/stock-alert")/"daily_restart"/f"{day}.json"
+        if marker.exists():
+            return
+        # Reuse the existing maintenance gates; no additional polling or thread.
+        try:
+            import subprocess
+            attempted=Path("/var/data/stock-alert")/"vcp_eod_attempted"/f"{day}.json"
+            if not attempted.exists():
+                attempted.parent.mkdir(parents=True,exist_ok=True)
+                _atomic_json(attempted,{"day":day,"status":"attempted"})
+                rc=subprocess.call([sys.executable,str(BASE/"vcp_eod_watchlist_v1.py"),"--day",day,"--send"],cwd=str(BASE),timeout=120)
+                print(f"[VCP EOD] child exit={rc}",flush=True)
+        except Exception as exc:
+            print(f"[VCP EOD] failed {type(exc).__name__}: {exc}",flush=True)
         key=os.environ.get("RENDER_API_KEY","").strip()
         if not key:
             print("[DAILY RESTART] skipped: RENDER_API_KEY unavailable",flush=True)
-            return
-        marker=Path("/var/data/stock-alert")/"daily_restart"/f"{day}.json"
-        if marker.exists():
             return
         print(f"[DAILY RESTART] market gate day={day} reason={reason}",flush=True)
         import urllib.request
@@ -574,7 +585,6 @@ def daily_history_maintenance_loop():
     notified_day=None
     notified_at=None
     daily_attempted=False
-    vcp_eod_attempted_day=None
     # Persistent state survives Render's daily process restart.
     state_dir=Path("/var/data/stock-alert")/"daily_maintenance_state"
     while True:
@@ -703,22 +713,6 @@ def daily_history_maintenance_loop():
         except Exception as exc:
             print(f"[UNKNOWN MAINT] check failed {type(exc).__name__}: {exc}",flush=True)
         # One bounded child after existing maintenance and market report gates.
-        if (vcp_eod_attempted_day!=day and notified_at and stage_done=={"DAILY_K","F10"}
-                and (n.hour,n.minute)>=(17,0) and n.hour<23):
-            try:
-                from market_maintenance_delivery_v1 import STATE as market_report_state
-                from daily_market_restart_gate import market_restart_ready
-                ready,_=market_restart_ready(now_tpe(),day,market_report_state)
-                if ready:
-                    import f15_trajectory_store
-                    if f15_trajectory_store.report_and_trajectory_complete(day):
-                        vcp_eod_attempted_day=day
-                        marker=Path("/var/data/stock-alert")/"vcp_eod_sent"/f"{day}.json"
-                        if not marker.exists():
-                            rc=subprocess.call([sys.executable,str(BASE/"vcp_eod_watchlist_v1.py"),"--day",day,"--send"],cwd=str(BASE),timeout=120)
-                            print(f"[VCP EOD] child exit={rc}",flush=True)
-            except Exception as exc:
-                print(f"[VCP EOD] failed {type(exc).__name__}: {exc}",flush=True)
         try:
             maybe_restart_after_maintenance(day,stage_done,notified_at)
         except Exception as exc:
