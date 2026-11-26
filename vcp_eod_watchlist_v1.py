@@ -35,3 +35,53 @@ def classify(selector, symbol, bars):
             "price_above_threshold": closes[-1] > threshold,
             "volume_ratio": vols[-1] / (sum(v for v in vols[-6:-1] if v > 0) /
                                         sum(v > 0 for v in vols[-6:-1]))}
+
+
+def scan_database(day, db_path, f10_path, metadata_path, selector):
+    """Read one symbol at a time, using the same metadata and history gates."""
+    import json
+    import sqlite3
+    from pathlib import Path
+    from contextlib import closing
+    from datetime import date, timedelta
+    start = (date.fromisoformat(day) - timedelta(days=171)).isoformat()
+    metadata = json.loads(Path(metadata_path).read_text(encoding="utf-8"))["symbols"]
+    if not isinstance(metadata, dict) or not metadata:
+        raise ValueError("missing F11 metadata")
+    def connect(path):
+        return sqlite3.connect(Path(path).resolve().as_uri()+"?mode=ro", uri=True, timeout=5)
+    result = {"day": day, "near": [], "first_breakout": [], "evaluated": 0,
+              "excluded": 0, "missing_metadata": 0, "missing_history": 0}
+    with closing(connect(db_path)) as db, closing(connect(f10_path)) as f10:
+        members = f10.execute("SELECT symbol FROM member ORDER BY symbol")
+        for (symbol,) in members:
+            symbol = str(symbol)
+            if not selector.basic_code_ok(symbol):
+                result["excluded"] += 1
+                continue
+            meta = metadata.get(symbol)
+            if not isinstance(meta, dict) or str(meta.get("symbol") or "") != symbol:
+                result["missing_metadata"] += 1
+                continue
+            if not selector.meta_ok(meta):
+                result["excluded"] += 1
+                continue
+            coverage = db.execute("SELECT covered_through FROM fetch_status WHERE symbol=?", (symbol,)).fetchone()
+            if not coverage or str(coverage[0]) < day:
+                result["missing_history"] += 1
+                continue
+            bars = db.execute("SELECT day,close,volume_zhang FROM daily_ohlcv WHERE symbol=? AND day>=? AND day<=? ORDER BY day",
+                              (symbol,start,day)).fetchall()
+            if len(bars) < 61 or bars[-1][0] != day or bars[-1][2] <= 0:
+                result["missing_history"] += 1
+                continue
+            result["evaluated"] += 1
+            row = classify(selector,symbol,bars)
+            if row:
+                row["name"] = str(meta.get("name") or symbol)
+                result[row["category"]].append(row)
+    if not result["evaluated"]:
+        raise ValueError("no eligible current-day histories")
+    result["near"].sort(key=lambda r: (abs(r["distance_pct"]),r["symbol"]))
+    result["first_breakout"].sort(key=lambda r: (-r["volume_ratio"],r["symbol"]))
+    return result
