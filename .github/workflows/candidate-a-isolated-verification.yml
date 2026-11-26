@@ -51,6 +51,11 @@ jobs:
               assert not evaluate(103,419), 'volume below 1.4x accepted'
               first=evaluate(103)
               assert first, 'valid breakout below 800 lots lost'
+              first[0]['vcp']={'volume_zhang':500,'pivot':100,'price':103}
+              assert scanner.handoff_hit(first[0],day) is False and not calls
+              first=evaluate(103,800)
+              assert first
+              first[0]['vcp']={'volume_zhang':800,'pivot':100,'price':103}
               try:
                   scanner.handoff_hit(first[0],day)
                   raise AssertionError('first bridge call should fail')
@@ -58,13 +63,15 @@ jobs:
                   assert 'simulated bridge failure' in str(e)
               assert symbol not in scanner.state.get('vcp_handed',{}).get(day,{}), 'failure incorrectly deduped'
               assert not evaluate(99), 'invalid pullback proposed'
-              second=evaluate(103)
+              second=evaluate(103,800)
+              second[0]['vcp']={'volume_zhang':800,'pivot':100,'price':103}
               assert second and scanner.handoff_hit(second[0],day) is True, 'retry not delivered'
               assert symbol in scanner.state.get('vcp_handed',{}).get(day,{}), 'VCP success not deduped'
-              third=evaluate(103)
+              third=evaluate(103,801)
+              third[0]['vcp']={'volume_zhang':801,'pivot':100,'price':103}
               assert third and scanner.handoff_hit(third[0],day) is False, 'duplicate delivered'
           assert len(calls)==2, f'expected failure+success only, got {len(calls)}'
-          print('PASS: real sub-800 breakout -> failure -> pullback blocked -> valid retry -> dedupe')
+          print('PASS: real sub-800 breakout withheld -> 800 lots -> failure -> pullback blocked -> valid retry -> dedupe')
           PY
 
       - name: Verify independent VCP and SURGE order (new contract)
