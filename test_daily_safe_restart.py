@@ -26,6 +26,7 @@ class RestartTests(unittest.TestCase):
         self.cleanup_marker=self.root/"daily_unknown_cleanup"/f"{DAY}.json"
         self.cleanup_marker.parent.mkdir(parents=True,exist_ok=True)
         self.cleanup_marker.write_text('{"day":"2026-11-06","status":"completed","stats":{"removed":1}}',encoding="utf-8")
+        self.market_marker=self.root/'market_report_sent.json'
         self.request_count=0
         class FakePath(type(pathlib.Path())):
             def __new__(cls, value):
@@ -39,16 +40,33 @@ class RestartTests(unittest.TestCase):
                   "print":lambda *a,**k:None,"_RESTART_PROCESS_TOKEN":"test-worker-token"}
         exec(MODULE,self.ctx)
     def call(self,stages={"DAILY_K","F10"},notice="2026-11-06T16:00:00+08:00"):
-        with patch.dict("sys.modules",{"f15_trajectory_store":MagicMock(report_and_trajectory_complete=lambda day:self.complete)}),patch.dict("os.environ",{"RENDER_API_KEY":"test-only"},clear=False),patch("urllib.request.urlopen") as urlopen:
+        with patch.dict("sys.modules",{"f15_trajectory_store":MagicMock(report_and_trajectory_complete=lambda day:self.complete),"market_maintenance_delivery_v1":MagicMock(STATE=self.market_marker)}),patch.dict("os.environ",{"RENDER_API_KEY":"test-only"},clear=False),patch("urllib.request.urlopen") as urlopen:
             urlopen.return_value.__enter__.return_value.status=200
             self.ctx["maybe_restart_after_maintenance"](DAY,stages,notice)
             return urlopen.call_count
     def test_no_fixed_two_hour_delay(self):
         self.assertEqual(self.call(notice="2026-11-06T18:59:00+08:00"),1)
-    def test_completed_at_1630_can_restart(self):
+    def test_completed_at_1630_must_wait(self):
         Clock.current=datetime.datetime(2026,11,6,16,30,tzinfo=TPE)
         try:
-            self.assertEqual(self.call(notice="2026-11-06T16:29:00+08:00"),1)
+            self.assertEqual(self.call(notice="2026-11-06T16:29:00+08:00"),0)
+        finally:
+            Clock.current=datetime.datetime(2026,11,6,19,0,tzinfo=TPE)
+    def test_market_report_sent_allows_restart(self):
+        Clock.current=datetime.datetime(2026,11,6,17,10,tzinfo=TPE)
+        try:
+            self.assertEqual(self.call(),0)
+            self.market_marker.write_text('{"sent_date":"2026-11-06"}')
+            self.assertEqual(self.call(),1)
+            self.assertEqual(self.call(),0)
+        finally:
+            Clock.current=datetime.datetime(2026,11,6,19,0,tzinfo=TPE)
+    def test_fallback_boundary(self):
+        try:
+            Clock.current=datetime.datetime(2026,11,6,18,9,tzinfo=TPE)
+            self.assertEqual(self.call(),0)
+            Clock.current=datetime.datetime(2026,11,6,18,10,tzinfo=TPE)
+            self.assertEqual(self.call(),1)
         finally:
             Clock.current=datetime.datetime(2026,11,6,19,0,tzinfo=TPE)
     def test_market_hours_cannot_restart(self):
