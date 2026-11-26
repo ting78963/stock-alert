@@ -1,0 +1,18 @@
+name: Daily maintenance real restart simulation
+on:
+  pull_request:
+    paths:
+      - 'test_daily_maintenance_real_restart_simulation.py'
+      - 'production_worker_v2_shared_ws.py'
+      - '.github/workflows/daily-maintenance-real-restart.yml'
+  workflow_dispatch:
+jobs:
+  simulate-restart:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Execute real maintenance loop twice with isolated state and no network
+        run: python -m unittest -v test_daily_maintenance_real_restart_simulation
