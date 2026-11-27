@@ -121,6 +121,8 @@ def build_flex(result):
         return {"type":"box","layout":layout,"contents":items,**kw}
     def pair(a,b):
         return box([a,b],"horizontal",spacing="xs")
+    def metric(label, value, color="#202124", size="sm"):
+        return box([t(label,"#60646C","xs","center"),t(value,color,size,"center")],flex=1)
     def number(v):
         return f"{v:,.0f}"
     def price(v):
@@ -147,21 +149,27 @@ def build_flex(result):
                 body.append(t("無符合股票","#60646C"))
                 continue
             if key=="near":
-                items=[pair(t(f"{row['symbol']} {row['name']}"),t(f"差 {row['reference_distance']:.2f}%",color,"xs","end")),
-                       pair(t(f"收盤 {price(row['close'])}","#50545A","xs"),t(f"突破價 {row['reference_price']:.1f}","#A51C35","xs","end")),
-                       box([box([t(label,col,"xs"),t(number(row[field]),col,"sm")],flex=1) for label,field,col in
+                items=[t(f"{row['symbol']} {row['name']}"),
+                       box([metric("收盤價",price(row["close"])),
+                            metric("突破價",f"{row['reference_price']:.1f}","#A51C35","md"),
+                            metric("突破距離",f"{row['reference_distance']:.2f}%","#B77922")],"horizontal",spacing="xs"),
+                       {"type":"separator","color":"#D5D7DA"},
+                       box([metric(label,number(row[field]),col) for label,field,col in
                             (("10:00 前","volume_10","#A51C35"),("12:00 前","volume_12","#B77922"),("全天門檻","volume_full","#202124"))],"horizontal",spacing="xs")]
             else:
-                items=[pair(t(f"{row['symbol']} {row['name']}"),t(f"{row['volume_ratio']:.2f} 倍量",color,"xs","end")),
-                       pair(t(f"收盤 {price(row['close'])}","#50545A","xs"),t(f"突破價 {price(row['threshold'])}",color,"xs","end")),
-                       t(f"成交量 {number(row['volume_today'])} 張","#50545A","xs")]
+                items=[t(f"{row['symbol']} {row['name']}"),
+                       box([metric("收盤價",price(row["close"])),
+                            metric("突破價",price(row["threshold"]),color,"md"),
+                            metric("突破量比",f"{row['volume_ratio']:.2f}倍",color)],"horizontal",spacing="xs"),
+                       {"type":"separator","color":"#D5D7DA"},
+                       metric("成交量（張）",number(row["volume_today"]),color)]
             body.append(box(items,backgroundColor="#F3F4F6",cornerRadius="md",paddingAll="8px",spacing="xs"))
         if omitted:
             body.append(t(f"另有 {omitted} 檔未列出（LINE 容量限制）","#A51C35","xs"))
         body.extend([t("量能單位：張｜12:00 後謹慎觀察","#60646C","xs"),
                      t(f"有效辨識 {result['evaluated']}｜缺資料 {result['missing_metadata']+result['missing_history']}","#60646C","xs"),
                      t("Trade Smart | Your Edge","#60646C","xs","end")])
-        return {"type":"bubble","size":"giga","body":box(body,backgroundColor="#FFFFFF",spacing="sm")}
+        return {"type":"bubble","size":"mega","body":box(body,backgroundColor="#FFFFFF",spacing="sm",paddingAll="12px")}
     messages=[]
     for i,page in enumerate(pages):
         contents=bubble(page,i+1,len(pages))
