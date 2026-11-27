@@ -35,8 +35,11 @@ class EodTest(unittest.TestCase):
         self.assertIsNone(classify(selector,"2330",bars))
 
     def test_volume(self):
+        # Price alone is not a confirmed breakout; final contraction remains watchable.
         r=classify(self.selector,"2330",self.bars(101,100))
-        self.assertIsNone(r)
+        self.assertEqual(r["category"],"near")
+        self.assertEqual(r["volume_full"],900)
+        self.assertEqual(r["volume_today"],100)
     def test_near_without_distance_gate(self):
         from unittest.mock import Mock
         selector=Mock()
