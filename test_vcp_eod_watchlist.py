@@ -104,6 +104,19 @@ class EodTest(unittest.TestCase):
         result=dict(day="2026-11-26",near=[row],first_breakout=[],evaluated=1,missing_metadata=0,missing_history=0)
         flex=build_flex(result)
         self.assertEqual(flex[0]["contents"]["body"]["backgroundColor"],"#FFFFFF")
+        self.assertEqual(flex[0]["contents"]["size"],"mega")
+        def walk(node):
+            if isinstance(node,dict):
+                yield node
+                for child in node.get("contents",[]):
+                    yield from walk(child)
+        metrics=[n for n in walk(flex[0]["contents"]["body"]) if n.get("type")=="box" and n.get("layout")=="horizontal" and len(n.get("contents",[]))==3]
+        self.assertTrue(any([c["contents"][0]["text"] for c in n["contents"]]==["收盤價","突破價","突破距離"] for n in metrics))
+        self.assertTrue(any([c["contents"][0]["text"] for c in n["contents"]]==["10:00 前","12:00 前","全天門檻"] for n in metrics))
+        for n in metrics:
+            for col in n["contents"]:
+                self.assertEqual(col["flex"],1)
+                self.assertTrue(all(t["align"]=="center" for t in col["contents"]))
         raw=json.dumps(flex,ensure_ascii=False)
         for s in ("7,845","23,971","43,583","10:00 前","12:00 前","bold"):
             self.assertIn(s,raw)
