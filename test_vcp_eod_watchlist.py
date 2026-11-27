@@ -35,16 +35,21 @@ class EodTest(unittest.TestCase):
         self.assertIsNone(classify(selector,"2330",bars))
 
     def test_volume(self):
+        # Price alone is not a confirmed breakout; final contraction remains watchable.
         r=classify(self.selector,"2330",self.bars(101,100))
-        self.assertIsNone(r)
-    def test_near_distance_gate(self):
+        self.assertEqual(r["category"],"near")
+        self.assertEqual(r["volume_full"],900)
+        self.assertEqual(r["volume_today"],100)
+    def test_near_without_distance_gate(self):
         from unittest.mock import Mock
         selector=Mock()
         selector.track={}
         selector.analyze_vcp.return_value={"pivot":100,"status":"final_contraction","justBroke":False}
-        for close,expected in ((97.49,False),(97.5,True),(99.9,True),(100,False),(75,False)):
-            self.assertEqual(classify(selector,"2330",self.bars(close)) is not None,expected)
+        for close in (97.49,97.5,99.9,100,75):
+            self.assertEqual(classify(selector,"2330",self.bars(close))["category"],"near")
         selector.analyze_vcp.return_value["breakoutTrack"]={"pivot":110}
+        self.assertEqual(classify(selector,"2330",self.bars(99.9))["category"],"near")
+        selector.analyze_vcp.return_value["status"]="contracting"
         self.assertIsNone(classify(selector,"2330",self.bars(99.9)))
 
     def test_vertical_push(self):

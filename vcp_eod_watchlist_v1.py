@@ -39,9 +39,6 @@ def classify(selector, symbol, bars):
     if confirmed and state.get("breakDays") == 1 and track.get("breakoutDate") == dates[-1]:
         category = "first_breakout"
     elif state.get("status") == "final_contraction" and not confirmed:
-        pivot_ref = float((state.get("breakoutTrack") or {}).get("pivot") or pivot or max(closes[-20:]))
-        if not (pivot_ref > 0 and pivot_ref * 0.975 <= closes[-1] < pivot_ref):
-            return None
         category = "near"
         pivot = max(closes[-20:])
         threshold = pivot * 1.003
